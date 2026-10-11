@@ -61,14 +61,14 @@ trap 'rm -f "${partial:-}"; rm -rf "$stage"' EXIT INT TERM
 echo "prepare: building Velo, Locus and Carta indexes with OTTO $revision"
 /app/velo-route-server --save-index "$stage/map.vlg" "$pbf" --build-only
 /app/locus-geocoder --build-only -S "$stage/map.lcx" "$pbf"
-/app/carta-tile-server --save-index "$stage/map.idx" "$pbf" --build-only
+/app/carta-tile-server --build-only --save-index "$stage/map.idx" "$pbf"
 for output in map.vlg map.lcx map.idx; do
     [[ -s "$stage/$output" ]] || { echo "prepare: converter did not produce $output" >&2; exit 6; }
 done
 
 # Velo and Carta validate their native formats by loading and re-saving them.
 /app/velo-route-server --save-index "$stage/check.vlg" "$stage/map.vlg" --build-only
-/app/carta-tile-server --save-index "$stage/check.idx" "$stage/map.idx" --build-only
+/app/carta-tile-server --build-only --save-index "$stage/check.idx" "$stage/map.idx"
 rm -f "$stage/check.vlg" "$stage/check.idx"
 
 # Locus has no validate-only flag, so prove the mapped index reaches ready state
