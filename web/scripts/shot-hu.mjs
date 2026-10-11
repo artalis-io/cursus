@@ -1,0 +1,13 @@
+import { chromium } from 'playwright';
+const launch={headless:true,args:['--use-gl=angle','--use-angle=swiftshader','--ignore-gpu-blocklist','--enable-unsafe-swiftshader']};
+if(process.env.PW_CHROMIUM) launch.executablePath=process.env.PW_CHROMIUM;
+const b=await chromium.launch(launch);
+const p=await b.newPage({viewport:{width:1440,height:900},deviceScaleFactor:2});
+const errs=[]; p.on('pageerror',e=>errs.push(e.message));
+await p.goto('http://localhost:5179',{waitUntil:'networkidle'});
+await p.waitForSelector('text=RIC-124',{timeout:20000});
+await p.click('button:has-text("HU")');
+await p.waitForTimeout(3000);
+await p.screenshot({path:'screenshots/10-hungarian.png'});
+console.log('wrote 10-hungarian.png', errs.length?('ERRORS '+errs.slice(0,3).join(' | ')):'(no errors)');
+await b.close();

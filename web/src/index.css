@@ -1,0 +1,101 @@
+/* Local Inter (no CDN). Variable range + explicit weights for reliable fallback. */
+@import '@fontsource/inter/400.css';
+@import '@fontsource/inter/500.css';
+@import '@fontsource/inter/600.css';
+@import '@fontsource/inter/700.css';
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/*
+ * Theme tokens for the precision-industrial Cursus look.
+ * Warm ivory panels matched to the Carta basemap background (#f4f1e8), graphite
+ * chrome, deep-green primary (#2e7d5b family), amber warning. HSL triplets so
+ * Tailwind's hsl(var(--x)) wrapping works.
+ */
+@layer base {
+  :root {
+    /* Warm ivory surface (#f4f1e8 ~ 44 38% 93%). */
+    --background: 44 38% 93%;
+    --foreground: 40 10% 18%;
+
+    --card: 44 36% 95%;
+    --card-foreground: 40 10% 18%;
+
+    --popover: 44 40% 97%;
+    --popover-foreground: 40 10% 18%;
+
+    /* Deep green primary (#2e7d5b ~ 151 46% 33%). */
+    --primary: 151 46% 33%;
+    --primary-foreground: 44 40% 97%;
+
+    --secondary: 42 20% 88%;
+    --secondary-foreground: 40 12% 22%;
+
+    --muted: 42 18% 86%;
+    --muted-foreground: 40 8% 42%;
+
+    --accent: 42 24% 85%;
+    --accent-foreground: 40 12% 22%;
+
+    /* Amber warning (#c9811f-ish). */
+    --warning: 36 72% 45%;
+    --warning-foreground: 44 40% 97%;
+
+    --destructive: 2 65% 48%;
+    --destructive-foreground: 44 40% 97%;
+
+    /* Graphite chrome (near-black charcoal). */
+    --graphite: 40 8% 12%;
+    --graphite-foreground: 44 30% 92%;
+    --graphite-muted: 40 6% 55%;
+
+    --border: 42 16% 80%;
+    --divider: 42 14% 78%;
+    --input: 42 16% 80%;
+    --ring: 151 46% 33%;
+
+    --radius: 0.5rem; /* 8px; sm/md derive 6px/4px. */
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+  body {
+    @apply bg-background text-foreground font-sans antialiased;
+    /* Tabular numerals everywhere: KPIs, timelines, capacity bars line up. */
+    font-feature-settings: 'tnum' 1, 'cv05' 1;
+  }
+  /* Opt-in: hairline 1px dividers. */
+  .divider-x {
+    @apply border-l border-divider;
+  }
+  .divider-y {
+    @apply border-t border-divider;
+  }
+  /* Tabular numeric utility for one-off emphasis. */
+  .tnum {
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: 'tnum' 1;
+  }
+}
+
+/* Respect reduced motion: kill transitions/animations when the user asks. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+}

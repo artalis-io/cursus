@@ -1,0 +1,3 @@
+[submodule "vendor/otto"]
+	path = vendor/otto
+	url = https://github.com/artalis-io/otto

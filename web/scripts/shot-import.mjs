@@ -1,0 +1,18 @@
+import { chromium } from 'playwright';
+const URL = process.env.VIEWER_URL || 'http://localhost:5179';
+const launch = { headless: true, args: ['--use-gl=angle','--use-angle=swiftshader','--ignore-gpu-blocklist','--enable-unsafe-swiftshader'] };
+if (process.env.PW_CHROMIUM) launch.executablePath = process.env.PW_CHROMIUM;
+const b = await chromium.launch(launch);
+const p = await b.newPage({ viewport: { width: 1440, height: 900 }, deviceScaleFactor: 2 });
+const errs = [];
+p.on('console', m => { if (m.type()==='error') errs.push(m.text()); });
+p.on('pageerror', e => errs.push('PAGEERROR '+e.message));
+await p.goto(URL, { waitUntil: 'networkidle' });
+await p.waitForSelector('text=RIC-124', { timeout: 20000 });
+await p.click('text=Data');
+await p.waitForSelector('text=Data provenance', { timeout: 10000 });
+await p.waitForTimeout(1200);
+await p.screenshot({ path: 'screenshots/06-import.png' });
+console.log('wrote 06-import.png');
+console.log(errs.length ? 'ERRORS: '+[...new Set(errs)].slice(0,6).join(' | ') : 'no console errors');
+await b.close();
