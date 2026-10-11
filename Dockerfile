@@ -1,13 +1,13 @@
 # syntax=docker/dockerfile:1.7
 
-FROM node:20.18.1-bookworm-slim AS web-build
+FROM node:20.19.5-bookworm-slim AS web-build
 WORKDIR /src/web
 COPY web/package.json web/package-lock.json ./
 RUN npm ci
 COPY web/ ./
 RUN npm run build
 
-FROM node:20.18.1-bookworm-slim AS server-build
+FROM node:20.19.5-bookworm-slim AS server-build
 WORKDIR /src/server
 COPY server/package.json server/package-lock.json ./
 RUN npm ci
@@ -24,7 +24,7 @@ RUN make shared ralph arbor \
     && make -C velo NOMP=1 matrix_build \
     && make -C nexus nx_pipeline
 
-FROM node:20.18.1-bookworm-slim AS runtime
+FROM node:20.19.5-bookworm-slim AS runtime
 ARG OTTO_REVISION=unknown
 LABEL org.opencontainers.image.title="Cursus" \
       org.opencontainers.image.source="https://github.com/artalis-io/cursus" \
