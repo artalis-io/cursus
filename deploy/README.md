@@ -103,7 +103,10 @@ be protected by Cloudflare Access or another trusted authenticating proxy.
 
 ## Verification and troubleshooting
 
-Run repository-safe checks with `./deploy/test-prepare.sh`. The smoke script
+Run repository-safe checks with `./deploy/test-prepare.sh`. A tiny public Monaco
+fixture under `deploy/fixtures/smoke` supports container/API tests only and is
+excluded from image build contexts; it is not a substitute for customer data.
+The smoke script
 checks the frontend, API health and Carta proxy. A full private workflow must be
 run only where the customer dataset is legitimately available; no private test
 fixture is stored here.

@@ -8,7 +8,7 @@
 **/.cache
 **/*.log
 server/data
-deploy/fixtures/private
+deploy/fixtures
 *.osm.pbf
 *.vlg
 *.lcx
