@@ -7,6 +7,11 @@
 **/dist
 **/.cache
 **/*.log
+**/*.o
+**/*.a
+**/*.so
+**/*.dylib
+**/.build-flags
 server/data
 deploy/fixtures
 *.osm.pbf

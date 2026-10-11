@@ -100,6 +100,59 @@ cd ../server && npm run build              # tsc -> dist (or use npm start/tsx)
 npm start
 ```
 
+## Run with Docker Compose
+
+The production Compose deployment builds Cursus, Surge, Velo, Carta, Locus and
+the OSM conversion tools locally from source. Customer data and geographic
+assets remain external bind mounts. Only Cursus is exposed, on
+`127.0.0.1:8091` by default; the native services use a private network. See
+[`deploy/README.md`](deploy/README.md) for security, preparation, backup,
+upgrade and troubleshooting details.
+
+```bash
+git submodule update --init --recursive
+cp .env.example .env
+# Set CURSUS_DATASET_PATH, CURSUS_DATA_PATH and OSM_DATA_PATH to existing
+# host directories; set a strong DISPATCH_AUTH_TOKEN. Do not put private data
+# in this checkout.
+docker compose config --quiet
+docker compose build
+docker compose --profile prepare --profile geocoding build osm-prepare locus
+docker compose --profile prepare run --rm osm-prepare
+docker compose up -d --no-build
+docker compose ps
+./deploy/smoke.sh
+```
+
+`osm-prepare` reuses an existing `OSM_PBF_FILE` without network access, or
+downloads `OSM_PBF_URL` when it is absent. It explicitly creates and validates
+versioned Velo, Carta and Locus indexes before publishing them atomically.
+Normal startup never performs geographic conversion. To stop the services
+without deleting external state or indexes, run `docker compose down`.
+
+### Verified local Hungary/Gyermelyi deployment
+
+On 2026-10-11 this stack was built and exercised natively on an Apple ARM64
+host using Docker Engine 20.10.17, Compose 2.7.0 and an 8 GB Docker VM. The
+private Gyermelyi dataset was mounted read-only, application state was mounted
+separately, and the existing 294 MiB Hungary Geofabrik PBF was reused offline.
+Hungary preparation completed in 436 seconds and produced a Velo graph with
+2,722,834 nodes/5,480,054 edges and a Carta index with 4,964,814 features.
+
+The frontend, API, Carta proxy and all container health checks passed. A real
+day-one, 240-second Surge solve completed in 240.827 seconds with truthful
+`LIMIT` status (115/117 orders, 10 vehicles, 3,700 km); the authoritative saved
+baseline remained 117/117 orders, 11 vehicles and 3,860 km. Restarting Cursus
+preserved the generated plan. Steady post-solve memory was approximately 118
+MiB for Cursus, 5.52 GiB for Velo and 1.09 GiB for Carta. These measurements are
+host/workload observations, not configured resource limits.
+
+Compose 2.7 does not support `docker compose up --pull never`; use the
+documented `--no-build` command after building. Newer Compose versions may add
+`--pull never` when an explicit registry-pull guard is desired. All application
+services have deterministic local image names and require no application image
+registry.
+
 ## Configuration (env)
 
 | Var | Default | Meaning |

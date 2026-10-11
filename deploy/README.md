@@ -76,7 +76,7 @@ only after confirming no deployment uses them.
 ## Operate
 
 ```sh
-docker compose up -d --no-build --pull never
+docker compose up -d --no-build
 docker compose ps
 ./deploy/smoke.sh
 docker compose logs -f cursus velo carta
