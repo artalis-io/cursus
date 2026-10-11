@@ -118,6 +118,7 @@ services:
       <<: *otto-build
       dockerfile: docker/Dockerfile.data-builder
     entrypoint: [/bin/bash, /deploy/osm-prepare.sh]
+    user: ${CURSUS_UID:-10001}:${CURSUS_GID:-10001}
     environment:
       OSM_PBF_FILE: ${OSM_PBF_FILE:-hungary-latest.osm.pbf}
       OSM_PBF_URL: ${OSM_PBF_URL:-https://download.geofabrik.de/europe/hungary-latest.osm.pbf}
