@@ -23,7 +23,7 @@ services:
         target: /data/osm
         read_only: true
         bind: { create_host_path: false }
-    tmpfs: [/tmp:size=64m,mode=1777]
+    tmpfs: ["/tmp:size=64m,mode=1777"]
     stop_grace_period: 30s
 
   carta:
@@ -38,7 +38,7 @@ services:
         target: /data/osm
         read_only: true
         bind: { create_host_path: false }
-    tmpfs: [/tmp:size=64m,mode=1777]
+    tmpfs: ["/tmp:size=64m,mode=1777"]
     stop_grace_period: 30s
 
   locus:
@@ -54,7 +54,7 @@ services:
         target: /data/osm
         read_only: true
         bind: { create_host_path: false }
-    tmpfs: [/tmp:size=64m,mode=1777]
+    tmpfs: ["/tmp:size=64m,mode=1777"]
     stop_grace_period: 30s
 
   cursus:
@@ -103,7 +103,7 @@ services:
         target: /data/osm
         read_only: true
         bind: { create_host_path: false }
-    tmpfs: [/tmp:size=256m,mode=1777]
+    tmpfs: ["/tmp:size=256m,mode=1777"]
     healthcheck:
       test: [CMD, node, -e, "fetch('http://127.0.0.1:8091/api/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
       interval: 15s
@@ -135,7 +135,7 @@ services:
     read_only: true
     cap_drop: [ALL]
     security_opt: [no-new-privileges:true]
-    tmpfs: [/tmp:size=64m,mode=1777]
+    tmpfs: ["/tmp:size=64m,mode=1777"]
     restart: "no"
     networks: [prepare-egress]
 
