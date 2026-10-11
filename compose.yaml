@@ -13,6 +13,7 @@ x-otto-build: &otto-build
 services:
   velo:
     <<: *service-security
+    image: ${COMPOSE_PROJECT_NAME:-cursus}-velo:local
     build:
       <<: *otto-build
       dockerfile: docker/Dockerfile.velo
@@ -28,6 +29,7 @@ services:
 
   carta:
     <<: *service-security
+    image: ${COMPOSE_PROJECT_NAME:-cursus}-carta:local
     build:
       <<: *otto-build
       dockerfile: docker/Dockerfile.carta
@@ -44,6 +46,7 @@ services:
   locus:
     <<: *service-security
     profiles: [geocoding]
+    image: ${COMPOSE_PROJECT_NAME:-cursus}-locus:local
     build:
       <<: *otto-build
       dockerfile: docker/Dockerfile.locus
@@ -59,6 +62,7 @@ services:
 
   cursus:
     <<: *service-security
+    image: ${COMPOSE_PROJECT_NAME:-cursus}-app:local
     networks: [cursus-internal, cursus-edge]
     build:
       context: .
@@ -115,6 +119,7 @@ services:
 
   osm-prepare:
     profiles: [prepare]
+    image: ${COMPOSE_PROJECT_NAME:-cursus}-osm-prepare:local
     build:
       <<: *otto-build
       dockerfile: docker/Dockerfile.data-builder

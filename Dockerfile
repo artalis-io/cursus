@@ -19,7 +19,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends build-essential
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /src/otto
 COPY vendor/otto/ .
-RUN make shared ralph arbor \
+RUN make -C shared lib \
+    && make ralph \
+    && make -C arbor lib \
     && make -C surge surge_solve \
     && make -C velo NOMP=1 matrix_build \
     && make -C nexus nx_pipeline
