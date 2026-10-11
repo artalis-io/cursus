@@ -1,0 +1,1 @@
+{"status":"OK","routes":[{"vehicle_id":0,"distance":2000,"duration":600,"trip_count":1,"stops":[{"request_id":1,"task_id":1,"type":"delivery","trip_index":0,"arrival":28950,"service_start":28950,"departure":29250}]}],"unassigned":[],"stats":{"vehicles_used":1,"trips":1,"total_distance":2000,"unassigned":0}}

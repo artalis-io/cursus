@@ -1,0 +1,1 @@
+{"records":[{"id":"O1","order_no":"O1","customer":"Public Smoke One","city":"Monaco","lat":43.7384,"lon":7.4246,"pallets":1,"weight_kg":100,"tw_start":"08:00","tw_end":"16:00","service_min":5},{"id":"O2","order_no":"O2","customer":"Public Smoke Two","city":"Monaco","lat":43.7400,"lon":7.4260,"pallets":1,"weight_kg":100,"tw_start":"08:00","tw_end":"16:00","service_min":5}]}

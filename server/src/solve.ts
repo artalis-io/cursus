@@ -277,4 +277,12 @@ export function cancelJob(job: Job): boolean {
   return true;
 }
 
+/** Stop accepting queued work and terminate every native solver child during
+ * container shutdown. Tini reaps the children; this explicit signal prevents
+ * a long-running optimization from being orphaned on graceful termination. */
+export function shutdownSolves(): void {
+  queue.splice(0, queue.length);
+  for (const child of running.values()) child.kill('SIGTERM');
+}
+
 export { dayLabel };
