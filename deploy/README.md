@@ -17,7 +17,7 @@ Surge and `matrix_build` are native executables inside the Cursus image and are
 spawned through the existing Cursus interfaces.
 
 The deployment pins OTTO commit
-`3d62876c5d0d8e3bb3b7997007bfa28c0f9648e0`. `OTTO_ROOT` controls the checkout
+`a549fdca3fdba2148b6f034754e99e77f6b86729`. `OTTO_ROOT` controls the checkout
 used to build OTTO service/preparation images and accepts Compose-supported
 relative or absolute paths. The Cursus application image deliberately builds
 its native CLI tools from the pinned `vendor/otto` submodule, keeping its Docker
