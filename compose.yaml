@@ -59,6 +59,7 @@ services:
 
   cursus:
     <<: *service-security
+    networks: [cursus-internal, cursus-edge]
     build:
       context: .
       dockerfile: Dockerfile
@@ -143,4 +144,5 @@ services:
 networks:
   cursus-internal:
     internal: true
+  cursus-edge: {}
   prepare-egress: {}
