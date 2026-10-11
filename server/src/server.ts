@@ -12,7 +12,7 @@ import { mapSolutionToPlan } from './plan/mapper.js';
 import { evaluateTrip } from './plan/evaluate.js';
 import { fillPlanGeometry, veloReachable } from './geometry/velo.js';
 import { store, validateScenarioEdit, exportScenario, parseScenarioImport, type ScenarioEdit } from './store.js';
-import { enqueueSolve, cancelJob, hasSolveCapacity, type Objective } from './solve.js';
+import { enqueueSolve, cancelJob, hasSolveCapacity, shutdownSolves, type Objective } from './solve.js';
 import { Semaphore } from './util/semaphore.js';
 
 /* A2: bound concurrent dataset admits (each holds a geocode + an N^2 matrix
@@ -630,5 +630,17 @@ const start = async () => {
 // Bind a port only when run as the entry point; tests import `app` and use
 // app.inject() without listening (set DISPATCH_NO_LISTEN=1).
 if (process.env.DISPATCH_NO_LISTEN !== '1') start();
+
+let shuttingDown = false;
+async function shutdown(signal: string): Promise<void> {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  app.log.info({ signal }, 'graceful shutdown');
+  shutdownSolves();
+  try { await app.close(); process.exit(0); }
+  catch (err) { app.log.error({ err }, 'shutdown failed'); process.exit(1); }
+}
+process.on('SIGTERM', () => void shutdown('SIGTERM'));
+process.on('SIGINT', () => void shutdown('SIGINT'));
 
 export { app };

@@ -1,0 +1,145 @@
+name: ${COMPOSE_PROJECT_NAME:-cursus}
+
+x-service-security: &service-security
+  read_only: true
+  cap_drop: [ALL]
+  security_opt: [no-new-privileges:true]
+  restart: unless-stopped
+  networks: [cursus-internal]
+
+x-otto-build: &otto-build
+  context: ${OTTO_ROOT:-./vendor/otto}
+
+services:
+  velo:
+    <<: *service-security
+    build:
+      <<: *otto-build
+      dockerfile: docker/Dockerfile.velo
+    command: ["/data/osm/cursus/${OSM_ASSET_NAME:-default}/current/map.vlg"]
+    volumes:
+      - type: bind
+        source: ${OSM_DATA_PATH:?set OSM_DATA_PATH}
+        target: /data/osm
+        read_only: true
+        bind: { create_host_path: false }
+    tmpfs: [/tmp:size=64m,mode=1777]
+    stop_grace_period: 30s
+
+  carta:
+    <<: *service-security
+    build:
+      <<: *otto-build
+      dockerfile: docker/Dockerfile.carta
+    command: ["/data/osm/cursus/${OSM_ASSET_NAME:-default}/current/map.idx"]
+    volumes:
+      - type: bind
+        source: ${OSM_DATA_PATH:?set OSM_DATA_PATH}
+        target: /data/osm
+        read_only: true
+        bind: { create_host_path: false }
+    tmpfs: [/tmp:size=64m,mode=1777]
+    stop_grace_period: 30s
+
+  locus:
+    <<: *service-security
+    profiles: [geocoding]
+    build:
+      <<: *otto-build
+      dockerfile: docker/Dockerfile.locus
+    command: ["/data/osm/cursus/${OSM_ASSET_NAME:-default}/current/map.lcx"]
+    volumes:
+      - type: bind
+        source: ${OSM_DATA_PATH:?set OSM_DATA_PATH}
+        target: /data/osm
+        read_only: true
+        bind: { create_host_path: false }
+    tmpfs: [/tmp:size=64m,mode=1777]
+    stop_grace_period: 30s
+
+  cursus:
+    <<: *service-security
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        OTTO_REVISION: ${OTTO_REVISION:-0eb45bb881efe803c7a85582cefedf7b44ac43cf}
+    user: ${CURSUS_UID:-10001}:${CURSUS_GID:-10001}
+    depends_on:
+      velo: { condition: service_healthy }
+      carta: { condition: service_healthy }
+    environment:
+      DISPATCH_HOST: 0.0.0.0
+      DISPATCH_PORT: 8091
+      DISPATCH_AUTH_TOKEN: ${DISPATCH_AUTH_TOKEN:?set a strong DISPATCH_AUTH_TOKEN}
+      DISPATCH_CORS_ORIGINS: ${DISPATCH_CORS_ORIGINS:-}
+      DISPATCH_STRICT_CONFIG: "1"
+      DISPATCH_SOLVE_SECONDS: ${DISPATCH_SOLVE_SECONDS:-240}
+      DISPATCH_DATA_DIR: /state/application
+      DISPATCH_UPLOADS_DIR: /state/uploads
+      GEOCODE_CACHE_DIR: /state/geocode-cache
+      GEOCODE_PBF: /data/osm/${OSM_PBF_FILE:-hungary-latest.osm.pbf}
+      GEOCODE_ENV: /run/secrets/geocode.env
+      DISPATCH_GEOCODE_OFFLINE: ${DISPATCH_GEOCODE_OFFLINE:-1}
+      DATASET_ROOT: /data/customer
+      CURSUS_DATASET_ID: ${CURSUS_DATASET_ID:-customer-dataset}
+      VELO_GRAPH: /data/osm/cursus/${OSM_ASSET_NAME:-default}/current/map.vlg
+      VELO_ORIGIN: http://velo:8082
+      CARTA_ORIGIN: http://carta:8081
+    ports:
+      - 127.0.0.1:${CURSUS_PORT:-8091}:8091
+    volumes:
+      - type: bind
+        source: ${CURSUS_DATASET_PATH:?set CURSUS_DATASET_PATH}
+        target: /data/customer
+        read_only: true
+        bind: { create_host_path: false }
+      - type: bind
+        source: ${CURSUS_DATA_PATH:?set CURSUS_DATA_PATH}
+        target: /state
+        bind: { create_host_path: false }
+      - type: bind
+        source: ${OSM_DATA_PATH:?set OSM_DATA_PATH}
+        target: /data/osm
+        read_only: true
+        bind: { create_host_path: false }
+    tmpfs: [/tmp:size=256m,mode=1777]
+    healthcheck:
+      test: [CMD, node, -e, "fetch('http://127.0.0.1:8091/api/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      start_period: 30s
+      retries: 5
+    stop_grace_period: 45s
+
+  osm-prepare:
+    profiles: [prepare]
+    build:
+      <<: *otto-build
+      dockerfile: docker/Dockerfile.data-builder
+    entrypoint: [/bin/bash, /deploy/osm-prepare.sh]
+    environment:
+      OSM_PBF_FILE: ${OSM_PBF_FILE:-hungary-latest.osm.pbf}
+      OSM_PBF_URL: ${OSM_PBF_URL:-https://download.geofabrik.de/europe/hungary-latest.osm.pbf}
+      OSM_ASSET_NAME: ${OSM_ASSET_NAME:-default}
+      OTTO_REVISION: ${OTTO_REVISION:-0eb45bb881efe803c7a85582cefedf7b44ac43cf}
+    volumes:
+      - type: bind
+        source: ${OSM_DATA_PATH:?set OSM_DATA_PATH}
+        target: /data/osm
+        bind: { create_host_path: false }
+      - type: bind
+        source: ./deploy
+        target: /deploy
+        read_only: true
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    tmpfs: [/tmp:size=64m,mode=1777]
+    restart: "no"
+    networks: [prepare-egress]
+
+networks:
+  cursus-internal:
+    internal: true
+  prepare-egress: {}

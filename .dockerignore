@@ -1,0 +1,15 @@
+.git
+.github
+.env
+.env.*
+!.env.example
+**/node_modules
+**/dist
+**/.cache
+**/*.log
+server/data
+deploy/fixtures/private
+*.osm.pbf
+*.vlg
+*.lcx
+*.idx
