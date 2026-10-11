@@ -1,0 +1,322 @@
+{
+  "_comment": "SAMPLE PLAN — hand-authored, NOT a real solve. Matches the backend->frontend Plan contract in docs/data-api-mapping.md so the scaffold renders with no backend. Geometry LineStrings are faked with a handful of coordinates near the depot/Budapest (~47.6, 18.6); they do not follow real roads. Replace by fetching GET /api/plans/:id once the backend is wired.",
+  "id": "pln_sample",
+  "scenarioId": "scn_sample",
+  "scenarioRevision": 1,
+  "day": "2026-05-06",
+  "createdAt": "2026-05-06T04:30:00Z",
+  "source": "sample",
+  "provenance": {
+    "inputSha256": "0000000000000000000000000000000000000000000000000000000000000000",
+    "solverConfig": {
+      "seed": 1,
+      "maxIterations": 100000,
+      "maxTimeSeconds": 30,
+      "lexicographic": true,
+      "hardCapacity": true,
+      "hardTimeWindows": false,
+      "hardMaxDuration": true
+    },
+    "termination": "OK",
+    "validation": { "valid": true, "violations": [] }
+  },
+  "stats": {
+    "servedOrders": 8,
+    "totalOrders": 9,
+    "deliveryStops": 8,
+    "trips": 4,
+    "vehiclesUsed": 3,
+    "totalDistanceKm": 486,
+    "solveElapsedSeconds": 3.7
+  },
+  "depot": { "name": "Depot", "lon": 18.6441461, "lat": 47.6039649 },
+  "vehicles": [
+    {
+      "id": 1,
+      "ref": "RIC-124",
+      "class": "tractor_trailer",
+      "color": "#2e7d5b",
+      "capacityKg": 24000,
+      "capacityPallets": 50,
+      "tripCount": 2,
+      "finishTimeSec": 61200,
+      "peakKg": 21200,
+      "peakPallets": 46,
+      "distanceKm": 214,
+      "trips": [
+        {
+          "index": 0,
+          "startSec": 18000,
+          "endSec": 30600,
+          "distanceKm": 118,
+          "reloadSecAfter": 1800,
+          "stops": [
+            {
+              "orderId": "sample-258486-40758",
+              "orderNo": "258486",
+              "customer": "Tesco Budaors",
+              "city": "Budaors",
+              "lon": 18.9607,
+              "lat": 47.4615,
+              "seq": 1,
+              "type": "delivery",
+              "arrivalSec": 20400,
+              "serviceStartSec": 20400,
+              "departureSec": 22200,
+              "twStartSec": 18000,
+              "twEndSec": 30600,
+              "pallets": 12.5,
+              "weightKg": 8400,
+              "serviceMin": 30,
+              "lateBySec": 0
+            },
+            {
+              "orderId": "sample-258490-40761",
+              "orderNo": "258490",
+              "customer": "Auchan Budaors",
+              "city": "Budaors",
+              "lon": 18.9512,
+              "lat": 47.4490,
+              "seq": 2,
+              "type": "delivery",
+              "arrivalSec": 23400,
+              "serviceStartSec": 23400,
+              "departureSec": 24900,
+              "twStartSec": 18000,
+              "twEndSec": 36000,
+              "pallets": 9.0,
+              "weightKg": 6100,
+              "serviceMin": 25,
+              "lateBySec": 0
+            }
+          ],
+          "geometry": {
+            "type": "LineString",
+            "coordinates": [
+              [18.6441, 47.6040],
+              [18.7012, 47.5488],
+              [18.8203, 47.4997],
+              [18.9201, 47.4702],
+              [18.9607, 47.4615],
+              [18.9512, 47.4490]
+            ]
+          }
+        },
+        {
+          "index": 1,
+          "startSec": 32400,
+          "endSec": 61200,
+          "distanceKm": 96,
+          "reloadSecAfter": 0,
+          "stops": [
+            {
+              "orderId": "sample-258501-40770",
+              "orderNo": "258501",
+              "customer": "Spar Tatabanya",
+              "city": "Tatabanya",
+              "lon": 18.4061,
+              "lat": 47.5692,
+              "seq": 1,
+              "type": "delivery",
+              "arrivalSec": 35100,
+              "serviceStartSec": 35100,
+              "departureSec": 36600,
+              "twStartSec": 28800,
+              "twEndSec": 43200,
+              "pallets": 7.5,
+              "weightKg": 5200,
+              "serviceMin": 25,
+              "lateBySec": 0
+            }
+          ],
+          "geometry": {
+            "type": "LineString",
+            "coordinates": [
+              [18.6441, 47.6040],
+              [18.5603, 47.5908],
+              [18.4710, 47.5801],
+              [18.4061, 47.5692],
+              [18.4710, 47.5801],
+              [18.6441, 47.6040]
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "ref": "RIC-087",
+      "class": "rigid_truck",
+      "color": "#2563eb",
+      "capacityKg": 12000,
+      "capacityPallets": 18,
+      "tripCount": 1,
+      "finishTimeSec": 46800,
+      "peakKg": 9800,
+      "peakPallets": 15,
+      "distanceKm": 162,
+      "trips": [
+        {
+          "index": 0,
+          "startSec": 19800,
+          "endSec": 46800,
+          "distanceKm": 162,
+          "reloadSecAfter": 0,
+          "stops": [
+            {
+              "orderId": "sample-258512-40781",
+              "orderNo": "258512",
+              "customer": "CBA Esztergom",
+              "city": "Esztergom",
+              "lon": 18.7405,
+              "lat": 47.7854,
+              "seq": 1,
+              "type": "delivery",
+              "arrivalSec": 22500,
+              "serviceStartSec": 22500,
+              "departureSec": 24000,
+              "twStartSec": 21600,
+              "twEndSec": 39600,
+              "pallets": 6.0,
+              "weightKg": 3900,
+              "serviceMin": 25,
+              "lateBySec": 0
+            },
+            {
+              "orderId": "sample-258520-40788",
+              "orderNo": "258520",
+              "customer": "Coop Dorog",
+              "city": "Dorog",
+              "lon": 18.7289,
+              "lat": 47.7206,
+              "seq": 2,
+              "type": "delivery",
+              "arrivalSec": 25800,
+              "serviceStartSec": 25800,
+              "departureSec": 27000,
+              "twStartSec": 21600,
+              "twEndSec": 43200,
+              "pallets": 4.5,
+              "weightKg": 3100,
+              "serviceMin": 20,
+              "lateBySec": 0
+            },
+            {
+              "orderId": "sample-258533-40795",
+              "orderNo": "258533",
+              "customer": "Penny Tat",
+              "city": "Tat",
+              "lon": 18.6903,
+              "lat": 47.7391,
+              "seq": 3,
+              "type": "delivery",
+              "arrivalSec": 28500,
+              "serviceStartSec": 28500,
+              "departureSec": 29700,
+              "twStartSec": 21600,
+              "twEndSec": 46800,
+              "pallets": 3.0,
+              "weightKg": 2000,
+              "serviceMin": 20,
+              "lateBySec": 1200
+            }
+          ],
+          "geometry": {
+            "type": "LineString",
+            "coordinates": [
+              [18.6441, 47.6040],
+              [18.6698, 47.6612],
+              [18.7102, 47.7210],
+              [18.7405, 47.7854],
+              [18.7289, 47.7206],
+              [18.6903, 47.7391],
+              [18.6441, 47.6040]
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "ref": "RIC-203",
+      "class": "rigid_truck",
+      "color": "#d97706",
+      "capacityKg": 12000,
+      "capacityPallets": 18,
+      "tripCount": 1,
+      "finishTimeSec": 52200,
+      "peakKg": 10400,
+      "peakPallets": 16,
+      "distanceKm": 110,
+      "trips": [
+        {
+          "index": 0,
+          "startSec": 21600,
+          "endSec": 52200,
+          "distanceKm": 110,
+          "reloadSecAfter": 0,
+          "stops": [
+            {
+              "orderId": "sample-258544-40802",
+              "orderNo": "258544",
+              "customer": "Lidl Bicske",
+              "city": "Bicske",
+              "lon": 18.6378,
+              "lat": 47.4836,
+              "seq": 1,
+              "type": "delivery",
+              "arrivalSec": 24300,
+              "serviceStartSec": 24300,
+              "departureSec": 25800,
+              "twStartSec": 21600,
+              "twEndSec": 39600,
+              "pallets": 8.0,
+              "weightKg": 5400,
+              "serviceMin": 25,
+              "lateBySec": 0
+            },
+            {
+              "orderId": "sample-258559-40811",
+              "orderNo": "258559",
+              "customer": "Aldi Tatabanya",
+              "city": "Tatabanya",
+              "lon": 18.3942,
+              "lat": 47.5490,
+              "seq": 2,
+              "type": "delivery",
+              "arrivalSec": 28200,
+              "serviceStartSec": 28200,
+              "departureSec": 29700,
+              "twStartSec": 21600,
+              "twEndSec": 46800,
+              "pallets": 8.0,
+              "weightKg": 5000,
+              "serviceMin": 25,
+              "lateBySec": 0
+            }
+          ],
+          "geometry": {
+            "type": "LineString",
+            "coordinates": [
+              [18.6441, 47.6040],
+              [18.6402, 47.5401],
+              [18.6378, 47.4836],
+              [18.5301, 47.5102],
+              [18.3942, 47.5490],
+              [18.5301, 47.5102],
+              [18.6441, 47.6040]
+            ]
+          }
+        }
+      ]
+    }
+  ],
+  "unassigned": [
+    {
+      "orderId": "sample-258571-40820",
+      "orderNo": "258571",
+      "customer": "Metro Budapest XI",
+      "reason": "no feasible vehicle within time window"
+    }
+  ]
+}
