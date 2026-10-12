@@ -229,4 +229,8 @@ The isolated two-node stateful staging, replication, backup/restore and fenced
 promotion contract is documented in
 [`docs/stateful-deployment-infrastructure.md`](docs/stateful-deployment-infrastructure.md).
 It uses `compose.stateful.yaml` and `deploy/stateful.py`; it does not replace the
-production port-8080 services or mutate Cloudflare.
+production port-8080 services or mutate Cloudflare. The documented staging run
+uses a read-only external customer dataset mount, separately mounted Hungary
+OSM assets, a dedicated R2 bucket, and the same immutable ARM64 application
+image on both Sparks; it completed native conversion and Surge solve workflows
+through both replicas.

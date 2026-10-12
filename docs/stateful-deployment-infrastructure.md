@@ -195,7 +195,27 @@ restored in a network-isolated container, replayed archived WAL, reached a new
 timeline, and exposed migration version 1. These figures are observations, not
 new tighter limits.
 
-Application and Gyermelyi results are intentionally not claimed here until a
-dedicated non-production R2 bucket and bucket-scoped credentials are supplied.
-The existing Cloudflare control-plane token was tested read-only and correctly
-lacked R2 permission.
+The dedicated non-production R2 bucket was then supplied with bucket-scoped
+credentials. Both replicas reached stateful readiness against the shared
+PostgreSQL primary and R2. They ran the same ARM64 image ID
+`sha256:95d82ebca31a712cc6f67dd1d3df4ff7c2c3950b90bd1e7bff462412f4b0018b`
+from Cursus revision `5f7768cdca0f80c41f81e63c4e470189d61cb485` and pinned OTTO revision
+`fc4a11b8c58b8921c9b68895692e791b28493a2c`.
+
+A private Gyermelyi CSV was uploaded through the primary API to R2, converted
+by Nexus/geocoding/Velo, and observed through the secondary API. Conversion
+admitted 275 routable stops across two days from 332 input rows in about 100
+seconds; 57 rows were excluded, none were unresolved, and two generated snap
+warnings. Native Surge then completed a representative 125-order, 30-second
+budget solve in about 35 seconds. The resulting 207,326-byte plan and
+27,339-byte handoff export were retrieved from the other replica.
+
+A second native solve was forcibly returned to the queue while generation 1
+was executing. The other node claimed generation 2, completed it, and only its
+plan was published; the stale execution produced no additional authoritative
+plan. At final reporting both databases were on timeline 1 at WAL LSN
+`0/B049D70`, both applications were ready, and the production port-8080 guard
+retained its original snapshot SHA-256
+`1971ae5a30b5e0c05573b8b4387995b85f303fe69392063e64a28f7cdf876b8b`.
+The machine-readable evidence is generated outside Git with
+`deploy/stateful.py report` and contains no credentials or dataset contents.
