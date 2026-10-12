@@ -234,7 +234,7 @@ services:
       DISPATCH_MAX_CONCURRENT_SOLVES: ${DISPATCH_MAX_CONCURRENT_SOLVES:-1}
       DISPATCH_MAX_CONCURRENT_IMPORTS: ${DISPATCH_MAX_CONCURRENT_IMPORTS:-1}
       DISPATCH_SOLVE_SECONDS: ${DISPATCH_SOLVE_SECONDS:-240}
-      DATASET_ROOT: /state/empty-dataset
+      DATASET_ROOT: /data/customer
       VELO_GRAPH: /data/osm/cursus/${OSM_ASSET_NAME:-default}/current/map.vlg
       VELO_ORIGIN: http://velo:8082
       CARTA_ORIGIN: http://carta:8081
@@ -251,6 +251,11 @@ services:
       - type: bind
         source: ${OSM_DATA_PATH:?set OSM_DATA_PATH}
         target: /data/osm
+        read_only: true
+        bind: { create_host_path: false }
+      - type: bind
+        source: ${CURSUS_DATASET_PATH:?set the external customer dataset path}
+        target: /data/customer
         read_only: true
         bind: { create_host_path: false }
     secrets: [database_url, r2_access_key_id, r2_secret_access_key, auth_allowlist, resend_api_key]

@@ -54,6 +54,11 @@ API, and runs durable solve, conversion and email-outbox loops. Both replicas
 may claim work; leases and fencing govern publication. `/health/ready` returns
 200 only while PostgreSQL and object storage are reachable.
 
+`CURSUS_DATASET_PATH` points to the existing external customer dataset on each
+node. Compose mounts it read-only; it is never copied into the repository,
+Docker build context, application image, or writable Cursus state. Customer
+datasets and the separately mounted OSM assets remain distinct input classes.
+
 The initial limits in `.env.stateful.example` are deliberately generous on a
 128 GiB Spark. Expensive solve and conversion concurrency defaults to one per
 replica. Replace ceilings only after the deployment report captures measured
