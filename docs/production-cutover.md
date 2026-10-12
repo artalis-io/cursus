@@ -37,9 +37,12 @@ submodules and copy `.env.production.example` to `.env.production` with mode
 private PostgreSQL address and role-specific database URL. Do not reuse staging
 projects, directories, database credentials, ports, or R2 bucket/token.
 
-Secret files under `/srv/cursus-production/secrets` must be mode `0600` and
-must contain the PostgreSQL passwords/URL, R2 access key, R2 secret, Resend key,
-and authentication allowlist. The allowlist itself remains external and must
+Secret files under the node's production secret directory must contain the
+PostgreSQL passwords/URL, R2 access key, R2 secret, Resend key, and
+authentication allowlist. Bind-backed Compose secrets preserve host ownership:
+files read by Cursus are therefore owned by UID/GID 10001 and files read by
+PostgreSQL are owned by UID/GID 70, all mode `0400`. The production env file is
+owned by the operator and mode `0600`. The allowlist remains external and must
 not be copied into this repository. Customer data and OSM assets remain
 external mounts; normal runtime mounts them read-only.
 
@@ -70,8 +73,8 @@ printing credentials or application environment. It records no mutation.
 
 ## Gate 1: provision
 
-Do not run this command until provisioning has explicit approval. The recovery
-adapter is operator-controlled and receives `--stage recovery --nonce VALUE`.
+Do not run this command until provisioning has explicit approval. The checked-in
+`deploy/recovery-adapter.py` receives `--stage recovery --nonce VALUE`.
 It must take a production backup, restore it into an isolated target, validate
 the restored database, and print one JSON object to stdout:
 
@@ -92,7 +95,7 @@ Then run:
 ```bash
 python3 deploy/cutover.py provision \
   --approve-provision \
-  --recovery-adapter /absolute/path/to/recovery-adapter
+  --recovery-adapter ./deploy/recovery-adapter.py
 ```
 
 The command validates both remote env files and Compose configurations, starts

@@ -24,6 +24,12 @@ class CutoverTests(unittest.TestCase):
         self.assertEqual({18101, 18102}, {n["candidate_port"] for n in cfg["nodes"]})
         self.assertEqual({8080}, {n["active_port"] for n in cfg["nodes"]})
 
+    def test_recovery_adapter_is_network_isolated_and_backup_read_only(self):
+        adapter = (ROOT / "deploy/recovery-adapter.py").read_text()
+        self.assertIn("--network none", adapter)
+        self.assertIn("postgres-backups:/backup:ro", adapter)
+        self.assertIn("backup_manifest_sha256", adapter)
+
     def test_all_mutating_stages_require_distinct_approval(self):
         cfg = self.config()
         with self.assertRaisesRegex(cutover.CutoverError, "approve-provision"):
