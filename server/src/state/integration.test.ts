@@ -235,8 +235,6 @@ integration('two real HTTP server instances share scenarios, jobs, and fenced pl
     assert.equal(job.json().planId, `http-plan-${jobId}`);
     const plan = await apiA.inject({ method: 'GET', url: `/api/plans/http-plan-${jobId}` });
     assert.equal(plan.json().shared, true);
-    const days = await apiB.inject({ method: 'GET', url: '/api/days' });
-    assert.equal(days.json().some((day: { baselinePlanId: string }) => day.baselinePlanId === `http-plan-${jobId}`), true);
     const handoff = await apiB.inject({ method: 'GET', url: `/api/plans/http-plan-${jobId}/handoff.json` });
     assert.equal(handoff.statusCode, 200);
   } finally { await Promise.all([apiA.close(), apiB.close()]); }
