@@ -90,6 +90,8 @@ integration('immutable objects are checksum addressed and dataset publish is ato
   assert.deepEqual(first, second);
   assert.deepEqual(await objects.getVerified(first), body);
   await a.stageObject(tenant, first);
+  await a.createDatasetUpload(tenant, 'dataset-1', { source: first });
+  await a.validateDataset(tenant, 'dataset-1', { source: first, validation: { valid: true } });
   await a.publishDataset(tenant, 'dataset-1', { objects: [first.key] }, [first.key]);
   await assert.rejects(() => a.publishDataset(tenant, 'dataset-bad', {}, ['missing-object']));
   const { rows } = await a.pool.query('SELECT id FROM datasets WHERE tenant_id=$1 ORDER BY id', [tenant]);
@@ -149,9 +151,20 @@ integration('a killed solver lease cannot publish after takeover', async () => {
 });
 
 integration('two real HTTP server instances share scenarios, jobs, and fenced plans', async () => {
-  const apiA = await createStatefulApi({ store: a, tenantId: tenant, tenantName: 'Integration tenant' });
-  const apiB = await createStatefulApi({ store: b, tenantId: tenant, tenantName: 'Integration tenant' });
+  const objects = new ObjectStore(bucket, { endpoint: s3Endpoint, accessKeyId: 'integration', secretAccessKey: 'integration' });
+  const apiA = await createStatefulApi({ store: a, tenantId: tenant, tenantName: 'Integration tenant', objects });
+  const apiB = await createStatefulApi({ store: b, tenantId: tenant, tenantName: 'Integration tenant', objects });
   try {
+    const bundle = JSON.stringify({ schemaVersion: 1, days: [{ id: 'fixture-day' }], surgeRequest: { locations: [], vehicles: [], tasks: [], requests: [] } });
+    const multipart = Buffer.from(`--x\r\nContent-Disposition: form-data; name="file"; filename="dataset.json"\r\nContent-Type: application/json\r\n\r\n${bundle}\r\n--x--\r\n`);
+    const uploaded = await apiA.inject({ method: 'POST', url: '/api/import/upload', payload: multipart,
+      headers: { 'content-type': 'multipart/form-data; boundary=x', 'content-length': String(multipart.length) } });
+    assert.equal(uploaded.statusCode, 201);
+    const data = uploaded.json();
+    assert.equal((await apiB.inject({ method: 'GET', url: '/api/import/datasets' })).json().some((d: { id: string }) => d.id === data.datasetId), false);
+    assert.equal((await apiB.inject({ method: 'POST', url: `/api/import/datasets/${data.datasetId}/validate` })).statusCode, 200);
+    assert.equal((await apiA.inject({ method: 'POST', url: `/api/import/datasets/${data.datasetId}/admit` })).statusCode, 200);
+    assert.equal((await apiB.inject({ method: 'GET', url: '/api/import/datasets' })).json().some((d: { id: string }) => d.id === data.datasetId), true);
     const created = await apiA.inject({ method: 'POST', url: '/api/scenarios', payload: { day: 'http-day', label: 'HTTP day' } });
     assert.equal(created.statusCode, 200);
     const base = created.json();
@@ -163,11 +176,15 @@ integration('two real HTTP server instances share scenarios, jobs, and fenced pl
     const queued = await apiA.inject({ method: 'POST', url: `/api/scenarios/${scenario.id}/solve`, payload: { budgetSec: 1 } });
     assert.equal(queued.statusCode, 202);
     await workOneSolve(b, async (lease) => ({ planId: `http-plan-${lease.id}`, scenarioId: scenario.id,
-      scenarioRevision: scenario.revision, plan: { id: `http-plan-${lease.id}`, scenarioId: scenario.id, shared: true } }), 'http-worker');
+      scenarioRevision: scenario.revision, plan: { id: `http-plan-${lease.id}`, scenarioId: scenario.id, scenarioRevision: scenario.revision,
+        shared: true, day: '2026-01-01', createdAt: new Date().toISOString(), objective: 'vehicles', source: 'live',
+        stats: { vehiclesUsed: 0, servedOrders: 0, totalOrders: 0, totalDistanceKm: 0 }, vehicles: [], unassigned: [] } }), 'http-worker');
     const job = await apiB.inject({ method: 'GET', url: `/api/jobs/${queued.json().id}` });
     assert.equal(job.json().state, 'succeeded');
     const plan = await apiA.inject({ method: 'GET', url: `/api/plans/http-plan-${queued.json().id}` });
     assert.equal(plan.json().shared, true);
+    const handoff = await apiB.inject({ method: 'GET', url: `/api/plans/http-plan-${queued.json().id}/handoff.json` });
+    assert.equal(handoff.statusCode, 200);
   } finally { await Promise.all([apiA.close(), apiB.close()]); }
 });
 

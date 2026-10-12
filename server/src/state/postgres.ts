@@ -99,8 +99,37 @@ export class StatefulStore {
       const objects = await client.query(`UPDATE objects SET state='published',published_at=coalesce(published_at,now())
         WHERE tenant_id=$1 AND object_key=ANY($2::text[]) AND state IN ('staged','published') RETURNING object_key`, [tenantId, objectKeys]);
       if (objects.rowCount !== objectKeys.length) throw new Error('dataset references missing or unpublished staged objects');
-      await client.query('INSERT INTO datasets(tenant_id,id,manifest) VALUES($1,$2,$3)', [tenantId, datasetId, manifest]);
+      const dataset = await client.query(`UPDATE datasets SET manifest=$3,status='admitted',admitted_at=now(),failure=NULL
+        WHERE tenant_id=$1 AND id=$2 AND status='validated' RETURNING id`, [tenantId, datasetId, manifest]);
+      if (dataset.rowCount !== 1) throw new Error('dataset must be validated before admission');
     });
+  }
+
+  async createDatasetUpload(tenantId: string, datasetId: string, manifest: unknown): Promise<void> {
+    await this.pool.query("INSERT INTO datasets(tenant_id,id,manifest,status) VALUES($1,$2,$3,'uploaded')", [tenantId, datasetId, manifest]);
+  }
+
+  async validateDataset(tenantId: string, datasetId: string, manifest: unknown): Promise<void> {
+    const result = await this.pool.query(`UPDATE datasets SET manifest=$3,status='validated',validated_at=now(),failure=NULL
+      WHERE tenant_id=$1 AND id=$2 AND status IN ('uploaded','validated')`, [tenantId, datasetId, manifest]);
+    if (result.rowCount !== 1) throw new Error('dataset is missing or not validatable');
+  }
+
+  async failDataset(tenantId: string, datasetId: string, error: string): Promise<void> {
+    await this.pool.query("UPDATE datasets SET status='failed',failure=$3 WHERE tenant_id=$1 AND id=$2 AND status<>'admitted'", [tenantId, datasetId, error.slice(0, 2000)]);
+  }
+
+  async getDataset(tenantId: string, datasetId: string): Promise<Record<string, unknown> | null> {
+    const { rows } = await this.pool.query(`SELECT id,status,schema_version "schemaVersion",manifest,failure,created_at "createdAt",
+      validated_at "validatedAt",admitted_at "admittedAt" FROM datasets WHERE tenant_id=$1 AND id=$2`, [tenantId, datasetId]);
+    return rows[0] ?? null;
+  }
+
+  async listDatasets(tenantId: string, admittedOnly = true): Promise<Record<string, unknown>[]> {
+    const { rows } = await this.pool.query(`SELECT id,status,schema_version "schemaVersion",manifest,created_at "createdAt",
+      validated_at "validatedAt",admitted_at "admittedAt" FROM datasets WHERE tenant_id=$1
+      AND ($2::boolean=false OR status='admitted') ORDER BY created_at`, [tenantId, admittedOnly]);
+    return rows;
   }
 
   async enqueueJob(tenantId: string, kind: 'solve' | 'dataset-admit', idempotencyKey: string, payload: unknown): Promise<string> {

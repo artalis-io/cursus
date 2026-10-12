@@ -81,9 +81,19 @@ CREATE TABLE IF NOT EXISTS datasets (
   tenant_id text NOT NULL REFERENCES tenants(id),
   id text NOT NULL,
   manifest jsonb NOT NULL,
+  status text NOT NULL DEFAULT 'uploaded' CHECK (status IN ('uploaded','validated','admitted','failed')),
+  schema_version integer NOT NULL DEFAULT 1,
+  failure text,
+  validated_at timestamptz,
+  admitted_at timestamptz,
   created_at timestamptz NOT NULL DEFAULT now(),
   PRIMARY KEY (tenant_id, id)
 );
+ALTER TABLE datasets ADD COLUMN IF NOT EXISTS status text NOT NULL DEFAULT 'uploaded';
+ALTER TABLE datasets ADD COLUMN IF NOT EXISTS schema_version integer NOT NULL DEFAULT 1;
+ALTER TABLE datasets ADD COLUMN IF NOT EXISTS failure text;
+ALTER TABLE datasets ADD COLUMN IF NOT EXISTS validated_at timestamptz;
+ALTER TABLE datasets ADD COLUMN IF NOT EXISTS admitted_at timestamptz;
 
 CREATE TABLE IF NOT EXISTS jobs (
   tenant_id text NOT NULL REFERENCES tenants(id),
