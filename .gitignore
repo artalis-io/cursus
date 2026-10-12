@@ -71,8 +71,10 @@ __pycache__/
 
 # dotenv environment variable files
 .env
+.env.stateful
 .env.*
 !.env.example
+!.env.stateful.example
 
 # parcel-bundler cache (https://parceljs.org/)
 .cache

@@ -1,0 +1,31 @@
+{
+  "schema_version": 1,
+  "compose_file": "compose.stateful.yaml",
+  "production_guard": {
+    "forbidden_port": 8080,
+    "forbidden_project": "cursus",
+    "required_name_fragment": "staging"
+  },
+  "nodes": [
+    {
+      "name": "spark-7468",
+      "ssh_alias": "spark-7468",
+      "project": "cursus-stateful-staging-primary",
+      "deployment_dir": "/home/lab/cursus-stateful-staging",
+      "env_file": ".env.stateful",
+      "role": "primary",
+      "app_port": 18091,
+      "postgres_service": "postgres"
+    },
+    {
+      "name": "spark-3eb0",
+      "ssh_alias": "spark-3eb0",
+      "project": "cursus-stateful-staging-secondary",
+      "deployment_dir": "/home/lab/cursus-stateful-staging",
+      "env_file": ".env.stateful",
+      "role": "standby",
+      "app_port": 18092,
+      "postgres_service": "postgres-standby"
+    }
+  ]
+}

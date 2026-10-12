@@ -1,6 +1,18 @@
 #!/bin/sh
 set -eu
 
+# Stateful mode admits immutable datasets from object storage. It does not
+# require the legacy node-local customer dataset layout below.
+if [ "${CURSUS_RUNTIME_MODE:-legacy}" = stateful ]; then
+    for path in "${SURGE_BIN:?}" "${MATRIX_BUILD_BIN:?}" "${NEXUS_DIR:?}/nx_pipeline" "${VELO_GRAPH:?}"; do
+        if [ ! -e "$path" ]; then
+            echo "Cursus preflight: required dependency is missing: $path" >&2
+            exit 1
+        fi
+    done
+    exec node /app/server/dist/stateful-runtime.js
+fi
+
 required_dataset_files='input/orders.json input/orders.geocoded.json input/vehicles.json results/perday/day1_request.json results/perday/day1_solution.json results/perday/day2_request.json results/perday/day2_solution.json'
 for relative in $required_dataset_files; do
     if [ ! -f "${DATASET_ROOT:?DATASET_ROOT is required}/$relative" ]; then
