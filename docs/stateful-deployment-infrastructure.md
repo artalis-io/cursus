@@ -81,6 +81,11 @@ from `CURSUS_REPLICATION_CIDR`. The standby refuses to overwrite a non-empty,
 uninitialized data directory and otherwise clones with `pg_basebackup -R`.
 Normal application failover and database recovery are separate: loss of the
 primary interrupts writes until an operator completes a fenced promotion.
+Replication is explicitly asynchronous: primary commits do not wait for the
+standby. This preserves write availability during standby or private-network
+failure, at the cost of a bounded but non-zero RPO if the primary is lost.
+`deploy/stateful.py status` and `report` expose connected-standby count, WAL
+positions, and byte lag; alert on a missing standby or sustained/increasing lag.
 The primary bind address must be its trusted private interface. Confirm the
 actual source address with a rejected connection before selecting the narrow
 replication CIDR: routed networks may source-NAT the standby. Never replace a
@@ -114,6 +119,11 @@ changes require forward repair or restore into a new cluster; deployment tools
 must never attempt automatic down-migrations.
 
 ## Manual promotion and fencing
+
+There is no automatic promotion. The deployment is ready for normal operation
+without external fencing hardware, but database recovery remains an
+operator-controlled procedure and must stop unless isolation is independently
+proven. This is deliberately not a claim of uninterrupted or end-to-end HA.
 
 Promotion fails closed:
 

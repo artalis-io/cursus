@@ -29,6 +29,11 @@ class StatefulDeploymentTests(unittest.TestCase):
         self.assertIn('network_mode: service:postgres', compose)
         self.assertIn('CURSUS_PRIMARY_HOST: 127.0.0.1', compose)
 
+    def test_replication_is_explicitly_asynchronous(self):
+        compose = (ROOT / "compose.stateful.yaml").read_text()
+        self.assertIn('synchronous_standby_names=', compose)
+        self.assertNotIn('synchronous_standby_names=\'*\'', compose)
+
     def test_production_port_is_rejected(self):
         cfg = self.config(); cfg["nodes"][0]["app_port"] = 8080
         with tempfile.NamedTemporaryFile("w", suffix=".json") as handle:

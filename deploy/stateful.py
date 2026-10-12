@@ -81,12 +81,18 @@ def node_status(node: dict[str, Any]) -> dict[str, Any]:
                 "test -n \"$cid\" && docker exec \"$cid\" psql -U cursus -d cursus -Atc "
                 + shlex.quote("select coalesce(max(version),0),pg_is_in_recovery(),case when pg_is_in_recovery() "
                               "then pg_last_wal_replay_lsn() else pg_current_wal_lsn() end," 
-                              "(select timeline_id from pg_control_checkpoint()) from schema_migrations"))
+                              "(select timeline_id from pg_control_checkpoint()),"
+                              "case when pg_is_in_recovery() then 0 else (select count(*) from pg_stat_replication) end,"
+                              "case when pg_is_in_recovery() then null else coalesce((select "
+                              "max(pg_wal_lsn_diff(pg_current_wal_lsn(),replay_lsn))::bigint "
+                              "from pg_stat_replication),-1) end from schema_migrations"))
     database = ssh(node, ["sh", "-c", selector], check=False)
     if database.returncode == 0 and database.stdout.strip():
-        schema, recovery, lsn, timeline = database.stdout.strip().split("|", 3)
+        schema, recovery, lsn, timeline, standbys, lag_bytes = database.stdout.strip().split("|", 5)
         status["database"] = {"schema_version": int(schema), "in_recovery": recovery == "t",
-                              "wal_lsn": lsn, "timeline": int(timeline)}
+                              "wal_lsn": lsn, "timeline": int(timeline),
+                              "connected_standbys": int(standbys),
+                              "replication_lag_bytes": int(lag_bytes) if lag_bytes else None}
     else: status["database"] = None
     return status
 

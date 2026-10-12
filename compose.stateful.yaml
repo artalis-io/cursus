@@ -30,6 +30,8 @@ services:
       - -c
       - max_replication_slots=10
       - -c
+      - synchronous_standby_names=
+      - -c
       - password_encryption=scram-sha-256
       - -c
       - archive_mode=on
