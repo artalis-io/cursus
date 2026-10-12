@@ -111,6 +111,7 @@ services:
     profiles: [backup]
     image: postgres:16.6-alpine@sha256:1d04b9ba1d4996401f2552b51beda8187f175c0645c091e4781134fc9c9a3eef
     entrypoint: [/opt/cursus/backup.sh]
+    user: "70:70"
     environment:
       CURSUS_PRIMARY_HOST: ${CURSUS_PRIMARY_HOST:?set CURSUS_PRIMARY_HOST}
       CURSUS_PRIMARY_PORT: ${CURSUS_PRIMARY_PORT:-55432}
@@ -136,6 +137,7 @@ services:
     profiles: [restore]
     image: postgres:16.6-alpine@sha256:1d04b9ba1d4996401f2552b51beda8187f175c0645c091e4781134fc9c9a3eef
     entrypoint: [/opt/cursus/restore.sh]
+    user: "70:70"
     environment:
       CURSUS_BACKUP_ID: ${CURSUS_BACKUP_ID:-latest}
       CURSUS_RECOVERY_TARGET_TIME: ${CURSUS_RECOVERY_TARGET_TIME:-}
