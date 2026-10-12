@@ -11,6 +11,7 @@ import { exportScenario, parseScenarioImport } from '../store.js';
 import { planToCsv, planToRouteSheetHtml, planToRoutesCsv, planToHandoffJson } from '../export.js';
 import type { ConversionPayload } from './conversion.js';
 import type { Mapping } from '../data/onboard.js';
+import { magicLinkConfirmation } from '../magic-link.js';
 
 export interface StatefulApiOptions { store: StatefulStore; tenantId: string; tenantName: string; auth?: StatefulAuthService; publicOrigin?: string; objects?: ObjectStore; maxUploadBytes?: number }
 
@@ -50,6 +51,11 @@ export async function createStatefulApi(options: StatefulApiOptions): Promise<Fa
     return reply.code(202).send({ accepted: true });
   });
   app.get<{ Querystring: { token?: string } }>('/api/auth/verify', async (req, reply) => {
+    if (!options.auth || !req.query.token) return reply.redirect('/?auth=invalid');
+    return reply.header('Cache-Control', 'no-store').type('text/html; charset=utf-8')
+      .send(magicLinkConfirmation(req.query.token));
+  });
+  app.post<{ Querystring: { token?: string } }>('/api/auth/verify', async (req, reply) => {
     const session = options.auth && req.query.token ? await options.auth.consumeMagicLink(req.query.token) : null;
     if (!session) return reply.redirect('/?auth=invalid');
     reply.header('Set-Cookie', options.auth!.cookie(session)); return reply.redirect('/');

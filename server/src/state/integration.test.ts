@@ -129,21 +129,30 @@ integration('PostgreSQL magic links persist sessions and queue email atomically'
   const objects = new ObjectStore(bucket, { endpoint: s3Endpoint, accessKeyId: 'integration', secretAccessKey: 'integration' });
   const protectedApi = await createStatefulApi({ store: a, objects, auth, tenantId: tenant,
     tenantName: 'Integration tenant', publicOrigin: 'https://cursus.example.test' });
-  try {
+  {
     assert.notEqual((await protectedApi.inject({ method: 'GET', url: '/' })).statusCode, 401,
       'SPA shell must remain reachable for login');
     assert.equal((await protectedApi.inject({ method: 'GET', url: '/api/scenarios' })).statusCode, 401);
     const ready = await protectedApi.inject({ method: 'GET', url: '/health/ready' });
     assert.equal(ready.statusCode, 200); assert.match(ready.body, /"status": "ready"/);
-  } finally { await protectedApi.close(); }
+  }
   await auth.requestMagicLink('admin@example.test');
   const { rows } = await a.pool.query<{ payload: { html: string } }>(`SELECT payload FROM email_outbox WHERE tenant_id=$1
     AND payload->'to'->>0='admin@example.test' ORDER BY created_at DESC LIMIT 1`, [tenant]);
   const token = decodeURIComponent(rows[0]!.payload.html.match(/token=([^"<]+)/)![1]!);
-  const session = await auth.consumeMagicLink(token); assert.ok(session);
+  const scanned = await protectedApi.inject({ method: 'GET', url: `/api/auth/verify?token=${encodeURIComponent(token)}` });
+  assert.equal(scanned.statusCode, 200); assert.match(scanned.body, /Continue to Cursus/);
+  assert.equal(scanned.headers['set-cookie'], undefined, 'a GET from an email scanner must not create a session');
+  assert.equal((await b.pool.query('SELECT count(*)::int n FROM sessions WHERE tenant_id=$1', [tenant])).rows[0].n, 0);
+  const verified = await protectedApi.inject({ method: 'POST', url: `/api/auth/verify?token=${encodeURIComponent(token)}` });
+  assert.equal(verified.statusCode, 302); assert.match(String(verified.headers['set-cookie']), /^cursus_session=/);
+  const session = String(verified.headers['set-cookie']).match(/^cursus_session=([^;]+)/)![1]!;
   assert.equal((await b.pool.query('SELECT count(*)::int n FROM sessions WHERE tenant_id=$1', [tenant])).rows[0].n, 1);
   assert.equal((await auth.authenticate(session!))?.email, 'admin@example.test');
+  const reused = await protectedApi.inject({ method: 'POST', url: `/api/auth/verify?token=${encodeURIComponent(token)}` });
+  assert.equal(reused.statusCode, 302); assert.equal(reused.headers.location, '/?auth=invalid');
   await auth.logout(session!); assert.equal(await auth.authenticate(session!), null);
+  await protectedApi.close();
   await a.pool.query("UPDATE email_outbox SET state='sent',sent_at=now() WHERE tenant_id=$1 AND payload->'to'->>0='admin@example.test'", [tenant]);
 });
 
