@@ -52,7 +52,15 @@ def node_status(node: dict[str, Any]) -> dict[str, Any]:
         return status
     project_filter = f"label=com.docker.compose.project={node['project']}"
     containers = ssh(node, ["docker", "ps", "--filter", project_filter, "--format", "{{json .}}"], check=False)
-    status["containers"] = [json.loads(line) for line in containers.stdout.splitlines() if line.strip()]
+    status["containers"] = []
+    for line in containers.stdout.splitlines():
+        if not line.strip(): continue
+        raw = json.loads(line)
+        labels = dict(part.split("=", 1) for part in raw.get("Labels", "").split(",") if "=" in part)
+        status["containers"].append({"name": raw.get("Names"), "service": labels.get("com.docker.compose.service"),
+                                     "image": raw.get("Image"), "image_id": labels.get("com.docker.compose.image"),
+                                     "state": raw.get("State"), "status": raw.get("Status"),
+                                     "ports": raw.get("Ports", ""), "networks": raw.get("Networks", "")})
     health = ssh(node, ["curl", "--silent", "--show-error", "--fail", "--max-time", "5",
                         f"http://127.0.0.1:{node['app_port']}/health/ready"], check=False)
     try: status["readiness"] = json.loads(health.stdout) if health.returncode == 0 else None
@@ -72,11 +80,13 @@ def node_status(node: dict[str, Any]) -> dict[str, Any]:
                 f"--filter label=com.docker.compose.service={shlex.quote(node['postgres_service'])}); "
                 "test -n \"$cid\" && docker exec \"$cid\" psql -U cursus -d cursus -Atc "
                 + shlex.quote("select coalesce(max(version),0),pg_is_in_recovery(),case when pg_is_in_recovery() "
-                              "then pg_last_wal_replay_lsn() else pg_current_wal_lsn() end from schema_migrations"))
+                              "then pg_last_wal_replay_lsn() else pg_current_wal_lsn() end," 
+                              "(select timeline_id from pg_control_checkpoint()) from schema_migrations"))
     database = ssh(node, ["sh", "-c", selector], check=False)
     if database.returncode == 0 and database.stdout.strip():
-        schema, recovery, lsn = database.stdout.strip().split("|", 2)
-        status["database"] = {"schema_version": int(schema), "in_recovery": recovery == "t", "wal_lsn": lsn}
+        schema, recovery, lsn, timeline = database.stdout.strip().split("|", 3)
+        status["database"] = {"schema_version": int(schema), "in_recovery": recovery == "t",
+                              "wal_lsn": lsn, "timeline": int(timeline)}
     else: status["database"] = None
     return status
 
