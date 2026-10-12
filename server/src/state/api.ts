@@ -12,6 +12,8 @@ import { planToCsv, planToRouteSheetHtml, planToRoutesCsv, planToHandoffJson } f
 import type { ConversionPayload } from './conversion.js';
 import type { Mapping } from '../data/onboard.js';
 import { magicLinkConfirmation, registerMagicLinkFormParser } from '../magic-link.js';
+import type { Plan } from '../types.js';
+import type { Scenario } from '../store.js';
 
 export interface StatefulApiOptions { store: StatefulStore; tenantId: string; tenantName: string; auth?: StatefulAuthService; publicOrigin?: string; objects?: ObjectStore; maxUploadBytes?: number }
 
@@ -70,6 +72,9 @@ export async function createStatefulApi(options: StatefulApiOptions): Promise<Fa
     await options.auth?.logout(cookieValue(req.headers.cookie, 'cursus_session'));
     if (options.auth) reply.header('Set-Cookie', options.auth.clearCookie()); return { ok: true };
   });
+  app.get('/api/days', async () => statefulDaySummaries(
+    await scenarios.list(), await options.store.listPlans(options.tenantId),
+  ));
   app.get<{ Querystring: { day?: string } }>('/api/scenarios', async (req) => scenarios.list(req.query.day));
   app.post<{ Body: { day?: string; from?: string; label?: string } }>('/api/scenarios', async (req, reply) => {
     if (req.body?.from) { const parent = await scenarios.get(req.body.from); if (!parent) return reply.code(404).send({ error: 'parent scenario not found' }); return reply.code(201).send(await scenarios.copy(parent, req.body.label)); }
@@ -103,9 +108,12 @@ export async function createStatefulApi(options: StatefulApiOptions): Promise<Fa
     const id = await options.store.enqueueJob(options.tenantId, 'solve', `solve/${scenario.id}/${scenario.revision}/${randomKey()}`, {
       scenarioId: scenario.id, scenarioRevision: scenario.revision, budgetSec: req.body?.budgetSec, objective: req.body?.objective ?? 'vehicles', scenario,
     });
-    return reply.code(202).send({ id, status: 'pending', scenarioId: scenario.id, scenarioRevision: scenario.revision });
+    return reply.code(202).send({ jobId: id, status: 'pending', scenarioId: scenario.id, scenarioRevision: scenario.revision });
   });
-  app.get<{ Params: { id: string } }>('/api/jobs/:id', async (req, reply) => (await options.store.getJob(options.tenantId, req.params.id)) ?? reply.code(404).send({ error: 'job not found' }));
+  app.get<{ Params: { id: string } }>('/api/jobs/:id', async (req, reply) => {
+    const job = await options.store.getJob(options.tenantId, req.params.id);
+    return job ? statefulJobResponse(job) : reply.code(404).send({ error: 'job not found' });
+  });
   app.get<{ Params: { id: string } }>('/api/plans/:id', async (req, reply) => (await options.store.getPlan(options.tenantId, req.params.id)) ?? reply.code(404).send({ error: 'plan not found' }));
   app.get('/api/plans', async () => options.store.listPlans(options.tenantId));
   const planExport = (kind: 'csv' | 'routes' | 'html' | 'handoff') => async (req: { params: { id: string } }, reply: FastifyReply) => {
@@ -151,3 +159,47 @@ export async function createStatefulApi(options: StatefulApiOptions): Promise<Fa
 }
 
 function randomKey(): string { return `${Date.now()}-${Math.random().toString(36).slice(2)}`; }
+
+/** Adapt authoritative state to the stable SPA contract. Only days with a
+ * published plan are selectable; an admitted but unsolved day would otherwise
+ * lead the user directly to a 404. */
+export function statefulDaySummaries(scenarios: Scenario[], plans: Plan[]) {
+  return scenarios
+    .filter((scenario) => scenario.kind === 'base')
+    .map((scenario) => {
+      const plan = plans
+        .filter((candidate) => candidate.scenarioId === scenario.id)
+        .sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
+      if (!plan) return null;
+      return {
+        id: scenario.day,
+        isoDate: plan.day,
+        label: scenario.label,
+        datasetLabel: null,
+        orders: plan.stats.totalOrders,
+        vehicles: plan.vehicles.length,
+        baseScenarioId: scenario.id,
+        baselinePlanId: plan.id,
+      };
+    })
+    .filter((day): day is NonNullable<typeof day> => day !== null);
+}
+
+export function statefulJobResponse(job: Record<string, unknown>) {
+  const result = job.result && typeof job.result === 'object' ? job.result as Record<string, unknown> : {};
+  const payload = job.payload && typeof job.payload === 'object' ? job.payload as Record<string, unknown> : {};
+  const state = String(job.state ?? 'pending');
+  const status = state === 'succeeded' ? 'completed' : state;
+  const createdAt = new Date(String(job.createdAt));
+  const updatedAt = new Date(String(job.updatedAt));
+  return {
+    ...job,
+    status,
+    scenarioId: payload.scenarioId ?? null,
+    scenarioRevision: payload.scenarioRevision ?? null,
+    elapsedSec: Number.isFinite(createdAt.valueOf()) && Number.isFinite(updatedAt.valueOf())
+      ? Math.max(0, (updatedAt.valueOf() - createdAt.valueOf()) / 1000) : 0,
+    planId: result.planId ?? null,
+    termination: result.termination ?? null,
+  };
+}
