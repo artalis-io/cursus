@@ -108,8 +108,26 @@ touch port `8080` or Cloudflare.
 ## Gate 2: migration and write freeze
 
 Migration requires separate explicit approval. Before copying authoritative
-state, freeze legacy writes and record signed/operator-controlled evidence in a
-local JSON file containing at minimum:
+state, use `deploy/migration-source.py` to inventory and checksum every source
+file into a private location outside Git and the Docker build context:
+
+```bash
+python3 deploy/migration-source.py create \
+  --output /secure/change/source-manifest.json
+python3 deploy/migration-source.py verify \
+  --manifest /secure/change/source-manifest.json
+```
+
+The checked-in `deploy/production-migration.json` defines the expected entity
+counts and the narrow authoritative Gyermelyi object set. The full customer
+tree remains in the private snapshot, but only the three raw source tables,
+canonical solver request, and geocoded orders become checksum-addressed R2
+objects. Results, tiles, uploads, matrices, routing/geocoding caches, scripts,
+and other regenerable/supporting files do not become admitted datasets.
+
+After creating and verifying both a source snapshot and a fresh isolated
+PostgreSQL restore, freeze the identified legacy writer. Record
+operator-controlled evidence in a private JSON file containing at minimum:
 
 ```json
 {
@@ -119,18 +137,26 @@ local JSON file containing at minimum:
 }
 ```
 
-The migration adapter receives `--stage migration --nonce VALUE`. It is
-deployment-specific because the source may be legacy JSON/SQLite or an approved
-staging snapshot. It must import tenant/auth/scenario/job metadata, admit or
-reference immutable R2 artifacts, validate row/object checksums and tenant
-ownership, and print matching successful JSON. It must not silently infer a
-source or overwrite an existing production tenant.
+The checked-in migration adapter receives `--stage migration --nonce VALUE`.
+It requires the private manifest path through `CURSUS_SOURCE_MANIFEST`, verifies
+the source has not changed, and requires an empty production tenant. It reads
+the external allowlist without printing or committing addresses; every listed
+member is initialized as an administrator. It uploads immutable objects with
+`If-None-Match: *`, rejects metadata conflicts, then publishes memberships,
+scenarios, plans, the admitted dataset, objects, and the completed legacy job
+in one short PostgreSQL transaction. Legacy non-UUID job IDs receive stable
+UUIDv5 mappings and remain recorded in job payload/result metadata. It creates
+no magic link, session, audit event, outbox entry, conversion job, or solve job.
+
+The PR #10/#11 staging tenant and staging R2 objects are never migration
+sources. A successful migration must leave the email outbox empty and report
+`staging_imported: false`.
 
 ```bash
 python3 deploy/cutover.py migrate \
   --approve-migration \
   --freeze-evidence /secure/change/cursus-write-freeze.json \
-  --adapter /absolute/path/to/migration-adapter
+  --adapter 'env CURSUS_SOURCE_MANIFEST=/secure/change/source-manifest.json python3 deploy/migration-adapter.py'
 ```
 
 The result is `deploy/reports/production-migration.json`. Keep writes frozen
