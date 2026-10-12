@@ -121,6 +121,12 @@ write-freeze, origin-draining cutover, and rollback procedure is documented in
 remains manual and fail-closed; application routing HA is not a claim of
 automatic database HA or a hard asynchronous-replication RPO.
 
+The stateful PostgreSQL/R2 runtime is the accepted production system of record.
+The legacy writer remains frozen pending separately approved cleanup; its
+snapshots and backups are recovery evidence, not an automatic rollback target.
+Production application rollback must preserve all post-cutover PostgreSQL
+writes.
+
 ```bash
 git submodule update --init --recursive
 cp .env.example .env

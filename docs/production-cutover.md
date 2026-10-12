@@ -2,9 +2,22 @@
 
 This runbook implements PR #12's three separately approved stages. It does not
 change the adopted Cloudflare load balancer, tunnels, monitor, SSH ingress, or
-Resend DNS. Before the final stage, both production candidates listen only on
-isolated loopback ports (`18101` and `18102`); the temporary Hello World servers
-continue to own port `8080` and public traffic.
+Resend DNS.
+
+## Accepted production state
+
+The stateful runtime was accepted as the production system of record on
+2026-10-13. PostgreSQL is authoritative for application metadata, sessions,
+jobs, and plans; R2 is authoritative for admitted immutable objects. Both
+Sparks run the approved Cursus image on loopback port `8080` behind the existing
+Cloudflare tunnels and load balancer.
+
+The legacy writer must remain stopped. Its source tree, frozen data, snapshots,
+and backups are retained for forensic reference and explicitly reviewed
+recovery planning; they are not an automatic rollback target. Because the live
+database contains post-cutover writes, never restore a pre-migration backup
+over it as part of an application rollback. Legacy reactivation or cleanup
+requires separate approval.
 
 The machine-readable inventory is [`deploy/production.json`](../deploy/production.json),
 the production environment template is [`.env.production.example`](../.env.production.example),
@@ -159,9 +172,11 @@ python3 deploy/cutover.py migrate \
   --adapter 'env CURSUS_SOURCE_MANIFEST=/secure/change/source-manifest.json python3 deploy/migration-adapter.py'
 ```
 
-The result is `deploy/reports/production-migration.json`. Keep writes frozen
-until cutover succeeds or the rollback decision explicitly returns authority to
-the old system.
+The result is `deploy/reports/production-migration.json`. Before production
+acceptance, writes remain frozen until cutover succeeds or an explicit rollback
+decision returns authority to the old system. After production acceptance, the
+freeze is permanent unless a separately reviewed recovery procedure explicitly
+changes authority; do not reactivate the legacy writer.
 
 ## Gate 3: activate
 
@@ -205,3 +220,6 @@ After activation verify local and public readiness, authentication, a small
 stateful read/write workflow, cross-replica retrieval, R2 access, outbox state,
 replication lag, backup scheduling, and Cloudflare pool health. Preserve the
 machine-readable reports with the change record rather than Git.
+
+Successful activation does not authorize legacy cleanup, PostgreSQL promotion,
+or changes to Cloudflare or Resend. Keep automatic PostgreSQL failover disabled.
