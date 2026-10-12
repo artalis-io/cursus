@@ -1,0 +1,45 @@
+{
+  "schema_version": 1,
+  "hostname": "cursus.artalis.io",
+  "ha_config": "deploy/ha.json",
+  "compose_file": "compose.stateful.yaml",
+  "source": {
+    "staging_config": "deploy/stateful.json",
+    "required_schema_version": 1
+  },
+  "approval_gates": ["provision", "migration", "cutover"],
+  "temporary_service": {
+    "port": 8080,
+    "command": ["python3", "/tmp/cursus-hello.py"]
+  },
+  "nodes": [
+    {
+      "name": "spark-7468",
+      "ssh_alias": "spark-7468",
+      "role": "primary",
+      "project": "cursus-production-primary",
+      "deployment_dir": "/home/lab/cursus-production",
+      "env_file": ".env.production",
+      "candidate_port": 18101,
+      "active_port": 8080,
+      "postgres_service": "postgres"
+    },
+    {
+      "name": "spark-3eb0",
+      "ssh_alias": "spark-3eb0",
+      "role": "standby",
+      "project": "cursus-production-secondary",
+      "deployment_dir": "/home/lab/cursus-production",
+      "env_file": ".env.production",
+      "candidate_port": 18102,
+      "active_port": 8080,
+      "postgres_service": "postgres-standby"
+    }
+  ],
+  "evidence": {
+    "directory": "deploy/reports",
+    "provision": "production-provision.json",
+    "migration": "production-migration.json",
+    "cutover": "production-cutover.json"
+  }
+}

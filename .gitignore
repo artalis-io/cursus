@@ -75,6 +75,11 @@ __pycache__/
 .env.*
 !.env.example
 !.env.stateful.example
+!.env.production.example
+
+# Local deployment evidence may contain operational identifiers and must not
+# become source-controlled state.
+deploy/reports/
 
 # parcel-bundler cache (https://parceljs.org/)
 .cache
