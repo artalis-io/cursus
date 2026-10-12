@@ -9,15 +9,17 @@
     "start": "tsx src/server.ts",
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "node --import tsx --test src/plan/mapper.test.ts src/plan/compare.test.ts src/plan/week.test.ts src/store.test.ts src/solve.test.ts src/cost.test.ts src/export.test.ts src/ratelimit.test.ts src/validate.test.ts src/data/onboard.test.ts src/data/admit.test.ts src/data/fleet.test.ts src/util/semaphore.test.ts src/config.test.ts src/server.test.ts",
-    "test:ci": "node --import tsx --test src/plan/compare.test.ts src/plan/week.test.ts src/store.test.ts src/cost.test.ts src/export.test.ts src/ratelimit.test.ts src/validate.test.ts src/data/onboard.test.ts src/data/fleet.test.ts src/util/semaphore.test.ts src/config.test.ts"
+    "test": "node --import tsx --test src/auth.test.ts src/plan/mapper.test.ts src/plan/compare.test.ts src/plan/week.test.ts src/store.test.ts src/solve.test.ts src/cost.test.ts src/export.test.ts src/ratelimit.test.ts src/validate.test.ts src/data/onboard.test.ts src/data/admit.test.ts src/data/fleet.test.ts src/util/semaphore.test.ts src/config.test.ts src/server.test.ts",
+    "test:ci": "node --import tsx --test src/auth.test.ts src/plan/compare.test.ts src/plan/week.test.ts src/store.test.ts src/cost.test.ts src/export.test.ts src/ratelimit.test.ts src/validate.test.ts src/data/onboard.test.ts src/data/fleet.test.ts src/util/semaphore.test.ts src/config.test.ts"
   },
   "dependencies": {
     "@fastify/multipart": "^8.3.1",
     "@fastify/static": "^7.0.4",
+    "better-sqlite3": "^11.10.0",
     "fastify": "^4.28.1"
   },
   "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^20.14.0",
     "tsx": "^4.19.1",
     "typescript": "^5.6.3"

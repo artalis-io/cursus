@@ -76,7 +76,14 @@ services:
     environment:
       DISPATCH_HOST: 0.0.0.0
       DISPATCH_PORT: 8091
-      DISPATCH_AUTH_TOKEN: ${DISPATCH_AUTH_TOKEN:?set a strong DISPATCH_AUTH_TOKEN}
+      CURSUS_AUTH_REQUIRED: "1"
+      CURSUS_AUTH_DATABASE: /state/application/cursus.sqlite3
+      CURSUS_AUTH_ALLOWED_EMAILS_FILE: /run/secrets/auth_allowlist
+      RESEND_API_KEY_FILE: /run/secrets/resend_api_key
+      CURSUS_PUBLIC_ORIGIN: ${CURSUS_PUBLIC_ORIGIN:-https://cursus.artalis.io}
+      CURSUS_AUTH_FROM: ${CURSUS_AUTH_FROM:-Cursus <login@cursus.artalis.io>}
+      CURSUS_TENANT_ID: ${CURSUS_TENANT_ID:-demo}
+      CURSUS_TENANT_NAME: ${CURSUS_TENANT_NAME:-Cursus Demo}
       DISPATCH_CORS_ORIGINS: ${DISPATCH_CORS_ORIGINS:-}
       DISPATCH_STRICT_CONFIG: "1"
       DISPATCH_SOLVE_SECONDS: ${DISPATCH_SOLVE_SECONDS:-240}
@@ -108,6 +115,7 @@ services:
         target: /data/osm
         read_only: true
         bind: { create_host_path: false }
+    secrets: [auth_allowlist, resend_api_key]
     tmpfs: ["/tmp:size=256m,mode=1777"]
     healthcheck:
       test: [CMD, node, -e, "fetch('http://127.0.0.1:8091/api/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
@@ -151,3 +159,9 @@ networks:
     internal: true
   cursus-edge: {}
   prepare-egress: {}
+
+secrets:
+  auth_allowlist:
+    file: ${CURSUS_AUTH_ALLOWLIST_PATH:?set CURSUS_AUTH_ALLOWLIST_PATH}
+  resend_api_key:
+    file: ${RESEND_API_KEY_PATH:?set RESEND_API_KEY_PATH}

@@ -23,6 +23,15 @@ for directory in "${DISPATCH_DATA_DIR:?}" "${DISPATCH_UPLOADS_DIR:?}" "${GEOCODE
     }
 done
 
+if [ "${CURSUS_AUTH_REQUIRED:-0}" = 1 ]; then
+    for secret in "${CURSUS_AUTH_ALLOWED_EMAILS_FILE:?}" "${RESEND_API_KEY_FILE:?}"; do
+        if [ ! -s "$secret" ]; then
+            echo "Cursus preflight: required authentication secret is missing or empty" >&2
+            exit 1
+        fi
+    done
+fi
+
 dataset_id=${CURSUS_DATASET_ID:-customer-dataset}
 case "$dataset_id" in (*[!A-Za-z0-9._-]*) echo "Cursus preflight: invalid CURSUS_DATASET_ID" >&2; exit 1;; esac
 identity=$(for relative in $required_dataset_files; do sha256sum "$DATASET_ROOT/$relative"; done | sha256sum | awk '{print $1}')

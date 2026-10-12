@@ -31,12 +31,32 @@ From the Cursus checkout:
 
 ```sh
 cp .env.example .env
-# Edit every /absolute/path and replace DISPATCH_AUTH_TOKEN.
+# Edit every /absolute/path and configure the external authentication files.
 mkdir -p /your/cursus-state /your/osm-assets
 # Make state writable by CURSUS_UID:CURSUS_GID (10001:10001 by default).
 docker compose config --quiet
 docker compose build
 ```
+
+Authentication uses one-time Resend magic links and a SQLite database under
+`CURSUS_DATA_PATH`. Create two files outside the checkout before validating
+Compose: `CURSUS_AUTH_ALLOWLIST_PATH` contains one approved email address per
+line, and `RESEND_API_KEY_PATH` contains only the Resend API key. Neither file,
+its contents, nor the addresses belong in `.env` or Git. Configure the verified
+sender with `CURSUS_AUTH_FROM` and the external HTTPS URL with
+`CURSUS_PUBLIC_ORIGIN`. The default sender is
+`Cursus <login@cursus.artalis.io>` and does not need an inbox.
+
+Magic-link challenges are hashed, expire after ten minutes and are one-use.
+Sessions are revocable, expire after seven days, and use Secure, HttpOnly,
+SameSite cookies. The initial allowlisted users receive admin membership in the
+single configured tenant. SQLite runs in WAL mode; back up the database along
+with the rest of `CURSUS_DATA_PATH`.
+
+This release intentionally supports one configured tenant. Identity,
+membership and audit records carry a tenant ID, but the existing dispatch
+scenario/plan files remain a single-tenant store. Do not add a second tenant
+until those domain records are tenant-keyed and isolation-tested.
 
 `CURSUS_DATASET_PATH` is a pre-existing customer input directory and is mounted
 read-only. Its current application schema is unchanged: `input/orders.json`,

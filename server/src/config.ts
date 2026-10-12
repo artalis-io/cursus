@@ -29,6 +29,14 @@ export const config = {
   // non-loopback host: the server refuses to listen on a public interface
   // without it, so an unauthenticated API is never exposed by a config slip.
   authToken: env('DISPATCH_AUTH_TOKEN', ''),
+  authRequired: env('CURSUS_AUTH_REQUIRED', '0') === '1',
+  authDatabase: env('CURSUS_AUTH_DATABASE', resolve(env('DISPATCH_DATA_DIR', resolve(serverRoot, 'data')), 'cursus.sqlite3')),
+  authAllowedEmailsFile: env('CURSUS_AUTH_ALLOWED_EMAILS_FILE', ''),
+  resendApiKeyFile: env('RESEND_API_KEY_FILE', ''),
+  authPublicOrigin: env('CURSUS_PUBLIC_ORIGIN', 'http://127.0.0.1:8091'),
+  authFrom: env('CURSUS_AUTH_FROM', 'Cursus <login@cursus.artalis.io>'),
+  authTenantId: env('CURSUS_TENANT_ID', 'default'),
+  authTenantName: env('CURSUS_TENANT_NAME', 'Cursus'),
   // Default-deny CORS: comma-separated allowed origins. Empty = same-origin only
   // (the SPA is served same-origin, so this is the correct default).
   corsOrigins: env('DISPATCH_CORS_ORIGINS', '').split(',').map((s) => s.trim()).filter(Boolean),

@@ -14,6 +14,7 @@ import { fillPlanGeometry, veloReachable } from './geometry/velo.js';
 import { store, validateScenarioEdit, exportScenario, parseScenarioImport, type ScenarioEdit } from './store.js';
 import { enqueueSolve, cancelJob, hasSolveCapacity, shutdownSolves, type Objective } from './solve.js';
 import { Semaphore } from './util/semaphore.js';
+import { AuthService, cookieValue } from './auth.js';
 
 /* A2: bound concurrent dataset admits (each holds a geocode + an N^2 matrix
  * build). Admits await a slot, surfacing as the 'queued' stage, rather than
@@ -33,6 +34,16 @@ import type { Plan } from './types.js';
 const ENTITIES: Entity[] = ['orders', 'vehicles', 'routes'];
 
 const app = Fastify({ logger: { level: 'info' }, bodyLimit: 4 * 1024 * 1024 });
+const auth = config.authRequired ? new AuthService({
+  databasePath: config.authDatabase,
+  allowedEmailsFile: config.authAllowedEmailsFile,
+  resendApiKeyFile: config.resendApiKeyFile,
+  publicOrigin: config.authPublicOrigin,
+  from: config.authFrom,
+  tenantId: config.authTenantId,
+  tenantName: config.authTenantName,
+  secureCookies: config.authPublicOrigin.startsWith('https://'),
+}) : null;
 
 // Consistent JSON error envelope; never leak a stack to the client.
 app.setErrorHandler((err, req, reply) => {
@@ -63,6 +74,23 @@ app.addHook('onRequest', (req, reply, done) => {
     if (req.method === 'OPTIONS') { reply.code(204).send(); return; }
   } else if (req.method === 'OPTIONS' && req.url.startsWith('/api')) {
     reply.code(204).send(); return;   // preflight for a non-allowed origin: no CORS headers
+  }
+  done();
+});
+
+// Browser sessions are tenant memberships, not bearer tokens in JavaScript.
+// Static assets, health and the login exchange stay public; application APIs
+// and map tiles require an active admin session when auth is enabled.
+app.addHook('onRequest', (req, reply, done) => {
+  if (!auth) return done();
+  const publicPath = req.url.startsWith('/api/health') || req.url.startsWith('/api/auth/');
+  const protectedPath = req.url.startsWith('/api/') || req.url.startsWith('/tiles');
+  if (publicPath || !protectedPath) return done();
+  const principal = auth.authenticate(cookieValue(req.headers.cookie, 'cursus_session'));
+  if (!principal) { reply.code(401).send({ error: 'authentication required' }); return; }
+  if (!['GET', 'HEAD', 'OPTIONS'].includes(req.method)) {
+    const origin = req.headers.origin;
+    if (origin !== config.authPublicOrigin) { reply.code(403).send({ error: 'invalid request origin' }); return; }
   }
   done();
 });
@@ -124,6 +152,32 @@ void (async () => {
 
 /* ---- Meta ---- */
 app.get('/api/health', async () => ({ status: 'ok', service: 'cursus-api', days: DAYS.map((d) => d.id) }));
+app.post<{ Body: { email?: string } }>('/api/auth/magic-link', async (req, reply) => {
+  const email = typeof req.body?.email === 'string' ? req.body.email : '';
+  if (auth && email) {
+    try { await auth.requestMagicLink(email); }
+    catch (err) { app.log.error({ err }, 'magic-link delivery failed'); }
+  }
+  return reply.code(202).send({ accepted: true });
+});
+app.get<{ Querystring: { token?: string } }>('/api/auth/verify', async (req, reply) => {
+  const session = auth && req.query.token ? auth.consumeMagicLink(req.query.token) : null;
+  if (!session) return reply.redirect('/?auth=invalid');
+  reply.header('Set-Cookie', auth!.cookie(session));
+  return reply.redirect('/');
+});
+app.get('/api/auth/me', async (req, reply) => {
+  if (!auth) return { email: 'local@cursus', tenantId: 'local', role: 'admin' };
+  const principal = auth.authenticate(cookieValue(req.headers.cookie, 'cursus_session'));
+  if (!principal) return reply.code(401).send({ error: 'authentication required' });
+  return principal;
+});
+app.post('/api/auth/logout', async (req, reply) => {
+  if (auth && req.headers.origin !== config.authPublicOrigin) return reply.code(403).send({ error: 'invalid request origin' });
+  auth?.logout(cookieValue(req.headers.cookie, 'cursus_session'));
+  if (auth) reply.header('Set-Cookie', auth.clearCookie());
+  return { ok: true };
+});
 app.get('/api/config', async () => {
   const tariff = loadTariff();
   return {
@@ -619,8 +673,8 @@ const start = async () => {
     app.log.error(`strict config: ${missing.length} required path(s) missing (see warnings); set the env vars or unset DISPATCH_STRICT_CONFIG`);
     process.exit(1);
   }
-  if (!isLoopbackHost(config.host) && !config.authToken) {
-    app.log.error(`refusing to bind ${config.host} without auth: set DISPATCH_AUTH_TOKEN, or bind 127.0.0.1 (behind a trusted proxy)`);
+  if (!isLoopbackHost(config.host) && !config.authToken && !config.authRequired) {
+    app.log.error(`refusing to bind ${config.host} without authentication, or bind 127.0.0.1 behind a trusted proxy`);
     process.exit(1);
   }
   try { await app.listen({ port: config.port, host: config.host }); }
@@ -637,6 +691,7 @@ async function shutdown(signal: string): Promise<void> {
   shuttingDown = true;
   app.log.info({ signal }, 'graceful shutdown');
   shutdownSolves();
+  auth?.close();
   try { await app.close(); process.exit(0); }
   catch (err) { app.log.error({ err }, 'shutdown failed'); process.exit(1); }
 }
