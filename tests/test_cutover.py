@@ -48,7 +48,6 @@ class CutoverTests(unittest.TestCase):
         ssh.return_value = Result("arch=aarch64\ndocker=29.6.2\ncompose=5.2.0\n"
                                   "disk_kb=1\nmemory_kb=1\nport8080=ready\n"
                                   "hello_pids=123\ncloudflared=active\n")
-        values = [ROOT / "tests" / name for name in ("a", "b", "c", "d")]
         with patch.object(cutover.Path, "home", return_value=ROOT / "tests"), \
              patch.object(cutover.Path, "is_file", return_value=True), \
              patch.object(cutover.Path, "stat") as stat:
@@ -56,6 +55,7 @@ class CutoverTests(unittest.TestCase):
             result = cutover.preflight(self.config())
         self.assertEqual([], result["mutations"])
         self.assertEqual(2, len(result["nodes"]))
+        self.assertEqual(5, len(result["controller_secret_files"]))
         self.assertNotIn("value", result["controller_secret_files"][0])
 
     @patch.object(cutover, "ssh")

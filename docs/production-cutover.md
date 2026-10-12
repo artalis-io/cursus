@@ -43,6 +43,12 @@ and authentication allowlist. The allowlist itself remains external and must
 not be copied into this repository. Customer data and OSM assets remain
 external mounts; normal runtime mounts them read-only.
 
+On the controller, keep the production R2 identity separate from staging in
+`~/.config/cursus/production-r2-access-key-id`,
+`~/.config/cursus/production-r2-secret-access-key`, and
+`~/.config/cursus/production-r2-bucket`, all mode `0600`. The last file contains
+only the production bucket name. Never overwrite or reuse the staging token.
+
 The Compose file retains the historical variable name `CURSUS_STAGING_PORT` for
 backward compatibility with the tested PR #11 contract. In a production env it
 means the loopback application port. Activation changes its one exact env-file

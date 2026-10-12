@@ -122,7 +122,8 @@ def preflight(cfg: dict[str, Any]) -> dict[str, Any]:
         if not node.get("hello_pids"): raise CutoverError(f"{node['name']}: temporary Hello World process not identified")
         if node.get("cloudflared") != "active": raise CutoverError(f"{node['name']}: Cloudflare connector is not active")
     secret_files = [Path.home() / ".config/cursus" / name for name in
-                    ("r2-access-key-id", "r2-secret-access-key", "resend-api-key", "auth-allowlist")]
+                    ("production-r2-access-key-id", "production-r2-secret-access-key",
+                     "production-r2-bucket", "resend-api-key", "auth-allowlist")]
     secrets = []
     for path in secret_files:
         present = path.is_file()
