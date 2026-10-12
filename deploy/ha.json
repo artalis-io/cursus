@@ -1,0 +1,73 @@
+{
+  "account_id": "344ef7f03f70e84066cc16cd5525e41d",
+  "zone_id": "b46057058b6ab54ac8e71cd7ad368c33",
+  "hostname": "cursus.artalis.io",
+  "origin_quota": 2,
+  "load_balancer": {
+    "id": "8f4f62b4397b92174ee56f73a08b03c1",
+    "enabled": true,
+    "proxied": true,
+    "steering_policy": "off",
+    "default_pools": [
+      "9db847a90a9c0246acf9838ee6d3cebf",
+      "64d8df89a2c1bc23caf8984f85b1024f"
+    ],
+    "fallback_pool": "64d8df89a2c1bc23caf8984f85b1024f",
+    "session_affinity": "none"
+  },
+  "monitor": {
+    "id": "a7d1efeef277001091aaf550d06f9c29",
+    "type": "https",
+    "port": 443,
+    "method": "GET",
+    "path": "/health/ready",
+    "header": {"Host": ["cursus.artalis.io"]},
+    "expected_codes": "200",
+    "expected_body": "\"status\": \"ready\"",
+    "interval": 60,
+    "timeout": 5,
+    "retries": 2,
+    "consecutive_down": 2,
+    "consecutive_up": 1
+  },
+  "nodes": [
+    {
+      "name": "primary",
+      "ssh_alias": "spark-7468",
+      "pool": {
+        "id": "9db847a90a9c0246acf9838ee6d3cebf",
+        "name": "cursus-primary-pool",
+        "enabled": true,
+        "minimum_origins": 1,
+        "origin": {
+          "name": "spark-7468",
+          "address": "f008a450-be70-4cb8-aceb-b9e0f212fd4c.cfargotunnel.com",
+          "enabled": true,
+          "weight": 1,
+          "header": {"Host": ["cursus.artalis.io"]}
+        }
+      },
+      "tunnel_id": "f008a450-be70-4cb8-aceb-b9e0f212fd4c",
+      "service": "http://localhost:8080"
+    },
+    {
+      "name": "secondary",
+      "ssh_alias": "spark-3eb0",
+      "pool": {
+        "id": "64d8df89a2c1bc23caf8984f85b1024f",
+        "name": "cursus-secondary-pool",
+        "enabled": true,
+        "minimum_origins": 1,
+        "origin": {
+          "name": "spark-3eb0",
+          "address": "92cf25bb-6b58-4bce-8ce3-184a2ff0ad8d.cfargotunnel.com",
+          "enabled": true,
+          "weight": 1,
+          "header": {"Host": ["cursus.artalis.io"]}
+        }
+      },
+      "tunnel_id": "92cf25bb-6b58-4bce-8ce3-184a2ff0ad8d",
+      "service": "http://localhost:8080"
+    }
+  ]
+}
