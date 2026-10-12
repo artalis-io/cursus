@@ -62,7 +62,7 @@
       "authoritative": true,
       "writers": ["server/src/server.ts", "server/src/data/onboard.ts"],
       "multi_replica": "unsafe",
-      "target": "shared object storage with immutable keys, checksums, and lifecycle policy"
+      "target": "Cloudflare R2 object storage with immutable keys, checksums, and lifecycle policy"
     },
     {
       "id": "admitted-datasets",
@@ -72,7 +72,7 @@
       "authoritative": true,
       "writers": ["server/src/data/admit.ts", "server/src/data/registry.ts", "server/src/data/fleet.ts"],
       "multi_replica": "unsafe",
-      "target": "immutable object artifacts plus PostgreSQL manifest and transactional registration"
+      "target": "immutable Cloudflare R2 artifacts plus PostgreSQL manifest and transactional registration"
     },
     {
       "id": "geocoding-cache",

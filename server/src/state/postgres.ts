@@ -1,0 +1,165 @@
+import { readFile } from 'node:fs/promises';
+import { dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { randomUUID } from 'node:crypto';
+import pg, { type Pool, type PoolClient } from 'pg';
+
+const here = dirname(fileURLToPath(import.meta.url));
+const migration = resolve(here, '../../migrations/001_stateful.sql');
+const MIGRATION_LOCK = 0x43555253; // "CURS"; transaction-scoped advisory lock.
+
+export interface Lease { tenantId: string; id: string; owner: string; fence: number; payload: unknown; attempt: number }
+export interface OutboxLease extends Lease { idempotencyKey: string; createdAt: Date }
+
+export class StaleFenceError extends Error {
+  constructor() { super('lease lost: stale fencing generation'); this.name = 'StaleFenceError'; }
+}
+export class RevisionConflictError extends Error {
+  constructor() { super('scenario revision conflict'); this.name = 'RevisionConflictError'; }
+}
+
+export class StatefulStore {
+  readonly pool: Pool;
+  constructor(connectionString: string, max = 10) {
+    this.pool = new pg.Pool({ connectionString, max, statement_timeout: 15_000, application_name: 'cursus' });
+  }
+  async close(): Promise<void> { await this.pool.end(); }
+
+  async migrate(): Promise<void> {
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+      await client.query('SELECT pg_advisory_xact_lock($1)', [MIGRATION_LOCK]);
+      await client.query(await readFile(migration, 'utf8'));
+      await client.query('COMMIT');
+    } catch (error) { await client.query('ROLLBACK'); throw error; }
+    finally { client.release(); }
+  }
+
+  async ensureTenant(id: string, name: string): Promise<void> {
+    await this.pool.query('INSERT INTO tenants(id,name) VALUES($1,$2) ON CONFLICT(id) DO UPDATE SET name=excluded.name', [id, name]);
+  }
+
+  async createScenario(tenantId: string, id: string, body: unknown): Promise<void> {
+    await this.pool.query('INSERT INTO scenarios(tenant_id,id,revision,body) VALUES($1,$2,0,$3)', [tenantId, id, body]);
+  }
+
+  async updateScenario(tenantId: string, id: string, expectedRevision: number, body: unknown): Promise<number> {
+    const { rows } = await this.pool.query<{ revision: string }>(`UPDATE scenarios SET revision=revision+1,body=$4,updated_at=now()
+      WHERE tenant_id=$1 AND id=$2 AND revision=$3 RETURNING revision`, [tenantId, id, expectedRevision, body]);
+    if (!rows[0]) throw new RevisionConflictError();
+    return Number(rows[0].revision);
+  }
+
+  async stageObject(tenantId: string, object: { key: string; sha256: string; size: number; mediaType: string }): Promise<void> {
+    await this.pool.query(`INSERT INTO objects(tenant_id,object_key,sha256,size_bytes,media_type,state)
+      VALUES($1,$2,$3,$4,$5,'staged') ON CONFLICT(tenant_id,object_key) DO UPDATE SET
+      sha256=excluded.sha256,size_bytes=excluded.size_bytes,media_type=excluded.media_type`,
+      [tenantId, object.key, object.sha256, object.size, object.mediaType]);
+  }
+
+  async publishDataset(tenantId: string, datasetId: string, manifest: unknown, objectKeys: string[]): Promise<void> {
+    await this.tx(async (client) => {
+      const objects = await client.query(`UPDATE objects SET state='published',published_at=coalesce(published_at,now())
+        WHERE tenant_id=$1 AND object_key=ANY($2::text[]) AND state IN ('staged','published') RETURNING object_key`, [tenantId, objectKeys]);
+      if (objects.rowCount !== objectKeys.length) throw new Error('dataset references missing or unpublished staged objects');
+      await client.query('INSERT INTO datasets(tenant_id,id,manifest) VALUES($1,$2,$3)', [tenantId, datasetId, manifest]);
+    });
+  }
+
+  async enqueueJob(tenantId: string, kind: 'solve' | 'dataset-admit', idempotencyKey: string, payload: unknown): Promise<string> {
+    const id = randomUUID();
+    const { rows } = await this.pool.query<{ id: string }>(`INSERT INTO jobs(tenant_id,id,kind,idempotency_key,payload)
+      VALUES($1,$2,$3,$4,$5) ON CONFLICT(tenant_id,kind,idempotency_key)
+      DO UPDATE SET idempotency_key=excluded.idempotency_key RETURNING id`, [tenantId, id, kind, idempotencyKey, payload]);
+    return rows[0]!.id;
+  }
+
+  async claimJob(kind: 'solve' | 'dataset-admit', owner: string, leaseSeconds = 30): Promise<Lease | null> {
+    const { rows } = await this.pool.query(`WITH candidate AS (
+      SELECT tenant_id,id FROM jobs WHERE kind=$1 AND
+        (state='queued' OR (state='running' AND lease_expires_at < now()))
+      ORDER BY created_at FOR UPDATE SKIP LOCKED LIMIT 1)
+      UPDATE jobs j SET state='running',lease_owner=$2,lease_expires_at=now()+make_interval(secs=>$3),
+        heartbeat_at=now(),attempt=attempt+1,fence=fence+1,updated_at=now()
+      FROM candidate c WHERE j.tenant_id=c.tenant_id AND j.id=c.id
+      RETURNING j.tenant_id "tenantId",j.id,j.lease_owner owner,j.fence,j.payload,j.attempt`, [kind, owner, leaseSeconds]);
+    return rows[0] ? { ...rows[0], fence: Number(rows[0].fence), attempt: Number(rows[0].attempt) } as Lease : null;
+  }
+
+  async heartbeatJob(lease: Lease, leaseSeconds = 30): Promise<void> {
+    const result = await this.pool.query(`UPDATE jobs SET lease_expires_at=now()+make_interval(secs=>$5),heartbeat_at=now(),updated_at=now()
+      WHERE tenant_id=$1 AND id=$2 AND state='running' AND lease_owner=$3 AND fence=$4 AND lease_expires_at>=now()`,
+      [lease.tenantId, lease.id, lease.owner, lease.fence, leaseSeconds]);
+    if (result.rowCount !== 1) throw new StaleFenceError();
+  }
+
+  /** The fence predicate and authoritative plan publication are one transaction. */
+  async completeSolve(lease: Lease, planId: string, scenarioId: string, scenarioRevision: number, plan: unknown): Promise<void> {
+    await this.tx(async (client) => {
+      const owned = await client.query(`UPDATE jobs SET state='succeeded',result=$5,lease_owner=NULL,lease_expires_at=NULL,updated_at=now()
+        WHERE tenant_id=$1 AND id=$2 AND state='running' AND lease_owner=$3 AND fence=$4 AND lease_expires_at>=now() RETURNING id`,
+        [lease.tenantId, lease.id, lease.owner, lease.fence, { planId }]);
+      if (owned.rowCount !== 1) throw new StaleFenceError();
+      await client.query(`INSERT INTO plans(tenant_id,id,scenario_id,scenario_revision,body) VALUES($1,$2,$3,$4,$5)
+        ON CONFLICT(tenant_id,id) DO NOTHING`, [lease.tenantId, planId, scenarioId, scenarioRevision, plan]);
+    });
+  }
+
+  async failJob(lease: Lease, error: string): Promise<void> {
+    const result = await this.pool.query(`UPDATE jobs SET state='failed',error=$5,lease_owner=NULL,lease_expires_at=NULL,updated_at=now()
+      WHERE tenant_id=$1 AND id=$2 AND state='running' AND lease_owner=$3 AND fence=$4 AND lease_expires_at>=now()`,
+      [lease.tenantId, lease.id, lease.owner, lease.fence, error.slice(0, 2000)]);
+    if (result.rowCount !== 1) throw new StaleFenceError();
+  }
+
+  async enqueueEmail(client: PoolClient, tenantId: string, idempotencyKey: string, payload: unknown): Promise<string> {
+    const id = randomUUID();
+    const { rows } = await client.query<{ id: string }>(`INSERT INTO email_outbox(tenant_id,id,idempotency_key,payload)
+      VALUES($1,$2,$3,$4) ON CONFLICT(tenant_id,idempotency_key)
+      DO UPDATE SET idempotency_key=excluded.idempotency_key RETURNING id`, [tenantId, id, idempotencyKey, payload]);
+    return rows[0]!.id;
+  }
+
+  async claimEmail(owner: string, leaseSeconds = 30): Promise<OutboxLease | null> {
+    const { rows } = await this.pool.query(`WITH candidate AS (
+      SELECT tenant_id,id FROM email_outbox WHERE next_attempt_at<=now() AND
+        (state='pending' OR (state='sending' AND lease_expires_at < now()))
+      ORDER BY created_at FOR UPDATE SKIP LOCKED LIMIT 1)
+      UPDATE email_outbox o SET state='sending',lease_owner=$1,lease_expires_at=now()+make_interval(secs=>$2),
+        attempt=attempt+1,fence=fence+1 FROM candidate c WHERE o.tenant_id=c.tenant_id AND o.id=c.id
+      RETURNING o.tenant_id "tenantId",o.id,o.lease_owner owner,o.fence,o.payload,o.attempt,o.idempotency_key "idempotencyKey",o.created_at "createdAt"`,
+      [owner, leaseSeconds]);
+    return rows[0] ? { ...rows[0], fence: Number(rows[0].fence), attempt: Number(rows[0].attempt) } as OutboxLease : null;
+  }
+
+  async emailSent(lease: OutboxLease, providerId: string): Promise<void> {
+    const result = await this.pool.query(`UPDATE email_outbox SET state='sent',provider_id=$5,sent_at=now(),lease_owner=NULL,lease_expires_at=NULL
+      WHERE tenant_id=$1 AND id=$2 AND state='sending' AND lease_owner=$3 AND fence=$4 AND lease_expires_at>=now()`,
+      [lease.tenantId, lease.id, lease.owner, lease.fence, providerId]);
+    if (result.rowCount !== 1) throw new StaleFenceError();
+  }
+
+  async emailRetry(lease: OutboxLease, error: string, retrySeconds: number): Promise<void> {
+    const result = await this.pool.query(`UPDATE email_outbox SET
+      state=CASE WHEN created_at < now()-interval '23 hours' THEN 'failed' ELSE 'pending' END,
+      last_error=$5,next_attempt_at=now()+make_interval(secs=>$6),lease_owner=NULL,lease_expires_at=NULL
+      WHERE tenant_id=$1 AND id=$2 AND state='sending' AND lease_owner=$3 AND fence=$4 AND lease_expires_at>=now()`,
+      [lease.tenantId, lease.id, lease.owner, lease.fence, error.slice(0, 2000), retrySeconds]);
+    if (result.rowCount !== 1) throw new StaleFenceError();
+  }
+
+  async emailFailed(lease: OutboxLease, error: string): Promise<void> {
+    const result = await this.pool.query(`UPDATE email_outbox SET state='failed',last_error=$5,lease_owner=NULL,lease_expires_at=NULL
+      WHERE tenant_id=$1 AND id=$2 AND state='sending' AND lease_owner=$3 AND fence=$4 AND lease_expires_at>=now()`,
+      [lease.tenantId, lease.id, lease.owner, lease.fence, error.slice(0, 2000)]);
+    if (result.rowCount !== 1) throw new StaleFenceError();
+  }
+
+  async tx<T>(fn: (client: PoolClient) => Promise<T>): Promise<T> {
+    const client = await this.pool.connect();
+    try { await client.query('BEGIN'); const value = await fn(client); await client.query('COMMIT'); return value; }
+    catch (error) { await client.query('ROLLBACK'); throw error; }
+    finally { client.release(); }
+  }
+}

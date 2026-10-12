@@ -17,7 +17,7 @@ The simplest credible target is:
 - stateless Cursus HTTP processes on both Sparks;
 - one logical PostgreSQL writer for authoritative metadata, auth, revisions,
   job leases, audit, and the transactional email outbox;
-- shared immutable object storage for raw uploads and admitted dataset artifacts;
+- private Cloudflare R2 storage for immutable raw uploads and admitted dataset artifacts;
 - versioned OSM assets mounted read-only and identical on both nodes;
 - node-local solver work directories and rebuildable geometry/geocoding caches;
 - workers claiming durable jobs with leases and fencing tokens;

@@ -112,6 +112,8 @@ The adopted Cloudflare load-balancer/tunnel topology and read-only HA tooling
 are documented in [`docs/deployment-ha.md`](docs/deployment-ha.md).
 The persistence, background-work, consistency, and rolling-deployment design is
 documented in [`docs/stateful-deployment.md`](docs/stateful-deployment.md).
+The pre-deployment PostgreSQL/R2 primitives and local concurrency tests are in
+[`docs/stateful-infrastructure.md`](docs/stateful-infrastructure.md).
 
 ```bash
 git submodule update --init --recursive
