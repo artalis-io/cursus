@@ -1,7 +1,7 @@
 # Stateful infrastructure implementation
 
 This is a pre-deployment implementation milestone. It adds persistence and
-coordination primitives plus a local integration environment; it does not switch
+coordination primitives and the PR #10 runtime adapters plus a local integration environment; it does not switch
 the production application from its JSON/SQLite stores and does not deploy any
 service.
 
@@ -18,6 +18,15 @@ service.
   immutable put and verified get through the S3 protocol.
 - `server/src/state/outbox.ts` leases delivery intents and sends to Resend with
   the persisted `Idempotency-Key` header.
+- `server/src/state/auth.ts` stores users, memberships, single-use challenges,
+  sessions, and audit events in PostgreSQL. Creating a challenge and its email
+  intent is one transaction; request handlers never call Resend inline.
+- `server/src/state/scenarios.ts` and `api.ts` provide tenant-bound scenario,
+  solve-job, job-status, and plan handlers usable by independent server
+  instances sharing PostgreSQL.
+- `server/src/state/worker.ts` and `solver.ts` claim durable work, execute the
+  real OTTO Surge binary in a disposable workspace, heartbeat ownership, and
+  publish only through the fenced transaction.
 
 Cloudflare **R2**, not AWS-hosted storage, is the production target. Configure
 the S3 client endpoint as:
@@ -72,12 +81,29 @@ Two independent connection pools prove:
 - outbox enqueue is idempotent;
 - immutable objects are checksum addressed and verified;
 - dataset publication is transactional and rejects missing objects.
+- two independent Fastify instances see the same scenarios, jobs, and plans;
+- PostgreSQL magic-link sessions work across instances;
+- a crash after provider acceptance retries the identical Resend key;
+- a killed/expired solver owner cannot publish after takeover.
+
+When the private dataset and native binary exist locally, the stronger opt-in
+test executes Surge and attempts publication after its one-second lease has
+expired:
+
+```bash
+DATASET_ROOT=/absolute/path/to/gyermelyi \
+SURGE_BIN=/absolute/path/to/otto/surge/surge_solve \
+CURSUS_TEST_NATIVE_SOLVER=1 \
+CURSUS_TEST_DATABASE_URL=postgres://cursus:integration-only@127.0.0.1:55432/cursus \
+CURSUS_TEST_S3_ENDPOINT=http://127.0.0.1:59000 npm run test:stateful
+```
 
 ## Deliberately not yet wired
 
-Existing HTTP handlers, filesystem store, solver queue, dataset admission, and
-SQLite auth remain the active runtime path. Switching them requires explicit
-data migration, compatibility reads, worker lifecycle integration, R2
+The production entry point, remaining export/import handlers, and dataset
+admission still use the legacy runtime. The stateful API is deliberately not
+selected by the production Compose stack until parity is complete. Switching
+requires explicit data migration, compatibility reads, R2
 provisioning, backup/restore, and rollout work in later milestones. This PR does
 not make current Cursus safe to deploy active-active and does not alter the
 single-writer restriction in `docs/stateful-deployment.md`.

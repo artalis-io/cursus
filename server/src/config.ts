@@ -21,6 +21,8 @@ function env(name: string, fallback: string): string {
  * - CARTA/VELO/SAGE origins are reached over HTTP.
  */
 export const config = {
+  runtimeMode: env('CURSUS_RUNTIME_MODE', 'legacy') as 'legacy' | 'stateful',
+  databaseUrl: env('CURSUS_DATABASE_URL', ''),
   port: Number(env('DISPATCH_PORT', '8091')),
   host: env('DISPATCH_HOST', '127.0.0.1'),
 

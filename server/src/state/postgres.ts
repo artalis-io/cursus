@@ -3,6 +3,8 @@ import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
 import pg, { type Pool, type PoolClient } from 'pg';
+import type { Plan } from '../types.js';
+import type { Scenario } from '../store.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const migration = resolve(here, '../../migrations/001_stateful.sql');
@@ -41,7 +43,41 @@ export class StatefulStore {
   }
 
   async createScenario(tenantId: string, id: string, body: unknown): Promise<void> {
-    await this.pool.query('INSERT INTO scenarios(tenant_id,id,revision,body) VALUES($1,$2,0,$3)', [tenantId, id, body]);
+    const revision = typeof body === 'object' && body && 'revision' in body ? Number((body as { revision: unknown }).revision) : 0;
+    await this.pool.query('INSERT INTO scenarios(tenant_id,id,revision,body) VALUES($1,$2,$3,$4)', [tenantId, id, revision, body]);
+  }
+
+  async getScenario(tenantId: string, id: string): Promise<Scenario | null> {
+    const { rows } = await this.pool.query<{ body: Scenario }>('SELECT body FROM scenarios WHERE tenant_id=$1 AND id=$2', [tenantId, id]);
+    return rows[0]?.body ?? null;
+  }
+
+  async listScenarios(tenantId: string, day?: string): Promise<Scenario[]> {
+    const { rows } = await this.pool.query<{ body: Scenario }>(`SELECT body FROM scenarios WHERE tenant_id=$1
+      AND ($2::text IS NULL OR body->>'day'=$2) ORDER BY created_at`, [tenantId, day ?? null]);
+    return rows.map((r) => r.body);
+  }
+
+  async deleteScenario(tenantId: string, id: string): Promise<boolean> {
+    const result = await this.pool.query("DELETE FROM scenarios WHERE tenant_id=$1 AND id=$2 AND body->>'kind'='copy'", [tenantId, id]);
+    return result.rowCount === 1;
+  }
+
+  async getPlan(tenantId: string, id: string): Promise<Plan | null> {
+    const { rows } = await this.pool.query<{ body: Plan }>('SELECT body FROM plans WHERE tenant_id=$1 AND id=$2', [tenantId, id]);
+    return rows[0]?.body ?? null;
+  }
+
+  async listPlans(tenantId: string, scenarioId?: string): Promise<Plan[]> {
+    const { rows } = await this.pool.query<{ body: Plan }>(`SELECT body FROM plans WHERE tenant_id=$1
+      AND ($2::text IS NULL OR scenario_id=$2) ORDER BY created_at`, [tenantId, scenarioId ?? null]);
+    return rows.map((r) => r.body);
+  }
+
+  async getJob(tenantId: string, id: string): Promise<Record<string, unknown> | null> {
+    const { rows } = await this.pool.query(`SELECT id::text,kind,state,attempt,fence,payload,result,error,created_at "createdAt",updated_at "updatedAt"
+      FROM jobs WHERE tenant_id=$1 AND id=$2::uuid`, [tenantId, id]);
+    return rows[0] ?? null;
   }
 
   async updateScenario(tenantId: string, id: string, expectedRevision: number, body: unknown): Promise<number> {
