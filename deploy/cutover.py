@@ -11,6 +11,7 @@ import os
 import shlex
 import subprocess
 import sys
+import time
 from pathlib import Path
 from typing import Any
 
@@ -285,6 +286,7 @@ def activate_node(node: dict[str, Any], cfg: dict[str, Any]) -> dict[str, Any]:
         compose(node, ["database-primary" if node["role"] == "primary" else "database-standby"],
                 "up -d --no-deps --pull never cursus", timeout=180)
         ready = ssh(node, f"curl -fsS --max-time 15 http://127.0.0.1:{node['active_port']}/health/ready")
+        ssh(node, f"curl -fsS -o /dev/null --max-time 15 http://127.0.0.1:{node['active_port']}/")
         return {"node": node["name"], "ready": json.loads(ready.stdout)}
     except Exception:
         compose(node, [], "rm -sf cursus", node["active_port"], timeout=60)
@@ -292,6 +294,26 @@ def activate_node(node: dict[str, Any], cfg: dict[str, Any]) -> dict[str, Any]:
         compose(node, [], "up -d --no-deps --pull never cursus", timeout=180)
         start_hello(node, cfg)
         raise
+
+
+def rollback_node(node: dict[str, Any], cfg: dict[str, Any]) -> None:
+    compose(node, [], "rm -sf cursus", node["active_port"], timeout=60)
+    set_app_port(node, node["candidate_port"])
+    compose(node, [], "up -d --no-deps --pull never cursus", node["candidate_port"], timeout=180)
+    start_hello(node, cfg)
+    ssh(node, f"curl -fsS --max-time 15 http://127.0.0.1:{node['candidate_port']}/health/ready")
+    ssh(node, f"curl -fsS --max-time 15 http://127.0.0.1:{node['active_port']}/health/ready")
+
+
+def wait_origin_healthy(ha: Any, client: Any, ha_cfg: dict[str, Any], node_name: str,
+                        timeout: int = 180) -> None:
+    index = next(i for i, node in enumerate(ha_cfg["nodes"]) if node["name"] == node_name)
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        health = ha.fetch_state(client, ha_cfg, health=True)["nodes"][index]["health"].get("pop_health", {})
+        if health and all(item.get("healthy") for item in health.values()): return
+        time.sleep(5)
+    raise CutoverError(f"{node_name} did not become healthy in every Cloudflare monitor location")
 
 
 def activate(cfg: dict[str, Any], approved: bool) -> dict[str, Any]:
@@ -312,12 +334,23 @@ def activate(cfg: dict[str, Any], approved: bool) -> dict[str, Any]:
     for node in sorted(cfg["nodes"], key=lambda item: item["role"] != "standby"):
         ha_node = next(item for item in ha_cfg["nodes"] if item["ssh_alias"] == node["ssh_alias"])
         ha.set_origin_enabled(client, ha_cfg, ha_node["name"], False, True)
+        activated = False
         try:
             results.append(activate_node(node, cfg))
-        finally:
+            activated = True
             ha.set_origin_enabled(client, ha_cfg, ha_node["name"], True, True)
+            wait_origin_healthy(ha, client, ha_cfg, ha_node["name"])
+        except Exception:
+            try:
+                ha.set_origin_enabled(client, ha_cfg, ha_node["name"], False, True)
+                if activated: rollback_node(node, cfg)
+            finally:
+                ha.set_origin_enabled(client, ha_cfg, ha_node["name"], True, True)
+            raise
     public = run(["curl", "--silent", "--show-error", "--fail", "--max-time", "15",
                   f"https://{cfg['hostname']}/health/ready"])
+    run(["curl", "--silent", "--show-error", "--fail", "--output", "/dev/null", "--max-time", "15",
+         f"https://{cfg['hostname']}/"])
     evidence = {"schema_version": 1, "stage": "cutover", "success": True,
                 "created_at": now(), "nodes": results, "image_id": statuses[0]["image_id"],
                 "migration_created_at": migrated["created_at"], "public_readiness": public.stdout.strip()[:500]}

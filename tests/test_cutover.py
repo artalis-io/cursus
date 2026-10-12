@@ -3,7 +3,7 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import call, patch
+from unittest.mock import Mock, call, patch
 
 ROOT = Path(__file__).resolve().parents[1]
 spec = importlib.util.spec_from_file_location("cursus_cutover", ROOT / "deploy/cutover.py")
@@ -99,6 +99,14 @@ class CutoverTests(unittest.TestCase):
         with self.assertRaises(cutover.CutoverError): cutover.activate_node(node, self.config())
         self.assertEqual([call(node, 8080), call(node, 18102)], set_port.call_args_list)
         start.assert_called_once_with(node, self.config())
+
+    def test_cloudflare_health_wait_requires_every_location(self):
+        unhealthy = {"nodes": [{"health": {"pop_health": {"a": {"healthy": True}, "b": {"healthy": False}}}}]}
+        healthy = {"nodes": [{"health": {"pop_health": {"a": {"healthy": True}, "b": {"healthy": True}}}}]}
+        ha = Mock(); ha.fetch_state.side_effect = [unhealthy, healthy]
+        with patch.object(cutover.time, "sleep"):
+            cutover.wait_origin_healthy(ha, object(), {"nodes": [{"name": "primary"}]}, "primary", 1)
+        self.assertEqual(2, ha.fetch_state.call_count)
 
 
 if __name__ == "__main__": unittest.main()
