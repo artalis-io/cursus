@@ -26,7 +26,7 @@ import { importSummary, rawSample, canonicalSample } from './data/import.js';
 import { sageReachable, narratePlan, narrateComparison, type Lang } from './sage.js';
 import { loadTariff } from './cost.js';
 import { planToCsv, planToRouteSheetHtml, planToRoutesCsv, planToHandoffJson } from './export.js';
-import { magicLinkConfirmation } from './magic-link.js';
+import { magicLinkConfirmation, registerMagicLinkFormParser } from './magic-link.js';
 import { RateLimiter } from './ratelimit.js';
 import { CATALOG, suggestMapping, type Entity } from './data/catalog.js';
 import { newUploadPath, uploadPath, sampleUpload, runIngestPreview, runGeocode, extFromName, type Mapping } from './data/onboard.js';
@@ -35,6 +35,7 @@ import type { Plan } from './types.js';
 const ENTITIES: Entity[] = ['orders', 'vehicles', 'routes'];
 
 const app = Fastify({ logger: { level: 'info' }, bodyLimit: 4 * 1024 * 1024 });
+registerMagicLinkFormParser(app);
 const auth = config.authRequired ? new AuthService({
   databasePath: config.authDatabase,
   allowedEmailsFile: config.authAllowedEmailsFile,

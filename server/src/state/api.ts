@@ -11,7 +11,7 @@ import { exportScenario, parseScenarioImport } from '../store.js';
 import { planToCsv, planToRouteSheetHtml, planToRoutesCsv, planToHandoffJson } from '../export.js';
 import type { ConversionPayload } from './conversion.js';
 import type { Mapping } from '../data/onboard.js';
-import { magicLinkConfirmation } from '../magic-link.js';
+import { magicLinkConfirmation, registerMagicLinkFormParser } from '../magic-link.js';
 
 export interface StatefulApiOptions { store: StatefulStore; tenantId: string; tenantName: string; auth?: StatefulAuthService; publicOrigin?: string; objects?: ObjectStore; maxUploadBytes?: number }
 
@@ -19,6 +19,7 @@ export interface StatefulApiOptions { store: StatefulStore; tenantId: string; te
  * cutover, by the production entry point. Every repository is tenant-bound. */
 export async function createStatefulApi(options: StatefulApiOptions): Promise<FastifyInstance> {
   const app = Fastify({ logger: false });
+  registerMagicLinkFormParser(app);
   await options.store.ensureTenant(options.tenantId, options.tenantName);
   await options.auth?.initialize();
   const scenarios = new ScenarioRepository(options.store, options.tenantId);

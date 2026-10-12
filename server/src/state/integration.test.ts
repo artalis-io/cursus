@@ -144,12 +144,14 @@ integration('PostgreSQL magic links persist sessions and queue email atomically'
   assert.equal(scanned.statusCode, 200); assert.match(scanned.body, /Continue to Cursus/);
   assert.equal(scanned.headers['set-cookie'], undefined, 'a GET from an email scanner must not create a session');
   assert.equal((await b.pool.query('SELECT count(*)::int n FROM sessions WHERE tenant_id=$1', [tenant])).rows[0].n, 0);
-  const verified = await protectedApi.inject({ method: 'POST', url: `/api/auth/verify?token=${encodeURIComponent(token)}` });
+  const verified = await protectedApi.inject({ method: 'POST', url: `/api/auth/verify?token=${encodeURIComponent(token)}`,
+    headers: { 'content-type': 'application/x-www-form-urlencoded' }, payload: '' });
   assert.equal(verified.statusCode, 302); assert.match(String(verified.headers['set-cookie']), /^cursus_session=/);
   const session = String(verified.headers['set-cookie']).match(/^cursus_session=([^;]+)/)![1]!;
   assert.equal((await b.pool.query('SELECT count(*)::int n FROM sessions WHERE tenant_id=$1', [tenant])).rows[0].n, 1);
   assert.equal((await auth.authenticate(session!))?.email, 'admin@example.test');
-  const reused = await protectedApi.inject({ method: 'POST', url: `/api/auth/verify?token=${encodeURIComponent(token)}` });
+  const reused = await protectedApi.inject({ method: 'POST', url: `/api/auth/verify?token=${encodeURIComponent(token)}`,
+    headers: { 'content-type': 'application/x-www-form-urlencoded' }, payload: '' });
   assert.equal(reused.statusCode, 302); assert.equal(reused.headers.location, '/?auth=invalid');
   await auth.logout(session!); assert.equal(await auth.authenticate(session!), null);
   await protectedApi.close();
