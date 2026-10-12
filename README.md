@@ -108,6 +108,8 @@ assets remain external bind mounts. Only Cursus is exposed, on
 `127.0.0.1:8091` by default; the native services use a private network. See
 [`deploy/README.md`](deploy/README.md) for security, preparation, backup,
 upgrade and troubleshooting details.
+The adopted Cloudflare load-balancer/tunnel topology and read-only HA tooling
+are documented in [`docs/deployment-ha.md`](docs/deployment-ha.md).
 
 ```bash
 git submodule update --init --recursive
