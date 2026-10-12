@@ -219,3 +219,7 @@ retained its original snapshot SHA-256
 `1971ae5a30b5e0c05573b8b4387995b85f303fe69392063e64a28f7cdf876b8b`.
 The machine-readable evidence is generated outside Git with
 `deploy/stateful.py report` and contains no credentials or dataset contents.
+The rolling-update command then replaced the standby before the primary and
+verified readiness after each step; the rollback command restored the original
+tag in the same order. Both tags resolved to the same verified immutable image
+ID for this lifecycle-only drill.
