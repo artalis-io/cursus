@@ -36,7 +36,9 @@ export function datasetDir(id: string): string {
 }
 
 const registry = new Map<string, Dataset>();
+let loaded = false;
 function load(): void {
+  loaded = true;
   registry.clear();
   const root = datasetsRoot();
   if (!existsSync(root)) return;
@@ -54,18 +56,20 @@ function load(): void {
     } catch { /* ignore */ }
   }
 }
-load();
+function ensureLoaded(): void { if (!loaded) load(); }
 
 export function registerDataset(ds: Dataset): void {
+  ensureLoaded();
   mkdirSync(datasetDir(ds.id), { recursive: true });
   // Written last and atomically: the manifest's presence is what makes the
   // dataset "committed"; a half-written one can never shadow the old.
   writeJsonAtomic(join(datasetDir(ds.id), 'dataset.json'), ds);
   registry.set(ds.id, ds);
 }
-export function allDatasets(): Dataset[] { return [...registry.values()]; }
-export function getDataset(id: string): Dataset | undefined { return registry.get(id); }
+export function allDatasets(): Dataset[] { ensureLoaded(); return [...registry.values()]; }
+export function getDataset(id: string): Dataset | undefined { ensureLoaded(); return registry.get(id); }
 export function unregisterDataset(id: string): Dataset | null {
+  ensureLoaded();
   const ds = registry.get(id);
   if (!ds) return null;
   registry.delete(id);
@@ -73,6 +77,7 @@ export function unregisterDataset(id: string): Dataset | null {
   return ds;
 }
 export function datasetForDay(dayId: string): { dataset: Dataset; day: RegDay } | null {
+  ensureLoaded();
   for (const ds of registry.values()) {
     const day = ds.days.find((d) => d.dayId === dayId);
     if (day) return { dataset: ds, day };
