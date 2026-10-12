@@ -262,8 +262,10 @@ def stop_hello(node: dict[str, Any], cfg: dict[str, Any]) -> None:
 
 def start_hello(node: dict[str, Any], cfg: dict[str, Any]) -> None:
     command = hello_command(cfg)
-    script = (f"pgrep -f {shlex.quote('^' + command + '$')} >/dev/null || "
-              f"nohup {command} >/tmp/cursus-hello.log 2>&1 </dev/null &")
+    # Group only the nohup branch. Without braces, `&` backgrounds the whole
+    # OR-list and can keep the SSH session open until its timeout.
+    script = (f"pgrep -f {shlex.quote('^' + command + '$')} >/dev/null || {{ "
+              f"nohup {command} >/tmp/cursus-hello.log 2>&1 </dev/null & }}")
     ssh(node, script)
 
 

@@ -125,7 +125,18 @@ integration('PostgreSQL magic links persist sessions and queue email atomically'
   const allow = join(dir, 'allowed'); await writeFile(allow, 'admin@example.test\n', { mode: 0o600 });
   const auth = new StatefulAuthService(a, { allowedEmailsFile: allow, publicOrigin: 'https://cursus.example.test',
     from: 'Cursus <login@example.test>', tenantId: tenant, tenantName: 'Integration tenant', secureCookies: true });
-  await auth.initialize(); await auth.requestMagicLink('admin@example.test');
+  await auth.initialize();
+  const objects = new ObjectStore(bucket, { endpoint: s3Endpoint, accessKeyId: 'integration', secretAccessKey: 'integration' });
+  const protectedApi = await createStatefulApi({ store: a, objects, auth, tenantId: tenant,
+    tenantName: 'Integration tenant', publicOrigin: 'https://cursus.example.test' });
+  try {
+    assert.notEqual((await protectedApi.inject({ method: 'GET', url: '/' })).statusCode, 401,
+      'SPA shell must remain reachable for login');
+    assert.equal((await protectedApi.inject({ method: 'GET', url: '/api/scenarios' })).statusCode, 401);
+    const ready = await protectedApi.inject({ method: 'GET', url: '/health/ready' });
+    assert.equal(ready.statusCode, 200); assert.match(ready.body, /"status": "ready"/);
+  } finally { await protectedApi.close(); }
+  await auth.requestMagicLink('admin@example.test');
   const { rows } = await a.pool.query<{ payload: { html: string } }>(`SELECT payload FROM email_outbox WHERE tenant_id=$1
     AND payload->'to'->>0='admin@example.test' ORDER BY created_at DESC LIMIT 1`, [tenant]);
   const token = decodeURIComponent(rows[0]!.payload.html.match(/token=([^"<]+)/)![1]!);

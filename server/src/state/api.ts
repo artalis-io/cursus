@@ -24,7 +24,10 @@ export async function createStatefulApi(options: StatefulApiOptions): Promise<Fa
   const datasets = options.objects ? new DatasetRepository(options.store, options.objects, options.tenantId) : null;
   if (datasets) await app.register(fastifyMultipart, { limits: { files: 1, fileSize: options.maxUploadBytes ?? 25 * 1024 * 1024 } });
   app.addHook('onRequest', async (req, reply) => {
-    if (!options.auth || req.url.startsWith('/api/health') || req.url.startsWith('/health/ready') || req.url.startsWith('/api/auth/')) return;
+    // The SPA shell and its static assets must remain public so an
+    // unauthenticated browser can render the magic-link login screen.
+    const path = req.url.split('?', 1)[0]!;
+    if (!options.auth || !path.startsWith('/api/') || path.startsWith('/api/health') || path.startsWith('/api/auth/')) return;
     const principal = await options.auth.authenticate(cookieValue(req.headers.cookie, 'cursus_session'));
     if (!principal || principal.tenantId !== options.tenantId) return reply.code(401).send({ error: 'authentication required' });
     if (!['GET', 'HEAD', 'OPTIONS'].includes(req.method) && req.headers.origin !== options.publicOrigin)
@@ -35,7 +38,9 @@ export async function createStatefulApi(options: StatefulApiOptions): Promise<Fa
     try {
       await options.store.pool.query('SELECT 1');
       await options.objects?.ready();
-      return { status: 'ready', service: 'cursus-api', runtime: 'stateful' };
+      // Keep the literal spacing compatible with the adopted Cloudflare
+      // monitor's expected-body fragment: `"status": "ready"`.
+      return reply.type('application/json').send('{"status": "ready", "service": "cursus-api", "runtime": "stateful"}');
     } catch {
       return reply.code(503).send({ status: 'not-ready', service: 'cursus-api', runtime: 'stateful' });
     }

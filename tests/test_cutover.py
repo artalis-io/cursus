@@ -73,6 +73,13 @@ class CutoverTests(unittest.TestCase):
         self.assertIn("/proc/$pid/cmdline", command)
 
     @patch.object(cutover, "ssh")
+    def test_hello_start_backgrounds_only_nohup_branch(self, ssh):
+        cutover.start_hello(self.config()["nodes"][0], self.config())
+        command = ssh.call_args.args[1]
+        self.assertIn("|| { nohup", command)
+        self.assertIn("</dev/null & }", command)
+
+    @patch.object(cutover, "ssh")
     def test_persisted_port_update_is_exact_and_atomic_enough(self, ssh):
         node = self.config()["nodes"][0]
         cutover.set_app_port(node, 8080)
