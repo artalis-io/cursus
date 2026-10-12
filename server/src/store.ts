@@ -115,6 +115,45 @@ export function validateScenarioEdit(edit: unknown): string | null {
   }
 }
 
+/** Apply already-validated edits to an isolated scenario value. Persistence
+ * adapters use this common domain operation so legacy and PostgreSQL modes do
+ * not drift in dispatcher semantics. */
+export function applyScenarioEdits(scenario: Scenario, edits: ScenarioEdit[]): Scenario {
+  const s = structuredClone(scenario);
+  if (s.kind === 'base') throw new Error('base scenario is immutable; fork a copy first');
+  for (const edit of edits) {
+    switch (edit.op) {
+      case 'removeVehicle':
+        if (!s.removedVehicleIds.includes(edit.vehicleId)) s.removedVehicleIds.push(edit.vehicleId);
+        s.pins = s.pins.filter((p) => p.vehicleId !== edit.vehicleId);
+        s.vehicleOverrides = s.vehicleOverrides.filter((o) => o.vehicleId !== edit.vehicleId);
+        s.sequences = s.sequences.filter((q) => q.vehicleId !== edit.vehicleId); break;
+      case 'restoreVehicle': s.removedVehicleIds = s.removedVehicleIds.filter((v) => v !== edit.vehicleId); break;
+      case 'setVehicleConstraint': {
+        const old = s.vehicleOverrides.find((o) => o.vehicleId === edit.vehicleId);
+        const merged: VehicleOverride = { ...(old ?? { vehicleId: edit.vehicleId }), ...edit.patch };
+        for (const k of Object.keys(edit.patch) as (keyof VehicleConstraintPatch)[]) if (edit.patch[k] == null) delete merged[k];
+        const rest = s.vehicleOverrides.filter((o) => o.vehicleId !== edit.vehicleId);
+        s.vehicleOverrides = Object.keys(merged).length > 1 ? [...rest, merged] : rest; break;
+      }
+      case 'clearVehicleConstraint': s.vehicleOverrides = s.vehicleOverrides.filter((o) => o.vehicleId !== edit.vehicleId); break;
+      case 'setSequence': {
+        const rest = s.sequences.filter((q) => q.vehicleId !== edit.vehicleId);
+        const keep = edit.orderNos.length >= 2 || Boolean(edit.locked && edit.orderNos.length);
+        s.sequences = keep ? [...rest, { vehicleId: edit.vehicleId, orderNos: [...edit.orderNos], ...(edit.locked ? { locked: true } : {}) }] : rest; break;
+      }
+      case 'clearSequence': s.sequences = s.sequences.filter((q) => q.vehicleId !== edit.vehicleId); break;
+      case 'pin': s.pins = [...s.pins.filter((p) => p.orderNo !== edit.orderNo), { orderNo: edit.orderNo, vehicleId: edit.vehicleId }]; s.forbids = s.forbids.filter((f) => f.orderNo !== edit.orderNo); break;
+      case 'unpin': s.pins = s.pins.filter((p) => p.orderNo !== edit.orderNo); break;
+      case 'forbid': if (!s.forbids.some((f) => f.orderNo === edit.orderNo && f.vehicleId === edit.vehicleId)) s.forbids.push({ orderNo: edit.orderNo, vehicleId: edit.vehicleId }); s.pins = s.pins.filter((p) => !(p.orderNo === edit.orderNo && p.vehicleId === edit.vehicleId)); break;
+      case 'unforbid': s.forbids = s.forbids.filter((f) => !(f.orderNo === edit.orderNo && f.vehicleId === edit.vehicleId)); break;
+      case 'clearOverrides': s.pins = []; s.forbids = []; s.sequences = []; break;
+    }
+  }
+  s.revision += 1;
+  return s;
+}
+
 /* A portable scenario: its edits + day + label, shareable as JSON so a colleague
  * can import it to recreate the same what-if (there is no multi-user store). */
 export interface ScenarioEditsBundle {

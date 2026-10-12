@@ -108,6 +108,9 @@ function pseudonym(name: string): string {
 /** order_no -> OrderInfo (customer/city/coords/tw/pallets), from geocoded canonical. */
 export function loadEnrichment(): Map<string, OrderInfo> {
   const recs = records(readJson<unknown>('input/orders.geocoded.json'));
+  return enrichmentFromRecords(recs);
+}
+export function enrichmentFromRecords(recs: Record<string, unknown>[]): Map<string, OrderInfo> {
   const m = new Map<string, OrderInfo>();
   for (const r of recs) {
     const no = String(r.order_no);

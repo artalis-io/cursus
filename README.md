@@ -114,6 +114,10 @@ The persistence, background-work, consistency, and rolling-deployment design is
 documented in [`docs/stateful-deployment.md`](docs/stateful-deployment.md).
 The pre-deployment PostgreSQL/R2 primitives and local concurrency tests are in
 [`docs/stateful-infrastructure.md`](docs/stateful-infrastructure.md).
+That document also records the in-progress stateful runtime adapters and the
+opt-in native Surge fencing test. `CURSUS_RUNTIME_MODE` remains `legacy` until
+handler parity and cutover testing are complete; this repository does not claim
+active-active production readiness yet.
 
 ```bash
 git submodule update --init --recursive

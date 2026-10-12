@@ -14,7 +14,7 @@ export interface TravelMatrix {
   snapWarnings: { index: number; meters: number }[];
 }
 
-export async function buildMatrix(locs: MatrixLoc[], profile = config.veloProfile): Promise<TravelMatrix> {
+export async function buildMatrix(locs: MatrixLoc[], profile = config.veloProfile, signal?: AbortSignal): Promise<TravelMatrix> {
   if (locs.length < 2) throw new Error('need at least 2 locations');
   if (locs.length > config.maxMatrixLocations) throw new Error(`too many locations (${locs.length} > ${config.maxMatrixLocations})`);
   if (!existsSync(config.matrixBuildBin)) throw new Error(`matrix_build not built at ${config.matrixBuildBin} (make -C velo tools)`);
@@ -24,7 +24,7 @@ export async function buildMatrix(locs: MatrixLoc[], profile = config.veloProfil
   const stdout = await new Promise<string>((resolve, reject) => {
     const child = execFile(
       config.matrixBuildBin, [config.veloGraph, '--profile', profile, '--weight', 'duration'],
-      { timeout: config.matrixTimeoutSec * 1000, maxBuffer: Math.max(1, config.matrixMaxBufferMB) * 1024 * 1024 },
+      { timeout: config.matrixTimeoutSec * 1000, maxBuffer: Math.max(1, config.matrixMaxBufferMB) * 1024 * 1024, signal },
       (err, out) => {
         if (err) { reject(new Error((err as { killed?: boolean }).killed ? `matrix build timed out after ${config.matrixTimeoutSec}s` : `matrix build failed: ${err.message}`)); return; }
         resolve(out);

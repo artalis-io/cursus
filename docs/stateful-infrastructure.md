@@ -1,7 +1,7 @@
 # Stateful infrastructure implementation
 
 This is a pre-deployment implementation milestone. It adds persistence and
-coordination primitives plus a local integration environment; it does not switch
+coordination primitives and the PR #10 runtime adapters plus a local integration environment; it does not switch
 the production application from its JSON/SQLite stores and does not deploy any
 service.
 
@@ -18,6 +18,26 @@ service.
   immutable put and verified get through the S3 protocol.
 - `server/src/state/outbox.ts` leases delivery intents and sends to Resend with
   the persisted `Idempotency-Key` header.
+- `server/src/state/auth.ts` stores users, memberships, single-use challenges,
+  sessions, and audit events in PostgreSQL. Creating a challenge and its email
+  intent is one transaction; request handlers never call Resend inline.
+- `server/src/state/scenarios.ts` and `api.ts` provide tenant-bound scenario,
+  scenario import/export, solve-job, job-status, plan retrieval/export, and
+  dataset lifecycle handlers usable by independent server
+  instances sharing PostgreSQL.
+- `server/src/state/worker.ts` and `solver.ts` claim durable work, execute the
+  real OTTO Surge binary in a disposable workspace, heartbeat ownership, and
+  publish only through the fenced transaction.
+- `server/src/state/conversion.ts` claims `dataset-admit` jobs and runs the
+  existing Nexus, cache/offline geocoder, and Velo matrix tools in a disposable
+  workspace. Its fingerprint covers source and mapping plus SHA-256 identities
+  of Nexus, the geocoder, routing graph, matrix executable, matrix parameters,
+  and output schema. It uploads final artifacts before a short fenced admission
+  transaction; no database transaction spans native conversion work.
+- Conversion outputs are staged in PostgreSQL before the fenced admission
+  transaction. Objects left by a crash before staging remain solver-invisible
+  and can be inventoried by tenant with `DatasetRepository.orphanKeys()` for a
+  retention-based operator cleanup; Cursus never deletes them automatically.
 
 Cloudflare **R2**, not AWS-hosted storage, is the production target. Configure
 the S3 client endpoint as:
@@ -72,12 +92,37 @@ Two independent connection pools prove:
 - outbox enqueue is idempotent;
 - immutable objects are checksum addressed and verified;
 - dataset publication is transactional and rejects missing objects.
+- two independent Fastify instances see the same scenarios, jobs, and plans;
+- PostgreSQL magic-link sessions work across instances;
+- a crash after provider acceptance retries the identical Resend key;
+- a killed/expired solver owner cannot publish after takeover.
+- an uploaded object is invisible to solver-facing dataset lists until the
+  PostgreSQL lifecycle reaches `admitted`; validation and admission are
+  explicit transitions and R2 objects remain checksum-addressed.
+- a stale conversion worker can upload immutable artifacts but cannot admit a
+  manifest, and a solve can load the admitted request/geocoded artifacts back
+  from object storage without relying on the legacy node-local registry.
+- immutable objects left before PostgreSQL staging are discoverable, and cease
+  to appear in the orphan inventory once their metadata is staged.
+
+When the private dataset and native binary exist locally, the stronger opt-in
+test executes Surge and attempts publication after its one-second lease has
+expired:
+
+```bash
+DATASET_ROOT=/absolute/path/to/gyermelyi \
+SURGE_BIN=/absolute/path/to/otto/surge/surge_solve \
+CURSUS_TEST_NATIVE_SOLVER=1 \
+CURSUS_TEST_DATABASE_URL=postgres://cursus:integration-only@127.0.0.1:55432/cursus \
+CURSUS_TEST_S3_ENDPOINT=http://127.0.0.1:59000 npm run test:stateful
+```
 
 ## Deliberately not yet wired
 
-Existing HTTP handlers, filesystem store, solver queue, dataset admission, and
-SQLite auth remain the active runtime path. Switching them requires explicit
-data migration, compatibility reads, worker lifecycle integration, R2
+The stateful runtime now has the heavyweight Nexus/geocoding/matrix executor,
+durable conversion ownership, immutable artifact publication, converted-data
+solve path, and snapshot exports. It is deliberately not selected by production
+Compose: switching still requires explicit data migration, compatibility reads, R2
 provisioning, backup/restore, and rollout work in later milestones. This PR does
 not make current Cursus safe to deploy active-active and does not alter the
 single-writer restriction in `docs/stateful-deployment.md`.
