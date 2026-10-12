@@ -113,8 +113,8 @@ upgrade and troubleshooting details.
 git submodule update --init --recursive
 cp .env.example .env
 # Set CURSUS_DATASET_PATH, CURSUS_DATA_PATH and OSM_DATA_PATH to existing
-# host directories; set a strong DISPATCH_AUTH_TOKEN. Do not put private data
-# in this checkout.
+# host directories and paths to external allowlist/Resend-key files. Do not put
+# private data in this checkout.
 docker compose config --quiet
 docker compose build
 docker compose --profile prepare --profile geocoding build osm-prepare locus
@@ -158,6 +158,10 @@ registry.
 | Var | Default | Meaning |
 |---|---|---|
 | `DISPATCH_PORT` | 8091 | Backend port. |
+| `CURSUS_PUBLIC_ORIGIN` | `https://cursus.artalis.io` | Canonical origin used in magic links and CSRF checks. |
+| `CURSUS_AUTH_ALLOWLIST_PATH` | required by Compose | External file containing approved emails, one per line; never commit it. |
+| `RESEND_API_KEY_PATH` | required by Compose | External file containing the Resend API key; never commit it. |
+| `CURSUS_AUTH_FROM` | `Cursus <login@cursus.artalis.io>` | Verified Resend sender; no inbox is required. |
 | `OTTO_ROOT` | `<cursus>/vendor/otto` | Where the built binaries + indexes live. |
 | `DATASET_ROOT` | `…/data/dataset` | Immutable dataset (read-only). |
 | `CARTA_ORIGIN` / `VELO_ORIGIN` | `127.0.0.1:8097` / `:8082` | Upstreams. |

@@ -9,6 +9,8 @@ RUN npm run build
 
 FROM node:20.19.5-bookworm-slim AS server-build
 WORKDIR /src/server
+RUN apt-get update && apt-get install -y --no-install-recommends build-essential python3 \
+    && rm -rf /var/lib/apt/lists/*
 COPY server/package.json server/package-lock.json ./
 RUN npm ci
 COPY server/ ./
