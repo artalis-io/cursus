@@ -12,6 +12,7 @@ const MIGRATION_LOCK = 0x43555253; // "CURS"; transaction-scoped advisory lock.
 
 export interface Lease { tenantId: string; id: string; owner: string; fence: number; payload: unknown; attempt: number }
 export interface OutboxLease extends Lease { idempotencyKey: string; createdAt: Date }
+export interface AdmissionArtifact { key: string; sha256: string; size: number; mediaType: string }
 
 export class StaleFenceError extends Error {
   constructor() { super('lease lost: stale fencing generation'); this.name = 'StaleFenceError'; }
@@ -176,6 +177,29 @@ export class StatefulStore {
       WHERE tenant_id=$1 AND id=$2 AND state='running' AND lease_owner=$3 AND fence=$4 AND lease_expires_at>=now()`,
       [lease.tenantId, lease.id, lease.owner, lease.fence, error.slice(0, 2000)]);
     if (result.rowCount !== 1) throw new StaleFenceError();
+  }
+
+  /** Immutable uploads happen before this short transaction. The fence owns
+   * both job completion and dataset visibility, so a stale converter can leave
+   * harmless checksum objects but cannot admit its manifest. */
+  async completeDatasetAdmission(lease: Lease, datasetId: string, manifest: unknown, artifacts: AdmissionArtifact[]): Promise<void> {
+    await this.tx(async (client) => {
+      const owned = await client.query(`UPDATE jobs SET state='succeeded',result=$5,lease_owner=NULL,lease_expires_at=NULL,updated_at=now()
+        WHERE tenant_id=$1 AND id=$2 AND kind='dataset-admit' AND state='running' AND lease_owner=$3 AND fence=$4
+        AND lease_expires_at>=now() RETURNING id`, [lease.tenantId, lease.id, lease.owner, lease.fence, { datasetId }]);
+      if (owned.rowCount !== 1) throw new StaleFenceError();
+      for (const artifact of artifacts) {
+        await client.query(`INSERT INTO objects(tenant_id,object_key,sha256,size_bytes,media_type,state,published_at)
+          VALUES($1,$2,$3,$4,$5,'published',now()) ON CONFLICT(tenant_id,object_key) DO UPDATE SET
+          state='published',published_at=coalesce(objects.published_at,now())
+          WHERE objects.sha256=excluded.sha256 AND objects.size_bytes=excluded.size_bytes`,
+          [lease.tenantId, artifact.key, artifact.sha256, artifact.size, artifact.mediaType]);
+      }
+      const dataset = await client.query(`UPDATE datasets SET manifest=$3,status='admitted',validated_at=coalesce(validated_at,now()),
+        admitted_at=now(),failure=NULL WHERE tenant_id=$1 AND id=$2 AND status IN ('uploaded','validated') RETURNING id`,
+        [lease.tenantId, datasetId, manifest]);
+      if (dataset.rowCount !== 1) throw new Error('dataset is missing or already terminal');
+    });
   }
 
   async enqueueEmail(client: PoolClient, tenantId: string, idempotencyKey: string, payload: unknown): Promise<string> {

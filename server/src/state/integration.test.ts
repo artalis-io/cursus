@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test, before, after } from 'node:test';
 import { randomUUID } from 'node:crypto';
-import { mkdtemp, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { CreateBucketCommand, S3Client } from '@aws-sdk/client-s3';
@@ -47,6 +47,7 @@ integration('idempotent enqueue and SKIP LOCKED give one worker the job', async 
   assert.equal(first, duplicate);
   const [one, two] = await Promise.all([a.claimJob('solve', 'worker-a', 30), b.claimJob('solve', 'worker-b', 30)]);
   assert.equal([one, two].filter(Boolean).length, 1);
+  await a.failJob((one ?? two)!, 'test cleanup');
 });
 
 integration('stale fencing generation cannot publish a plan', async () => {
@@ -150,6 +151,20 @@ integration('a killed solver lease cannot publish after takeover', async () => {
   await assert.rejects(() => a.completeSolve(stale!, 'stale-after-kill', 'scenario-1', 1, { stale: true }), StaleFenceError);
 });
 
+integration('a stale conversion worker may upload but cannot admit its dataset', async () => {
+  const conversionTenant = `convert-${randomUUID()}`; await a.ensureTenant(conversionTenant, 'Conversion');
+  const source = { key: `tenants/${conversionTenant}/sha256/${'a'.repeat(64)}`, sha256: 'a'.repeat(64), size: 1, mediaType: 'text/csv' };
+  await a.stageObject(conversionTenant, source); await a.createDatasetUpload(conversionTenant, 'dataset-fence', { source });
+  await a.enqueueJob(conversionTenant, 'dataset-admit', `convert/${randomUUID()}`, { datasetId: 'dataset-fence' });
+  const stale = await a.claimJob('dataset-admit', 'converter-old', 1); assert.ok(stale);
+  await new Promise((resolve) => setTimeout(resolve, 1100));
+  const current = await b.claimJob('dataset-admit', 'converter-new', 30); assert.ok(current);
+  await assert.rejects(() => a.completeDatasetAdmission(stale!, 'dataset-fence', { stale: true }, [source]), StaleFenceError);
+  assert.equal((await a.getDataset(conversionTenant, 'dataset-fence'))?.status, 'uploaded');
+  await b.completeDatasetAdmission(current!, 'dataset-fence', { source, winner: true }, [source]);
+  assert.equal((await a.getDataset(conversionTenant, 'dataset-fence'))?.status, 'admitted');
+});
+
 integration('two real HTTP server instances share scenarios, jobs, and fenced plans', async () => {
   const objects = new ObjectStore(bucket, { endpoint: s3Endpoint, accessKeyId: 'integration', secretAccessKey: 'integration' });
   const apiA = await createStatefulApi({ store: a, tenantId: tenant, tenantName: 'Integration tenant', objects });
@@ -189,6 +204,44 @@ integration('two real HTTP server instances share scenarios, jobs, and fenced pl
 });
 
 const nativeIntegration = process.env.CURSUS_TEST_NATIVE_SOLVER === '1' ? test : test.skip;
+const conversionSource = process.env.CURSUS_TEST_NATIVE_CONVERSION_SOURCE;
+const nativeConversion = conversionSource ? test : test.skip;
+nativeConversion('real Gyermelyi conversion artifacts cannot be admitted by an expired worker', async () => {
+  const { executeDatasetConversion, solveConvertedDataset } = await import('./conversion.js');
+  const objects = new ObjectStore(bucket, { endpoint: s3Endpoint, accessKeyId: 'integration', secretAccessKey: 'integration' });
+  const bytes = await readFile(conversionSource!);
+  const source = await objects.putImmutable(tenant, bytes, 'text/csv'); await a.stageObject(tenant, source);
+  const datasetId = `ds_${randomUUID().slice(0, 10)}`; await a.createDatasetUpload(tenant, datasetId, { source, name: 'gyermelyi-orders.csv' });
+  const mapping = { order_no: 0, customer: 4, zip: 5, city: 6, street: 7, delivery_date: 9,
+    weight_kg: 11, pallets: 12, time_window_raw: 13, service_min: 14 };
+  await a.enqueueJob(tenant, 'dataset-admit', `native-convert/${randomUUID()}`, { datasetId, source,
+    sourceName: 'gyermelyi-orders.csv', mapping, label: 'Gyermelyi integration' });
+  const stale = await a.claimJob('dataset-admit', 'native-converter-old', 1); assert.ok(stale);
+  const output = await executeDatasetConversion(stale!, objects, new AbortController().signal);
+  const current = await b.claimJob('dataset-admit', 'native-converter-new', 60); assert.ok(current);
+  await assert.rejects(() => a.completeDatasetAdmission(stale!, datasetId, output.manifest, output.artifacts), StaleFenceError);
+  await b.completeDatasetAdmission(current!, datasetId, output.manifest, output.artifacts);
+  const admitted = await a.getDataset(tenant, datasetId); assert.equal(admitted?.status, 'admitted');
+  assert.match(String((admitted?.manifest as { conversionFingerprint?: string }).conversionFingerprint), /^[0-9a-f]{64}$/);
+  const day = (output.manifest.days as { dayId: string }[])[0]!.dayId;
+  const scenario = { id: `scn_${randomUUID().slice(0, 8)}`, day, kind: 'copy' as const, parentId: null, revision: 1,
+    label: 'Converted Gyermelyi', removedVehicleIds: [], pins: [], forbids: [], vehicleOverrides: [], sequences: [], createdAt: new Date().toISOString() };
+  await a.createScenario(tenant, scenario.id, scenario);
+  const solveId = await a.enqueueJob(tenant, 'solve', `converted-solve/${randomUUID()}`, { scenario });
+  const solveStale = await a.claimJob('solve', 'converted-solver-old', 1); assert.ok(solveStale);
+  const plan = await solveConvertedDataset(objects, tenant, output.manifest, scenario, 5, 'vehicles', new AbortController().signal);
+  const solveCurrent = await b.claimJob('solve', 'converted-solver-new', 30); assert.ok(solveCurrent);
+  await assert.rejects(() => a.completeSolve(solveStale!, `stale-${plan.id}`, scenario.id, scenario.revision, plan), StaleFenceError);
+  await b.completeSolve(solveCurrent!, plan.id, scenario.id, scenario.revision, plan);
+  const apiA = await createStatefulApi({ store: a, tenantId: tenant, tenantName: 'Integration tenant', objects });
+  const apiB = await createStatefulApi({ store: b, tenantId: tenant, tenantName: 'Integration tenant', objects });
+  try {
+    assert.equal((await apiB.inject({ method: 'GET', url: `/api/jobs/${solveId}` })).json().state, 'succeeded');
+    assert.equal((await apiA.inject({ method: 'GET', url: `/api/plans/${plan.id}` })).statusCode, 200);
+    const exported = await apiB.inject({ method: 'GET', url: `/api/plans/${plan.id}/handoff.json` });
+    assert.equal(exported.statusCode, 200); assert.equal(exported.json().summary.totalOrders, plan.stats.totalOrders);
+  } finally { await Promise.all([apiA.close(), apiB.close()]); }
+});
 nativeIntegration('real native Surge result from a killed lease is fenced at publication', async () => {
   const { executeSurgeLease } = await import('./solver.js');
   const repo = new ScenarioRepository(a, tenant);

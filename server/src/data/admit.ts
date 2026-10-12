@@ -37,7 +37,7 @@ export function dateToIso(tok: string): string {
 export interface AdmitResult {
   ok: boolean; error?: string;
   datasetId?: string; label?: string;
-  days?: { dayId: string; isoDate: string; label: string; orders: number }[];
+  days?: { dayId: string; date?: string; isoDate: string; label: string; orders: number }[];
   routable?: number; excluded?: number; unresolved?: number; snapWarnings?: number;
   fleet?: { count: number; defaulted: number; custom: boolean };
 }
@@ -48,13 +48,14 @@ export interface FleetSource { path: string; mapping: Mapping }
 /** Admit an onboarded orders upload as a dataset: geocode -> matrix -> Surge
  * request -> register days by delivery date. The fleet is the built-in template
  * unless `fleetSource` provides an uploaded vehicles file. */
-export async function admitDataset(uploadPath: string, mapping: Mapping, label: string, onStage?: (stage: string) => void, fleetSource?: FleetSource): Promise<AdmitResult> {
+export interface AdmitOptions { workspaceRoot?: string; datasetId?: string; register?: boolean; signal?: AbortSignal }
+export async function admitDataset(uploadPath: string, mapping: Mapping, label: string, onStage?: (stage: string) => void, fleetSource?: FleetSource, options: AdmitOptions = {}): Promise<AdmitResult> {
   if (mapping.city == null) return { ok: false, error: 'map the City column' };
   if (mapping.delivery_date == null) return { ok: false, error: 'map the Delivery date column (days are split by it)' };
   if (!existsSync(INGEST_NX)) return { ok: false, error: 'nx_pipeline not built (make -C nexus tools)' };
 
-  const datasetId = `ds_${randomUUID().slice(0, 10)}`;
-  const dir = datasetDir(datasetId);
+  const datasetId = options.datasetId ?? `ds_${randomUUID().slice(0, 10)}`;
+  const dir = options.workspaceRoot ? resolve(options.workspaceRoot, datasetId) : datasetDir(datasetId);
   mkdirSync(dir, { recursive: true });
   const schemaPath = resolve(dir, 'schema.json');
   const canonPath = resolve(dir, 'canonical.json');
@@ -65,11 +66,13 @@ export async function admitDataset(uploadPath: string, mapping: Mapping, label: 
   try {
     const rawCols = (await sampleUpload(uploadPath, 1)).headers.length;
     writeFileSync(schemaPath, JSON.stringify(buildSchema('orders', mapping, rawCols)));
-    await pExecFile(INGEST_NX, [uploadPath, '--schema', schemaPath, '-o', canonPath], { timeout: config.ingestTimeoutSec * 1000, maxBuffer: 32 * 1024 * 1024 });
+    await pExecFile(INGEST_NX, [uploadPath, '--schema', schemaPath, '-o', canonPath], { timeout: config.ingestTimeoutSec * 1000, maxBuffer: 32 * 1024 * 1024, signal: options.signal });
     const args = [GEOCODE_PY, '--orders', canonPath, '--out', geoPath, '--cache-dir', config.geocodeCacheDir, '--env', config.geocodeEnv];
     if (existsSync(config.geocodePbf)) args.push('--pbf', config.geocodePbf);
-    const env = minimalEnv(envHasKeys() ? {} : { GEOCODE_OFFLINE: '1' });
-    await pExecFile('python3', args, { timeout: config.geocodeTimeoutSec * 1000, maxBuffer: 64 * 1024 * 1024, env });
+    // The existing verifier requires a non-empty key before entering its
+    // cache-only path. This sentinel is never sent because GEOCODE_OFFLINE=1.
+    const env = minimalEnv(envHasKeys() ? {} : { GEOCODE_OFFLINE: '1', GOOGLE_MAPS_API_KEY: 'offline-cache-only' });
+    await pExecFile('python3', args, { timeout: config.geocodeTimeoutSec * 1000, maxBuffer: 64 * 1024 * 1024, env, signal: options.signal });
   } catch (e) {
     rmSync(dir, { recursive: true, force: true });
     const err = e as { killed?: boolean; stderr?: string };
@@ -98,7 +101,7 @@ export async function admitDataset(uploadPath: string, mapping: Mapping, label: 
   const depotLoc = template.locations[0]!;
   const locs: MatrixLoc[] = [{ id: 'depot', lat: depotLoc.y, lon: depotLoc.x }, ...routable.map((o, i) => ({ id: `o${i}`, lat: o.lat as number, lon: o.lon as number }))];
   onStage?.('matrix');
-  const matrix = await buildMatrix(locs);
+  const matrix = await buildMatrix(locs, config.veloProfile, options.signal);
 
   // 4. Surge request: clone the template, swap the order-dependent parts.
   onStage?.('request');
@@ -137,11 +140,11 @@ export async function admitDataset(uploadPath: string, mapping: Mapping, label: 
     requestPath: resolve(dir, 'request.json'), geocodedPath: geoPath, days,
   };
   onStage?.('registering');
-  registerDataset(dataset);
+  if (options.register !== false) registerDataset(dataset);
 
   return {
     ok: true, datasetId, label: dataset.label,
-    days: days.map((d) => ({ dayId: d.dayId, isoDate: d.isoDate, label: d.label, orders: d.orders })),
+    days: days.map((d) => ({ dayId: d.dayId, date: d.date, isoDate: d.isoDate, label: d.label, orders: d.orders })),
     routable: routable.length, excluded: recs.length - routable.length, unresolved, snapWarnings: matrix.snapWarnings.length,
     fleet: fleetInfo,
   };

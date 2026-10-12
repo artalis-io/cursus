@@ -1,14 +1,16 @@
-import Fastify, { type FastifyInstance } from 'fastify';
+import Fastify, { type FastifyInstance, type FastifyReply } from 'fastify';
 import type { StatefulStore } from './postgres.js';
 import { ScenarioRepository } from './scenarios.js';
 import { validateScenarioEdit, type ScenarioEdit } from '../store.js';
 import { cookieValue } from '../auth.js';
 import type { StatefulAuthService } from './auth.js';
-import type { ObjectStore } from './objects.js';
+import type { ObjectStore, ImmutableObject } from './objects.js';
 import { DatasetRepository } from './datasets.js';
 import fastifyMultipart from '@fastify/multipart';
 import { exportScenario, parseScenarioImport } from '../store.js';
 import { planToCsv, planToRouteSheetHtml, planToRoutesCsv, planToHandoffJson } from '../export.js';
+import { conversionIdentity, type ConversionPayload } from './conversion.js';
+import type { Mapping } from '../data/onboard.js';
 
 export interface StatefulApiOptions { store: StatefulStore; tenantId: string; tenantName: string; auth?: StatefulAuthService; publicOrigin?: string; objects?: ObjectStore; maxUploadBytes?: number }
 
@@ -85,7 +87,7 @@ export async function createStatefulApi(options: StatefulApiOptions): Promise<Fa
   app.get<{ Params: { id: string } }>('/api/jobs/:id', async (req, reply) => (await options.store.getJob(options.tenantId, req.params.id)) ?? reply.code(404).send({ error: 'job not found' }));
   app.get<{ Params: { id: string } }>('/api/plans/:id', async (req, reply) => (await options.store.getPlan(options.tenantId, req.params.id)) ?? reply.code(404).send({ error: 'plan not found' }));
   app.get('/api/plans', async () => options.store.listPlans(options.tenantId));
-  const planExport = (kind: 'csv' | 'routes' | 'html' | 'handoff') => async (req: { params: { id: string } }, reply: any) => {
+  const planExport = (kind: 'csv' | 'routes' | 'html' | 'handoff') => async (req: { params: { id: string } }, reply: FastifyReply) => {
     const plan = await options.store.getPlan(options.tenantId, req.params.id); if (!plan) return reply.code(404).send({ error: 'plan not found' });
     if (kind === 'csv') { reply.type('text/csv; charset=utf-8'); return reply.send(planToCsv(plan)); }
     if (kind === 'routes') { reply.type('text/csv; charset=utf-8'); return reply.send(planToRoutesCsv(plan, plan.day)); }
@@ -109,6 +111,18 @@ export async function createStatefulApi(options: StatefulApiOptions): Promise<Fa
   app.post<{ Params: { id: string } }>('/api/import/datasets/:id/admit', async (req, reply) => {
     if (!datasets) return reply.code(503).send({ error: 'object storage not configured' });
     try { return await datasets.admit(req.params.id); } catch (error) { return reply.code(409).send({ error: (error as Error).message }); }
+  });
+  app.post<{ Params: { id: string }; Body: { mapping?: Mapping; label?: string } }>('/api/import/datasets/:id/convert', async (req, reply) => {
+    if (!datasets) return reply.code(503).send({ error: 'object storage not configured' });
+    const dataset = await datasets.get(req.params.id); if (!dataset) return reply.code(404).send({ error: 'dataset not found' });
+    if (!req.body?.mapping || typeof req.body.mapping !== 'object') return reply.code(400).send({ error: 'mapping required' });
+    const manifest = dataset.manifest as { source?: ImmutableObject; name?: string };
+    if (!manifest.source) return reply.code(409).send({ error: 'dataset source missing' });
+    const payload: ConversionPayload = { datasetId: req.params.id, source: manifest.source,
+      sourceName: manifest.name ?? 'upload.csv', mapping: req.body.mapping, label: req.body.label ?? manifest.name ?? 'Uploaded dataset' };
+    const identity = await conversionIdentity(payload);
+    const jobId = await options.store.enqueueJob(options.tenantId, 'dataset-admit', `convert/${identity.fingerprint}`, payload);
+    return reply.code(202).send({ jobId, datasetId: req.params.id, conversionFingerprint: identity.fingerprint });
   });
   app.get('/api/import/datasets', async (_req, reply) => datasets ? datasets.list() : reply.code(503).send({ error: 'object storage not configured' }));
   return app;

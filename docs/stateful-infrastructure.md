@@ -28,6 +28,12 @@ service.
 - `server/src/state/worker.ts` and `solver.ts` claim durable work, execute the
   real OTTO Surge binary in a disposable workspace, heartbeat ownership, and
   publish only through the fenced transaction.
+- `server/src/state/conversion.ts` claims `dataset-admit` jobs and runs the
+  existing Nexus, cache/offline geocoder, and Velo matrix tools in a disposable
+  workspace. Its fingerprint covers source and mapping plus SHA-256 identities
+  of Nexus, the geocoder, routing graph, matrix executable, matrix parameters,
+  and output schema. It uploads final artifacts before a short fenced admission
+  transaction; no database transaction spans native conversion work.
 
 Cloudflare **R2**, not AWS-hosted storage, is the production target. Configure
 the S3 client endpoint as:
@@ -89,6 +95,9 @@ Two independent connection pools prove:
 - an uploaded object is invisible to solver-facing dataset lists until the
   PostgreSQL lifecycle reaches `admitted`; validation and admission are
   explicit transitions and R2 objects remain checksum-addressed.
+- a stale conversion worker can upload immutable artifacts but cannot admit a
+  manifest, and a solve can load the admitted request/geocoded artifacts back
+  from object storage without relying on the legacy node-local registry.
 
 When the private dataset and native binary exist locally, the stronger opt-in
 test executes Surge and attempts publication after its one-second lease has
@@ -104,12 +113,10 @@ CURSUS_TEST_S3_ENDPOINT=http://127.0.0.1:59000 npm run test:stateful
 
 ## Deliberately not yet wired
 
-The production entry point and heavyweight Nexus/geocoding/matrix admission
-executor still use the legacy runtime. The stateful API now owns the durable
-`uploaded -> validated -> admitted` visibility boundary and export snapshots,
-but it is deliberately not selected by production Compose until the admission
-executor publishes all derived artifacts through that boundary. Switching
-requires explicit data migration, compatibility reads, R2
+The stateful runtime now has the heavyweight Nexus/geocoding/matrix executor,
+durable conversion ownership, immutable artifact publication, converted-data
+solve path, and snapshot exports. It is deliberately not selected by production
+Compose: switching still requires explicit data migration, compatibility reads, R2
 provisioning, backup/restore, and rollout work in later milestones. This PR does
 not make current Cursus safe to deploy active-active and does not alter the
 single-writer restriction in `docs/stateful-deployment.md`.
