@@ -83,7 +83,9 @@ Normal application failover and database recovery are separate: loss of the
 primary interrupts writes until an operator completes a fenced promotion.
 Replication is explicitly asynchronous: primary commits do not wait for the
 standby. This preserves write availability during standby or private-network
-failure, at the cost of a bounded but non-zero RPO if the primary is lost.
+failure, at the cost of possible loss of recently acknowledged transactions if
+the primary is lost. Asynchronous replication does not provide a hard RPO
+bound; operators set an RPO target and monitor observed lag against it.
 `deploy/stateful.py status` and `report` expose connected-standby count, WAL
 positions, and byte lag; alert on a missing standby or sustained/increasing lag.
 The primary bind address must be its trusted private interface. Confirm the
