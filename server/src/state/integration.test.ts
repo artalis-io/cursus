@@ -224,15 +224,20 @@ integration('two real HTTP server instances share scenarios, jobs, and fenced pl
     assert.deepEqual(visible.json().removedVehicleIds, [7]);
     const queued = await apiA.inject({ method: 'POST', url: `/api/scenarios/${scenario.id}/solve`, payload: { budgetSec: 1 } });
     assert.equal(queued.statusCode, 202);
+    const jobId = queued.json().jobId;
+    assert.equal(typeof jobId, 'string');
     await workOneSolve(b, async (lease) => ({ planId: `http-plan-${lease.id}`, scenarioId: scenario.id,
       scenarioRevision: scenario.revision, plan: { id: `http-plan-${lease.id}`, scenarioId: scenario.id, scenarioRevision: scenario.revision,
         shared: true, day: '2026-01-01', createdAt: new Date().toISOString(), objective: 'vehicles', source: 'live',
         stats: { vehiclesUsed: 0, servedOrders: 0, totalOrders: 0, totalDistanceKm: 0 }, vehicles: [], unassigned: [] } }), 'http-worker');
-    const job = await apiB.inject({ method: 'GET', url: `/api/jobs/${queued.json().id}` });
-    assert.equal(job.json().state, 'succeeded');
-    const plan = await apiA.inject({ method: 'GET', url: `/api/plans/http-plan-${queued.json().id}` });
+    const job = await apiB.inject({ method: 'GET', url: `/api/jobs/${jobId}` });
+    assert.equal(job.json().status, 'completed');
+    assert.equal(job.json().planId, `http-plan-${jobId}`);
+    const plan = await apiA.inject({ method: 'GET', url: `/api/plans/http-plan-${jobId}` });
     assert.equal(plan.json().shared, true);
-    const handoff = await apiB.inject({ method: 'GET', url: `/api/plans/http-plan-${queued.json().id}/handoff.json` });
+    const days = await apiB.inject({ method: 'GET', url: '/api/days' });
+    assert.equal(days.json().some((day: { baselinePlanId: string }) => day.baselinePlanId === `http-plan-${jobId}`), true);
+    const handoff = await apiB.inject({ method: 'GET', url: `/api/plans/http-plan-${jobId}/handoff.json` });
     assert.equal(handoff.statusCode, 200);
   } finally { await Promise.all([apiA.close(), apiB.close()]); }
 });
