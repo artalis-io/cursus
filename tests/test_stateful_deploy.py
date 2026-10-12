@@ -17,6 +17,18 @@ class StatefulDeploymentTests(unittest.TestCase):
         cfg = deploy.load(ROOT / "deploy/stateful.json")
         self.assertTrue(deploy.command_validate(cfg)["valid"])
 
+    def test_prepared_public_osm_assets_are_readable_by_runtime_uids(self):
+        script = (ROOT / "deploy/osm-prepare.sh").read_text()
+        self.assertIn('chmod -R a+rX "$stage"', script)
+        self.assertIn('chmod -R a+rX "$version"', script)
+        self.assertIn('chmod a+rx "$root/cursus"', script)
+
+    def test_recovery_jobs_use_postgres_uid_and_backup_loopback(self):
+        compose = (ROOT / "compose.stateful.yaml").read_text()
+        self.assertGreaterEqual(compose.count('user: "70:70"'), 2)
+        self.assertIn('network_mode: service:postgres', compose)
+        self.assertIn('CURSUS_PRIMARY_HOST: 127.0.0.1', compose)
+
     def test_production_port_is_rejected(self):
         cfg = self.config(); cfg["nodes"][0]["app_port"] = 8080
         with tempfile.NamedTemporaryFile("w", suffix=".json") as handle:

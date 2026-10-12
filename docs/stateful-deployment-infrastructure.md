@@ -18,6 +18,13 @@ assigns isolated project names and loopback application ports 18091/18092.
 - `compose.stateful.yaml` uses explicit host bind mounts with
   `create_host_path: false`; operators create and permission only reviewed
   staging paths.
+- Container UIDs are deliberate: Cursus and the preparation job use 10001,
+  OTTO's distroless Velo/Carta images use 65532, and PostgreSQL recovery jobs
+  use 70. Prefer POSIX ACLs over world-writable directories. For example,
+  grant UID 10001 write access to state/OSM preparation, UID 65532 read and
+  traverse access to prepared public OSM assets, and UID 70 write access to
+  PostgreSQL data/backup/restore paths. `osm-prepare` makes its published
+  public version tree readable while leaving customer and database data alone.
 - PostgreSQL and R2 credentials are file-backed Compose secrets rather than
   container environment values. Use a bucket-scoped token for
   a dedicated non-production bucket. Configuration validation does not write to
@@ -69,6 +76,10 @@ from `CURSUS_REPLICATION_CIDR`. The standby refuses to overwrite a non-empty,
 uninitialized data directory and otherwise clones with `pg_basebackup -R`.
 Normal application failover and database recovery are separate: loss of the
 primary interrupts writes until an operator completes a fenced promotion.
+The primary bind address must be its trusted private interface. Confirm the
+actual source address with a rejected connection before selecting the narrow
+replication CIDR: routed networks may source-NAT the standby. Never replace a
+verified host `/32` with a broad subnet merely to make replication connect.
 
 Create a base backup and prepare an isolated restore with:
 
@@ -78,6 +89,11 @@ docker compose --env-file .env.stateful -f compose.stateful.yaml \
 docker compose --env-file .env.stateful -f compose.stateful.yaml \
   --profile restore run --rm postgres-restore
 ```
+
+The backup job shares the already-running primary's network namespace and
+connects through loopback; it does not need an additional HBA grant. It runs as
+PostgreSQL UID 70 and stages each base backup under a hidden temporary name,
+publishing `latest` only after the backup and completion record are durable.
 
 WAL is archived under `CURSUS_POSTGRES_BACKUP_PATH/wal`; base backups and their
 manifests are under `base/<UTC-ID>`. Restore refuses a non-empty target. Set
@@ -155,3 +171,26 @@ docker compose --env-file .env.stateful -f compose.stateful.yaml down
 ```
 
 Remove staging data or R2 objects only as a separate reviewed operation.
+
+## October 2026 Spark staging evidence
+
+The isolated exercise used loopback application ports 18091/18092 and private
+PostgreSQL port 55432; production port 8080 remained occupied and unchanged.
+Both nodes loaded the same ARM64 application image ID. Hungary preparation
+published identity `ff567f352e56218be6e12d13b08193c94c117973c216c773a176a2f79975139d`
+from PBF SHA-256 `8f6533151de80b5e75f2bbebca9f852c1cd19318634e1d0d40337a5ccca4fb3e`;
+an immediate second run reused it. The copied PBF, Velo, Carta and Locus files
+matched by SHA-256 on both nodes.
+
+With Hungary loaded, each Velo container settled near 5.30 GiB and each Carta
+container near 1.09 GiB; PostgreSQL primary/standby used roughly 23--27 MiB.
+Both native health endpoints passed on both nodes. Streaming replication
+replayed schema migration 1 to the same WAL LSN. A physical base backup was
+restored in a network-isolated container, replayed archived WAL, reached a new
+timeline, and exposed migration version 1. These figures are observations, not
+new tighter limits.
+
+Application and Gyermelyi results are intentionally not claimed here until a
+dedicated non-production R2 bucket and bucket-scoped credentials are supplied.
+The existing Cloudflare control-plane token was tested read-only and correctly
+lacked R2 permission.
