@@ -24,13 +24,22 @@ export async function createStatefulApi(options: StatefulApiOptions): Promise<Fa
   const datasets = options.objects ? new DatasetRepository(options.store, options.objects, options.tenantId) : null;
   if (datasets) await app.register(fastifyMultipart, { limits: { files: 1, fileSize: options.maxUploadBytes ?? 25 * 1024 * 1024 } });
   app.addHook('onRequest', async (req, reply) => {
-    if (!options.auth || req.url.startsWith('/api/health') || req.url.startsWith('/api/auth/')) return;
+    if (!options.auth || req.url.startsWith('/api/health') || req.url.startsWith('/health/ready') || req.url.startsWith('/api/auth/')) return;
     const principal = await options.auth.authenticate(cookieValue(req.headers.cookie, 'cursus_session'));
     if (!principal || principal.tenantId !== options.tenantId) return reply.code(401).send({ error: 'authentication required' });
     if (!['GET', 'HEAD', 'OPTIONS'].includes(req.method) && req.headers.origin !== options.publicOrigin)
       return reply.code(403).send({ error: 'invalid request origin' });
   });
   app.get('/api/health', async () => ({ status: 'ok', service: 'cursus-api', runtime: 'stateful' }));
+  app.get('/health/ready', async (_req, reply) => {
+    try {
+      await options.store.pool.query('SELECT 1');
+      await options.objects?.ready();
+      return { status: 'ready', service: 'cursus-api', runtime: 'stateful' };
+    } catch {
+      return reply.code(503).send({ status: 'not-ready', service: 'cursus-api', runtime: 'stateful' });
+    }
+  });
   app.post<{ Body: { email?: string } }>('/api/auth/magic-link', async (req, reply) => {
     if (options.auth && typeof req.body?.email === 'string') await options.auth.requestMagicLink(req.body.email);
     return reply.code(202).send({ accepted: true });

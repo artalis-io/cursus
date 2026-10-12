@@ -1,0 +1,294 @@
+name: ${COMPOSE_PROJECT_NAME:?set an isolated COMPOSE_PROJECT_NAME}
+
+x-runtime-security: &runtime-security
+  read_only: true
+  cap_drop: [ALL]
+  security_opt: [no-new-privileges:true]
+  restart: unless-stopped
+  pids_limit: 1024
+  networks: [cursus-stateful]
+
+x-otto-build: &otto-build
+  context: ${OTTO_ROOT:-./vendor/otto}
+
+services:
+  postgres:
+    profiles: [database-primary, backup]
+    image: postgres:16.6-alpine@sha256:1d04b9ba1d4996401f2552b51beda8187f175c0645c091e4781134fc9c9a3eef
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: cursus
+      POSTGRES_USER: cursus
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
+      CURSUS_REPLICATION_CIDR: ${CURSUS_REPLICATION_CIDR:?set the trusted staging replication CIDR}
+    command:
+      - postgres
+      - -c
+      - wal_level=replica
+      - -c
+      - max_wal_senders=10
+      - -c
+      - max_replication_slots=10
+      - -c
+      - synchronous_standby_names=
+      - -c
+      - password_encryption=scram-sha-256
+      - -c
+      - archive_mode=on
+      - -c
+      - archive_command=test ! -f /backup/wal/%f && cp %p /backup/wal/%f
+    ports:
+      - ${CURSUS_POSTGRES_BIND_IP:?set CURSUS_POSTGRES_BIND_IP}:${CURSUS_POSTGRES_HOST_PORT:-55432}:5432
+    volumes:
+      - type: bind
+        source: ${CURSUS_POSTGRES_DATA_PATH:?set CURSUS_POSTGRES_DATA_PATH}
+        target: /var/lib/postgresql/data
+        bind: { create_host_path: false }
+      - type: bind
+        source: ./deploy/postgres/init-primary.sh
+        target: /docker-entrypoint-initdb.d/20-cursus-replication.sh
+        read_only: true
+      - type: bind
+        source: ${CURSUS_POSTGRES_BACKUP_PATH:?set CURSUS_POSTGRES_BACKUP_PATH}
+        target: /backup
+        bind: { create_host_path: false }
+    secrets: [postgres_password, postgres_replication_password]
+    healthcheck:
+      test: [CMD-SHELL, pg_isready -U cursus -d cursus]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    security_opt: [no-new-privileges:true]
+    stop_grace_period: 60s
+    networks: [cursus-stateful, staging-egress]
+
+  postgres-standby:
+    profiles: [database-standby]
+    image: postgres:16.6-alpine@sha256:1d04b9ba1d4996401f2552b51beda8187f175c0645c091e4781134fc9c9a3eef
+    restart: unless-stopped
+    entrypoint: [/opt/cursus/standby-entrypoint.sh]
+    environment:
+      PGDATA: /var/lib/postgresql/data
+      POSTGRES_USER: cursus
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
+      CURSUS_PRIMARY_HOST: ${CURSUS_PRIMARY_HOST:?set CURSUS_PRIMARY_HOST}
+      CURSUS_PRIMARY_PORT: ${CURSUS_PRIMARY_PORT:-55432}
+      CURSUS_REPLICATION_PASSWORD_FILE: /run/secrets/postgres_replication_password
+    command:
+      - postgres
+      - -c
+      - hot_standby=on
+      - -c
+      - password_encryption=scram-sha-256
+      - -c
+      - archive_mode=always
+      - -c
+      - archive_command=test ! -f /backup/wal/%f && cp %p /backup/wal/%f
+    ports:
+      - ${CURSUS_POSTGRES_BIND_IP:?set CURSUS_POSTGRES_BIND_IP}:${CURSUS_POSTGRES_HOST_PORT:-55432}:5432
+    volumes:
+      - type: bind
+        source: ${CURSUS_POSTGRES_DATA_PATH:?set CURSUS_POSTGRES_DATA_PATH}
+        target: /var/lib/postgresql/data
+        bind: { create_host_path: false }
+      - type: bind
+        source: ./deploy/postgres/standby-entrypoint.sh
+        target: /opt/cursus/standby-entrypoint.sh
+        read_only: true
+      - type: bind
+        source: ${CURSUS_POSTGRES_BACKUP_PATH:?set CURSUS_POSTGRES_BACKUP_PATH}
+        target: /backup
+        bind: { create_host_path: false }
+    secrets: [postgres_password, postgres_replication_password]
+    healthcheck:
+      test: [CMD-SHELL, pg_isready -U cursus -d cursus]
+      interval: 5s
+      timeout: 3s
+      retries: 60
+    security_opt: [no-new-privileges:true]
+    stop_grace_period: 60s
+    networks: [cursus-stateful, staging-egress]
+
+  postgres-backup:
+    profiles: [backup]
+    image: postgres:16.6-alpine@sha256:1d04b9ba1d4996401f2552b51beda8187f175c0645c091e4781134fc9c9a3eef
+    entrypoint: [/opt/cursus/backup.sh]
+    user: "70:70"
+    environment:
+      CURSUS_PRIMARY_HOST: 127.0.0.1
+      CURSUS_PRIMARY_PORT: 5432
+      CURSUS_REPLICATION_PASSWORD_FILE: /run/secrets/postgres_replication_password
+    depends_on:
+      postgres: { condition: service_healthy }
+    volumes:
+      - type: bind
+        source: ${CURSUS_POSTGRES_BACKUP_PATH:?set CURSUS_POSTGRES_BACKUP_PATH}
+        target: /backup
+        bind: { create_host_path: false }
+      - type: bind
+        source: ./deploy/postgres/backup.sh
+        target: /opt/cursus/backup.sh
+        read_only: true
+    secrets: [postgres_replication_password]
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    tmpfs: ["/tmp:size=64m,mode=1777"]
+    restart: "no"
+    network_mode: service:postgres
+
+  postgres-restore:
+    profiles: [restore]
+    image: postgres:16.6-alpine@sha256:1d04b9ba1d4996401f2552b51beda8187f175c0645c091e4781134fc9c9a3eef
+    entrypoint: [/opt/cursus/restore.sh]
+    user: "70:70"
+    environment:
+      CURSUS_BACKUP_ID: ${CURSUS_BACKUP_ID:-latest}
+      CURSUS_RECOVERY_TARGET_TIME: ${CURSUS_RECOVERY_TARGET_TIME:-}
+    volumes:
+      - type: bind
+        source: ${CURSUS_POSTGRES_RESTORE_PATH:?set CURSUS_POSTGRES_RESTORE_PATH}
+        target: /restore
+        bind: { create_host_path: false }
+      - type: bind
+        source: ${CURSUS_POSTGRES_BACKUP_PATH:?set CURSUS_POSTGRES_BACKUP_PATH}
+        target: /backup
+        read_only: true
+        bind: { create_host_path: false }
+      - type: bind
+        source: ./deploy/postgres/restore.sh
+        target: /opt/cursus/restore.sh
+        read_only: true
+    read_only: true
+    security_opt: [no-new-privileges:true]
+    network_mode: none
+    restart: "no"
+
+  velo:
+    <<: *runtime-security
+    image: ${CURSUS_VELO_IMAGE:-cursus-velo:staging}
+    build:
+      <<: *otto-build
+      dockerfile: docker/Dockerfile.velo
+    command: ["/data/osm/cursus/${OSM_ASSET_NAME:-default}/current/map.vlg"]
+    volumes:
+      - type: bind
+        source: ${OSM_DATA_PATH:?set OSM_DATA_PATH}
+        target: /data/osm
+        read_only: true
+        bind: { create_host_path: false }
+    tmpfs: ["/tmp:size=64m,mode=1777"]
+    mem_limit: ${CURSUS_VELO_MEMORY:-8g}
+    cpus: ${CURSUS_VELO_CPUS:-4}
+    stop_grace_period: 30s
+
+  carta:
+    <<: *runtime-security
+    image: ${CURSUS_CARTA_IMAGE:-cursus-carta:staging}
+    build:
+      <<: *otto-build
+      dockerfile: docker/Dockerfile.carta
+    command: ["/data/osm/cursus/${OSM_ASSET_NAME:-default}/current/map.idx"]
+    volumes:
+      - type: bind
+        source: ${OSM_DATA_PATH:?set OSM_DATA_PATH}
+        target: /data/osm
+        read_only: true
+        bind: { create_host_path: false }
+    tmpfs: ["/tmp:size=64m,mode=1777"]
+    mem_limit: ${CURSUS_CARTA_MEMORY:-4g}
+    cpus: ${CURSUS_CARTA_CPUS:-2}
+    stop_grace_period: 30s
+
+  cursus:
+    <<: *runtime-security
+    networks: [cursus-stateful, staging-egress]
+    image: ${CURSUS_APP_IMAGE:-cursus-app:staging}
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        OTTO_REVISION: ${OTTO_REVISION:?set the pinned OTTO revision}
+        CURSUS_REVISION: ${CURSUS_REVISION:?set the Cursus revision}
+    depends_on:
+      velo: { condition: service_healthy }
+      carta: { condition: service_healthy }
+    environment:
+      CURSUS_RUNTIME_MODE: stateful
+      CURSUS_DATABASE_URL_FILE: /run/secrets/database_url
+      CURSUS_R2_ENDPOINT: ${CURSUS_R2_ENDPOINT:?set CURSUS_R2_ENDPOINT}
+      CURSUS_R2_BUCKET: ${CURSUS_R2_BUCKET:?set an isolated staging bucket}
+      CURSUS_R2_ACCESS_KEY_ID_FILE: /run/secrets/r2_access_key_id
+      CURSUS_R2_SECRET_ACCESS_KEY_FILE: /run/secrets/r2_secret_access_key
+      CURSUS_WORKER_ID: ${CURSUS_NODE_NAME:?set CURSUS_NODE_NAME}
+      CURSUS_WORKER_POLL_MS: ${CURSUS_WORKER_POLL_MS:-1000}
+      CURSUS_WORKER_LEASE_SEC: ${CURSUS_WORKER_LEASE_SEC:-120}
+      CURSUS_AUTH_REQUIRED: ${CURSUS_AUTH_REQUIRED:-0}
+      CURSUS_AUTH_ALLOWED_EMAILS_FILE: /run/secrets/auth_allowlist
+      RESEND_API_KEY_FILE: /run/secrets/resend_api_key
+      CURSUS_PUBLIC_ORIGIN: ${CURSUS_PUBLIC_ORIGIN:-http://127.0.0.1:18091}
+      CURSUS_AUTH_FROM: ${CURSUS_AUTH_FROM:-Cursus <login@cursus.artalis.io>}
+      CURSUS_TENANT_ID: ${CURSUS_TENANT_ID:-staging}
+      CURSUS_TENANT_NAME: ${CURSUS_TENANT_NAME:-Cursus staging}
+      DISPATCH_HOST: 0.0.0.0
+      DISPATCH_PORT: 8091
+      DISPATCH_STRICT_CONFIG: "1"
+      DISPATCH_MAX_CONCURRENT_SOLVES: ${DISPATCH_MAX_CONCURRENT_SOLVES:-1}
+      DISPATCH_MAX_CONCURRENT_IMPORTS: ${DISPATCH_MAX_CONCURRENT_IMPORTS:-1}
+      DISPATCH_SOLVE_SECONDS: ${DISPATCH_SOLVE_SECONDS:-240}
+      DATASET_ROOT: /data/customer
+      VELO_GRAPH: /data/osm/cursus/${OSM_ASSET_NAME:-default}/current/map.vlg
+      VELO_ORIGIN: http://velo:8082
+      CARTA_ORIGIN: http://carta:8081
+      GEOCODE_CACHE_DIR: /state/geocode-cache
+      GEOCODE_PBF: /data/osm/${OSM_PBF_FILE:-hungary-latest.osm.pbf}
+      DISPATCH_GEOCODE_OFFLINE: "1"
+    ports:
+      - 127.0.0.1:${CURSUS_STAGING_PORT:?set a non-production CURSUS_STAGING_PORT}:8091
+    volumes:
+      - type: bind
+        source: ${CURSUS_STAGING_STATE_PATH:?set CURSUS_STAGING_STATE_PATH}
+        target: /state
+        bind: { create_host_path: false }
+      - type: bind
+        source: ${OSM_DATA_PATH:?set OSM_DATA_PATH}
+        target: /data/osm
+        read_only: true
+        bind: { create_host_path: false }
+      - type: bind
+        source: ${CURSUS_DATASET_PATH:?set the external customer dataset path}
+        target: /data/customer
+        read_only: true
+        bind: { create_host_path: false }
+    secrets: [database_url, r2_access_key_id, r2_secret_access_key, auth_allowlist, resend_api_key]
+    tmpfs: ["/tmp:size=2g,mode=1777"]
+    mem_limit: ${CURSUS_APP_MEMORY:-24g}
+    cpus: ${CURSUS_APP_CPUS:-12}
+    healthcheck:
+      test: [CMD, node, -e, "fetch('http://127.0.0.1:8091/health/ready').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      start_period: 30s
+      retries: 12
+    stop_grace_period: 90s
+
+networks:
+  cursus-stateful:
+    internal: true
+  staging-egress: {}
+
+secrets:
+  database_url:
+    file: ${CURSUS_DATABASE_URL_PATH:?set CURSUS_DATABASE_URL_PATH}
+  postgres_password:
+    file: ${CURSUS_POSTGRES_PASSWORD_PATH:?set CURSUS_POSTGRES_PASSWORD_PATH}
+  postgres_replication_password:
+    file: ${CURSUS_POSTGRES_REPLICATION_PASSWORD_PATH:?set CURSUS_POSTGRES_REPLICATION_PASSWORD_PATH}
+  r2_access_key_id:
+    file: ${CURSUS_R2_ACCESS_KEY_ID_PATH:?set CURSUS_R2_ACCESS_KEY_ID_PATH}
+  r2_secret_access_key:
+    file: ${CURSUS_R2_SECRET_ACCESS_KEY_PATH:?set CURSUS_R2_SECRET_ACCESS_KEY_PATH}
+  auth_allowlist:
+    file: ${CURSUS_AUTH_ALLOWED_EMAILS_PATH:?set CURSUS_AUTH_ALLOWED_EMAILS_PATH}
+  resend_api_key:
+    file: ${RESEND_API_KEY_PATH:?set RESEND_API_KEY_PATH}

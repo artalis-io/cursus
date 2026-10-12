@@ -1,5 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { mkdtempSync, existsSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { spawnSync } from 'node:child_process';
 
 import { missingConfigPaths } from './config.js';
 
@@ -17,4 +21,19 @@ test('missingConfigPaths: reports dependency paths that do not exist, naming var
   // Every reported var is one of the known external dependencies.
   const known = new Set(['SURGE_BIN', 'VELO_GRAPH', 'MATRIX_BUILD_BIN', 'NEXUS_DIR/nx_pipeline', 'DATASET_ROOT']);
   for (const m of missing) assert.ok(known.has(m.variable), `unexpected var ${m.variable}`);
+});
+
+test('importing the stateful conversion worker has no legacy filesystem side effects', () => {
+  const root = mkdtempSync(join(tmpdir(), 'cursus-stateful-import-'));
+  try {
+    const result = spawnSync(process.execPath, ['--import', 'tsx', '--input-type=module', '--eval',
+      "await import('./src/state/conversion.ts')"], {
+      cwd: process.cwd(), env: { ...process.env, CURSUS_DATA_DIR: root }, encoding: 'utf8',
+    });
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(existsSync(join(root, 'scenarios')), false);
+    assert.equal(existsSync(join(root, 'uploads')), false);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });

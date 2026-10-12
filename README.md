@@ -114,10 +114,10 @@ The persistence, background-work, consistency, and rolling-deployment design is
 documented in [`docs/stateful-deployment.md`](docs/stateful-deployment.md).
 The pre-deployment PostgreSQL/R2 primitives and local concurrency tests are in
 [`docs/stateful-infrastructure.md`](docs/stateful-infrastructure.md).
-That document also records the in-progress stateful runtime adapters and the
-opt-in native Surge fencing test. `CURSUS_RUNTIME_MODE` remains `legacy` until
-handler parity and cutover testing are complete; this repository does not claim
-active-active production readiness yet.
+That document also records the merged stateful runtime adapters and native
+Surge fencing tests. Production remains in `legacy` mode until the explicit
+cutover milestone; this repository does not claim active-active production
+readiness yet.
 
 ```bash
 git submodule update --init --recursive
@@ -224,3 +224,13 @@ registry.
 - Cost is an **estimate** under a tariff (demo tariff unless a real rate card is
   provided); it is not invoicing. Carrier management, driver apps, POD and ERP
   sync are out of scope.
+
+The isolated two-node stateful staging, replication, backup/restore and fenced
+promotion contract is documented in
+[`docs/stateful-deployment-infrastructure.md`](docs/stateful-deployment-infrastructure.md).
+It uses `compose.stateful.yaml` and `deploy/stateful.py`; it does not replace the
+production port-8080 services or mutate Cloudflare. The documented staging run
+uses a read-only external customer dataset mount, separately mounted Hungary
+OSM assets, a dedicated R2 bucket, and the same immutable ARM64 application
+image on both Sparks; it completed native conversion and Surge solve workflows
+through both replicas.

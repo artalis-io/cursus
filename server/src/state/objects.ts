@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { GetObjectCommand, HeadObjectCommand, ListObjectsV2Command, PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
+import { GetObjectCommand, HeadBucketCommand, HeadObjectCommand, ListObjectsV2Command, PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
 
 export interface ImmutableObject { key: string; sha256: string; size: number; mediaType: string }
 
@@ -31,6 +31,8 @@ export class ObjectStore {
     if (digest !== object.sha256 || bytes.byteLength !== object.size) throw new Error('object checksum mismatch');
     return bytes;
   }
+
+  async ready(): Promise<void> { await this.client.send(new HeadBucketCommand({ Bucket: this.bucket })); }
 
   /** Inventory checksum objects for reconciliation/GC. Listing is paginated;
    * callers decide retention and deletion policy. */

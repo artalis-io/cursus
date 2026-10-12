@@ -181,6 +181,7 @@ integration('two real HTTP server instances share scenarios, jobs, and fenced pl
   const apiA = await createStatefulApi({ store: a, tenantId: tenant, tenantName: 'Integration tenant', objects });
   const apiB = await createStatefulApi({ store: b, tenantId: tenant, tenantName: 'Integration tenant', objects });
   try {
+    assert.equal((await apiA.inject({ method: 'GET', url: '/health/ready' })).json().status, 'ready');
     const bundle = JSON.stringify({ schemaVersion: 1, days: [{ id: 'fixture-day' }], surgeRequest: { locations: [], vehicles: [], tasks: [], requests: [] } });
     const multipart = Buffer.from(`--x\r\nContent-Disposition: form-data; name="file"; filename="dataset.json"\r\nContent-Type: application/json\r\n\r\n${bundle}\r\n--x--\r\n`);
     const uploaded = await apiA.inject({ method: 'POST', url: '/api/import/upload', payload: multipart,

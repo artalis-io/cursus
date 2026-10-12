@@ -23,6 +23,14 @@ function env(name: string, fallback: string): string {
 export const config = {
   runtimeMode: env('CURSUS_RUNTIME_MODE', 'legacy') as 'legacy' | 'stateful',
   databaseUrl: env('CURSUS_DATABASE_URL', ''),
+  databaseUrlFile: env('CURSUS_DATABASE_URL_FILE', ''),
+  r2Endpoint: env('CURSUS_R2_ENDPOINT', ''),
+  r2Bucket: env('CURSUS_R2_BUCKET', ''),
+  r2AccessKeyIdFile: env('CURSUS_R2_ACCESS_KEY_ID_FILE', ''),
+  r2SecretAccessKeyFile: env('CURSUS_R2_SECRET_ACCESS_KEY_FILE', ''),
+  statefulWorkerId: env('CURSUS_WORKER_ID', 'cursus-worker'),
+  statefulPollMs: Number(env('CURSUS_WORKER_POLL_MS', '1000')),
+  statefulLeaseSec: Number(env('CURSUS_WORKER_LEASE_SEC', '120')),
   port: Number(env('DISPATCH_PORT', '8091')),
   host: env('DISPATCH_HOST', '127.0.0.1'),
 
