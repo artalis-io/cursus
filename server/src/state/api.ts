@@ -9,7 +9,7 @@ import { DatasetRepository } from './datasets.js';
 import fastifyMultipart from '@fastify/multipart';
 import { exportScenario, parseScenarioImport } from '../store.js';
 import { planToCsv, planToRouteSheetHtml, planToRoutesCsv, planToHandoffJson } from '../export.js';
-import { conversionIdentity, type ConversionPayload } from './conversion.js';
+import type { ConversionPayload } from './conversion.js';
 import type { Mapping } from '../data/onboard.js';
 
 export interface StatefulApiOptions { store: StatefulStore; tenantId: string; tenantName: string; auth?: StatefulAuthService; publicOrigin?: string; objects?: ObjectStore; maxUploadBytes?: number }
@@ -120,6 +120,7 @@ export async function createStatefulApi(options: StatefulApiOptions): Promise<Fa
     if (!manifest.source) return reply.code(409).send({ error: 'dataset source missing' });
     const payload: ConversionPayload = { datasetId: req.params.id, source: manifest.source,
       sourceName: manifest.name ?? 'upload.csv', mapping: req.body.mapping, label: req.body.label ?? manifest.name ?? 'Uploaded dataset' };
+    const { conversionIdentity } = await import('./conversion.js');
     const identity = await conversionIdentity(payload);
     const jobId = await options.store.enqueueJob(options.tenantId, 'dataset-admit', `convert/${identity.fingerprint}`, payload);
     return reply.code(202).send({ jobId, datasetId: req.params.id, conversionFingerprint: identity.fingerprint });
