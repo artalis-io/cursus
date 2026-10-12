@@ -552,4 +552,5 @@ export class Store {
   }
 }
 
-export const store = new Store();
+/** Construct the filesystem-backed store only for the legacy runtime. */
+export const createLegacyStore = (): Store => new Store();

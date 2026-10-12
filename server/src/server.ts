@@ -11,8 +11,8 @@ import { allDatasets, unregisterDataset } from './data/registry.js';
 import { mapSolutionToPlan } from './plan/mapper.js';
 import { evaluateTrip } from './plan/evaluate.js';
 import { fillPlanGeometry, veloReachable } from './geometry/velo.js';
-import { store, validateScenarioEdit, exportScenario, parseScenarioImport, type ScenarioEdit } from './store.js';
-import { enqueueSolve, cancelJob, hasSolveCapacity, shutdownSolves, type Objective } from './solve.js';
+import { validateScenarioEdit, exportScenario, parseScenarioImport, type ScenarioEdit } from './store.js';
+import { store, enqueueSolve, cancelJob, hasSolveCapacity, shutdownSolves, type Objective } from './solve.js';
 import { Semaphore } from './util/semaphore.js';
 import { AuthService, cookieValue } from './auth.js';
 

@@ -5,8 +5,10 @@ import { config } from './config.js';
 import { loadDay, loadEnrichment, loadVehicleInfo, DAYS } from './data/dataset.js';
 import { mapSolutionToPlan } from './plan/mapper.js';
 import { fillPlanGeometry } from './geometry/velo.js';
-import { store, type Job, type Scenario } from './store.js';
+import { createLegacyStore, type Job, type Scenario } from './store.js';
 import type { SurgeRequest, SurgeSolution } from './types.js';
+
+export const store = createLegacyStore();
 
 const enrichment = loadEnrichment();
 const vehicleInfo = loadVehicleInfo();
