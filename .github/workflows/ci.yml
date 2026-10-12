@@ -19,7 +19,7 @@ jobs:
         with:
           python-version: '3.12'
       - name: Cloudflare HA unit tests (credential-free)
-        run: python3 -m unittest discover -s tests -p 'test_ha.py' -v
+        run: python3 -m unittest discover -s tests -p 'test_*.py' -v
       - name: Compile HA CLI
         run: python3 -m py_compile deploy/ha.py
 

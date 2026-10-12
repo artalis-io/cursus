@@ -1,0 +1,178 @@
+{
+  "schema": 1,
+  "reviewed_revision": "7d4196196462b5f41657865d70ab99d1e4cdffc8",
+  "current_safety": {
+    "mode": "single-writer-only",
+    "two_application_replicas_safe": false,
+    "automatic_database_failover_safe": false,
+    "reasons": [
+      "authoritative JSON and uploaded files have no cross-host concurrency control",
+      "in-memory store mirrors are not invalidated by writes from another process",
+      "solver and import queues, leases, cancellation handles, and semaphores are process-local",
+      "startup marks all persisted pending and running jobs failed",
+      "pending authentication work uses a node-local SQLite WAL database and inline email delivery"
+    ]
+  },
+  "state": [
+    {
+      "id": "customer-source",
+      "location": "DATASET_ROOT",
+      "owner": "customer",
+      "classification": "immutable-input",
+      "authoritative": true,
+      "writers": [],
+      "multi_replica": "safe-read-only",
+      "target": "shared read-only mount or identical verified copies"
+    },
+    {
+      "id": "dispatch-records",
+      "location": "DISPATCH_DATA_DIR/{scenarios,plans,jobs}",
+      "owner": "cursus",
+      "classification": "authoritative-metadata",
+      "authoritative": true,
+      "writers": ["server/src/store.ts", "server/src/solve.ts", "server/src/server.ts"],
+      "multi_replica": "unsafe",
+      "target": "postgresql tables with tenant keys, revisions, transactions, and job leases"
+    },
+    {
+      "id": "solver-request-files",
+      "location": "DISPATCH_DATA_DIR/jobs/*_request.json",
+      "owner": "cursus",
+      "classification": "ephemeral-job-input",
+      "authoritative": false,
+      "writers": ["server/src/solve.ts"],
+      "multi_replica": "safe-node-local-with-owned-job",
+      "target": "node-local work directory derived from leased job payload"
+    },
+    {
+      "id": "geometry-cache",
+      "location": "DISPATCH_DATA_DIR/geocache.json",
+      "owner": "cursus",
+      "classification": "rebuildable-cache",
+      "authoritative": false,
+      "writers": ["server/src/geometry/velo.ts"],
+      "multi_replica": "safe-only-when-node-local",
+      "target": "separate bounded cache per node"
+    },
+    {
+      "id": "raw-uploads",
+      "location": "DISPATCH_UPLOADS_DIR/up_*",
+      "owner": "cursus",
+      "classification": "authoritative-blob",
+      "authoritative": true,
+      "writers": ["server/src/server.ts", "server/src/data/onboard.ts"],
+      "multi_replica": "unsafe",
+      "target": "shared object storage with immutable keys, checksums, and lifecycle policy"
+    },
+    {
+      "id": "admitted-datasets",
+      "location": "DISPATCH_UPLOADS_DIR/datasets/*",
+      "owner": "cursus",
+      "classification": "authoritative-artifact",
+      "authoritative": true,
+      "writers": ["server/src/data/admit.ts", "server/src/data/registry.ts", "server/src/data/fleet.ts"],
+      "multi_replica": "unsafe",
+      "target": "immutable object artifacts plus PostgreSQL manifest and transactional registration"
+    },
+    {
+      "id": "geocoding-cache",
+      "location": "GEOCODE_CACHE_DIR",
+      "owner": "otto-tools",
+      "classification": "rebuildable-cache",
+      "authoritative": false,
+      "writers": ["OTTO geocode.py invoked by server/src/data/onboard.ts and server/src/data/admit.ts"],
+      "multi_replica": "unsafe-if-shared-writable",
+      "target": "node-local cache or externally coordinated cache; never a writable shared filesystem"
+    },
+    {
+      "id": "osm-indexes",
+      "location": "OSM_DATA_PATH/current",
+      "owner": "otto-tools",
+      "classification": "versioned-immutable-asset",
+      "authoritative": false,
+      "writers": ["explicit osm-prepare job only"],
+      "multi_replica": "safe-read-only",
+      "target": "same checksum/version mounted read-only on both nodes"
+    },
+    {
+      "id": "process-job-control",
+      "location": "server process memory: solve queue/running children/import semaphore",
+      "owner": "cursus",
+      "classification": "ephemeral-coordination",
+      "authoritative": true,
+      "writers": ["server/src/solve.ts", "server/src/server.ts"],
+      "multi_replica": "unsafe",
+      "target": "PostgreSQL durable queue with leases, heartbeats, fencing tokens, and idempotent completion"
+    },
+    {
+      "id": "rate-limits",
+      "location": "server process memory",
+      "owner": "cursus",
+      "classification": "best-effort-ephemeral",
+      "authoritative": false,
+      "writers": ["server/src/ratelimit.ts"],
+      "multi_replica": "safe-with-weaker-global-limit",
+      "target": "retain per-node initially; document multiplied aggregate allowance"
+    },
+    {
+      "id": "auth-sqlite-proposed",
+      "location": "CURSUS_AUTH_DATABASE (pending PR #6)",
+      "owner": "cursus",
+      "classification": "authoritative-identity",
+      "authoritative": true,
+      "writers": ["server/src/auth.ts in pending PR #6"],
+      "multi_replica": "unsafe",
+      "target": "PostgreSQL users, memberships, magic links, sessions, and audit events"
+    },
+    {
+      "id": "resend-delivery-proposed",
+      "location": "external Resend API (pending PR #6)",
+      "owner": "cursus",
+      "classification": "external-side-effect",
+      "authoritative": true,
+      "writers": ["server/src/auth.ts in pending PR #6"],
+      "multi_replica": "unsafe-without-idempotency",
+      "target": "PostgreSQL transactional email outbox, unique idempotency key, leased sender, recorded provider result"
+    }
+  ],
+  "background_execution": [
+    {
+      "id": "solve",
+      "trigger": "POST /api/scenarios/:id/solve",
+      "execution": "in-process queue plus surge_solve child",
+      "duplicate_risk": "same logical request can execute on both replicas; cancellation is node-local",
+      "required_control": "durable leased job, idempotency key, fencing token, compare-and-swap completion"
+    },
+    {
+      "id": "dataset-admit",
+      "trigger": "POST /api/import/admit",
+      "execution": "detached promise guarded by process-local semaphore",
+      "duplicate_risk": "duplicate geocoding/matrix work and conflicting dataset registration/deletion",
+      "required_control": "durable leased workflow, immutable staging, transactional publish, idempotency key"
+    },
+    {
+      "id": "retention-gc",
+      "trigger": "startup and write-count thresholds",
+      "execution": "synchronous filesystem deletion",
+      "duplicate_risk": "one replica can delete records still in use by another",
+      "required_control": "database retention transaction or singleton maintenance lease"
+    },
+    {
+      "id": "magic-link-email-proposed",
+      "trigger": "POST /api/auth/magic-link (pending PR #6)",
+      "execution": "inline database insert followed by Resend fetch",
+      "duplicate_risk": "retry can create multiple tokens/emails; crash splits token creation and delivery audit",
+      "required_control": "transactional outbox and provider idempotency key"
+    }
+  ],
+  "required_before_two_writers": [
+    "tenant-key all authoritative records",
+    "migrate authoritative metadata and auth from JSON/SQLite to PostgreSQL",
+    "move authoritative blobs/artifacts to shared immutable object storage",
+    "implement durable leased jobs with fencing and idempotent completion",
+    "implement transactional Resend outbox",
+    "make migrations expand-contract and serialize them with a PostgreSQL advisory lock",
+    "add readiness modes that distinguish serving HTTP from accepting writes/jobs",
+    "prove backup restore and fenced manual PostgreSQL promotion"
+  ]
+}

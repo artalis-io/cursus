@@ -110,6 +110,8 @@ assets remain external bind mounts. Only Cursus is exposed, on
 upgrade and troubleshooting details.
 The adopted Cloudflare load-balancer/tunnel topology and read-only HA tooling
 are documented in [`docs/deployment-ha.md`](docs/deployment-ha.md).
+The persistence, background-work, consistency, and rolling-deployment design is
+documented in [`docs/stateful-deployment.md`](docs/stateful-deployment.md).
 
 ```bash
 git submodule update --init --recursive
