@@ -43,4 +43,13 @@ export class DatasetRepository {
 
   get(id: string): Promise<Record<string, unknown> | null> { return this.db.getDataset(this.tenantId, id); }
   list(): Promise<Record<string, unknown>[]> { return this.db.listDatasets(this.tenantId, true); }
+
+  /** Read-only orphan inventory. Objects absent from PostgreSQL cannot be
+   * solver-visible; operators may garbage-collect them after a retention age. */
+  async orphanKeys(): Promise<string[]> {
+    const keys = await this.objects.listTenantKeys(this.tenantId);
+    const { rows } = await this.db.pool.query<{ object_key: string }>('SELECT object_key FROM objects WHERE tenant_id=$1', [this.tenantId]);
+    const known = new Set(rows.map((r) => r.object_key));
+    return keys.filter((key) => !known.has(key));
+  }
 }

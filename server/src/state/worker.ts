@@ -10,7 +10,12 @@ export async function workOneSolve(store: StatefulStore, execute: SolveExecutor,
   const lease = await store.claimJob('solve', workerId, leaseSeconds);
   if (!lease) return false;
   const abort = new AbortController();
-  const heartbeat = setInterval(() => void store.heartbeatJob(lease, leaseSeconds).catch(() => abort.abort()), Math.max(250, leaseSeconds * 500));
+  let heartbeating = false;
+  const heartbeat = setInterval(() => {
+    if (heartbeating) return;
+    heartbeating = true;
+    void store.heartbeatJob(lease, leaseSeconds).catch(() => abort.abort()).finally(() => { heartbeating = false; });
+  }, Math.max(250, leaseSeconds * 500));
   try {
     const output = await execute(lease, abort.signal);
     await store.completeSolve(lease, output.planId, output.scenarioId, output.scenarioRevision, output.plan);

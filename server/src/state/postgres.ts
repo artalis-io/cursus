@@ -189,11 +189,12 @@ export class StatefulStore {
         AND lease_expires_at>=now() RETURNING id`, [lease.tenantId, lease.id, lease.owner, lease.fence, { datasetId }]);
       if (owned.rowCount !== 1) throw new StaleFenceError();
       for (const artifact of artifacts) {
-        await client.query(`INSERT INTO objects(tenant_id,object_key,sha256,size_bytes,media_type,state,published_at)
+        const published = await client.query(`INSERT INTO objects(tenant_id,object_key,sha256,size_bytes,media_type,state,published_at)
           VALUES($1,$2,$3,$4,$5,'published',now()) ON CONFLICT(tenant_id,object_key) DO UPDATE SET
           state='published',published_at=coalesce(objects.published_at,now())
           WHERE objects.sha256=excluded.sha256 AND objects.size_bytes=excluded.size_bytes`,
           [lease.tenantId, artifact.key, artifact.sha256, artifact.size, artifact.mediaType]);
+        if (published.rowCount !== 1) throw new Error(`immutable object metadata conflict: ${artifact.key}`);
       }
       const dataset = await client.query(`UPDATE datasets SET manifest=$3,status='admitted',validated_at=coalesce(validated_at,now()),
         admitted_at=now(),failure=NULL WHERE tenant_id=$1 AND id=$2 AND status IN ('uploaded','validated') RETURNING id`,

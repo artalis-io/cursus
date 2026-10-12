@@ -73,9 +73,17 @@ export async function executeDatasetConversion(lease: Lease, objects: ObjectStor
 export async function workOneDatasetAdmission(store: StatefulStore, objects: ObjectStore, workerId: string, leaseSeconds = 120): Promise<boolean> {
   const lease = await store.claimJob('dataset-admit', workerId, leaseSeconds); if (!lease) return false;
   const abort = new AbortController();
-  const heartbeat = setInterval(() => void store.heartbeatJob(lease, leaseSeconds).catch(() => abort.abort()), Math.max(1000, leaseSeconds * 500));
+  let heartbeating = false;
+  const heartbeat = setInterval(() => {
+    if (heartbeating) return;
+    heartbeating = true;
+    void store.heartbeatJob(lease, leaseSeconds).catch(() => abort.abort()).finally(() => { heartbeating = false; });
+  }, Math.max(1000, leaseSeconds * 500));
   try {
     const output = await executeDatasetConversion(lease, objects, abort.signal);
+    // Staging is deliberately outside the admission transaction. If this
+    // worker loses its fence, artifacts remain non-visible but discoverable.
+    for (const artifact of output.artifacts) await store.stageObject(lease.tenantId, artifact);
     await store.completeDatasetAdmission(lease, output.datasetId, output.manifest, output.artifacts);
   } catch (error) {
     if (!(error instanceof StaleFenceError)) try { await store.failJob(lease, (error as Error).message); } catch { /* a newer fence owns it */ }

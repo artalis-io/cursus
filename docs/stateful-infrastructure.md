@@ -34,6 +34,10 @@ service.
   of Nexus, the geocoder, routing graph, matrix executable, matrix parameters,
   and output schema. It uploads final artifacts before a short fenced admission
   transaction; no database transaction spans native conversion work.
+- Conversion outputs are staged in PostgreSQL before the fenced admission
+  transaction. Objects left by a crash before staging remain solver-invisible
+  and can be inventoried by tenant with `DatasetRepository.orphanKeys()` for a
+  retention-based operator cleanup; Cursus never deletes them automatically.
 
 Cloudflare **R2**, not AWS-hosted storage, is the production target. Configure
 the S3 client endpoint as:
@@ -98,6 +102,8 @@ Two independent connection pools prove:
 - a stale conversion worker can upload immutable artifacts but cannot admit a
   manifest, and a solve can load the admitted request/geocoded artifacts back
   from object storage without relying on the legacy node-local registry.
+- immutable objects left before PostgreSQL staging are discoverable, and cease
+  to appear in the orphan inventory once their metadata is staged.
 
 When the private dataset and native binary exist locally, the stronger opt-in
 test executes Surge and attempts publication after its one-second lease has

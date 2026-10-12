@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { CreateBucketCommand, S3Client } from '@aws-sdk/client-s3';
 import { ObjectStore } from './objects.js';
+import { DatasetRepository } from './datasets.js';
 import { RevisionConflictError, StaleFenceError, StatefulStore } from './postgres.js';
 import { StatefulAuthService } from './auth.js';
 import { ScenarioRepository } from './scenarios.js';
@@ -97,6 +98,16 @@ integration('immutable objects are checksum addressed and dataset publish is ato
   await assert.rejects(() => a.publishDataset(tenant, 'dataset-bad', {}, ['missing-object']));
   const { rows } = await a.pool.query('SELECT id FROM datasets WHERE tenant_id=$1 ORDER BY id', [tenant]);
   assert.deepEqual(rows.map((r) => r.id), ['dataset-1']);
+});
+
+integration('unrecorded immutable objects are discoverable for retained orphan cleanup', async () => {
+  const orphanTenant = `orphan-${randomUUID()}`; await a.ensureTenant(orphanTenant, 'Orphan inventory');
+  const objects = new ObjectStore(bucket, { endpoint: s3Endpoint, accessKeyId: 'integration', secretAccessKey: 'integration' });
+  const repository = new DatasetRepository(a, objects, orphanTenant);
+  const object = await objects.putImmutable(orphanTenant, new TextEncoder().encode('interrupted conversion output'), 'text/plain');
+  assert.deepEqual(await repository.orphanKeys(), [object.key]);
+  await a.stageObject(orphanTenant, object);
+  assert.deepEqual(await repository.orphanKeys(), []);
 });
 
 integration('two scenario repositories share tenant-scoped authoritative state', async () => {
