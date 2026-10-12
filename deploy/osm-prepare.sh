@@ -42,6 +42,8 @@ version="$base/versions/$identity"
 
 if [[ -f "$version/COMPLETE" && -s "$version/map.vlg" && -s "$version/map.idx" && -s "$version/map.lcx" ]]; then
     mkdir -p "$base"
+    chmod a+rx "$base" "$base/versions" "$version"
+    chmod -R a+rX "$version"
     ln -sfn "versions/$identity" "$base/current.next"
     mv -Tf "$base/current.next" "$base/current"
     echo "prepare: compatible completed assets already exist; reused"
@@ -88,6 +90,8 @@ cat >"$stage/manifest.json" <<EOF
 {"status":"complete","pbf_file":"$pbf_file","pbf_sha256":"$pbf_sha","pbf_bytes":$size,"otto_revision":"$revision","converter_sha256":"$tools_sha","identity":"$identity"}
 EOF
 date -u +%Y-%m-%dT%H:%M:%SZ >"$stage/COMPLETE"
+chmod a+rx "$base" "$base/versions"
+chmod -R a+rX "$stage"
 if [[ -e "$version" ]]; then
     echo "prepare: removing incomplete managed version for this exact identity"
     rm -rf "$version"
