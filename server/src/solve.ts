@@ -2,16 +2,20 @@ import { spawn, type ChildProcess } from 'node:child_process';
 import { mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { config } from './config.js';
-import { loadDay, loadEnrichment, loadVehicleInfo, DAYS } from './data/dataset.js';
+import { loadDay, loadVehicleInfo, DAYS } from './data/dataset.js';
 import { mapSolutionToPlan } from './plan/mapper.js';
 import { fillPlanGeometry } from './geometry/velo.js';
 import { createLegacyStore, type Job, type Scenario } from './store.js';
 import type { SurgeRequest, SurgeSolution } from './types.js';
 
-export const store = createLegacyStore();
-
-const enrichment = loadEnrichment();
-const vehicleInfo = loadVehicleInfo();
+let legacyStore: ReturnType<typeof createLegacyStore> | undefined;
+export const store: ReturnType<typeof createLegacyStore> = new Proxy({} as ReturnType<typeof createLegacyStore>, {
+  get(_target, property) {
+    legacyStore ??= createLegacyStore();
+    const value: unknown = Reflect.get(legacyStore, property, legacyStore);
+    return typeof value === 'function' ? value.bind(legacyStore) : value;
+  },
+});
 
 /* Bounded solve execution: at most `maxConcurrentSolves` surge_solve processes
  * run at once; the rest queue (jobs stay 'pending' until a slot frees). Each run
@@ -241,7 +245,7 @@ function runSolveProcess(job: Job, scenario: Scenario, budgetSec: number, object
 
       const planId = store.newId('pln');
       const plan = mapSolutionToPlan({
-        day: built.day, request: built.request, solution, enrichment: built.day.enrichment, vehicleInfo,
+        day: built.day, request: built.request, solution, enrichment: built.day.enrichment, vehicleInfo: loadVehicleInfo(),
         scenarioId: scenario.id, scenarioRevision: scenario.revision, planId,
         source: 'live', createdAt: new Date().toISOString(),
       });
