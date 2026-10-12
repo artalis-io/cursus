@@ -18,6 +18,5 @@ if [ -n "${CURSUS_RECOVERY_TARGET_TIME:-}" ]; then
   printf "recovery_target_time = '%s'\nrecovery_target_action = 'pause'\n" "$CURSUS_RECOVERY_TARGET_TIME" >> /restore/postgresql.auto.conf
 fi
 touch /restore/recovery.signal
-chmod 0700 /restore
 printf '{"backup_id":"%s","prepared_at":"%s","target_time":"%s"}\n' \
   "$backup_id" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "${CURSUS_RECOVERY_TARGET_TIME:-latest}" > /restore/cursus-restore.json
