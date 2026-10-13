@@ -16,6 +16,11 @@ import type { Plan } from '../types.js';
 import type { Scenario } from '../store.js';
 import { config } from '../config.js';
 import { fillPlanGeometry } from '../geometry/velo.js';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { CATALOG, suggestMapping, type Entity } from '../data/catalog.js';
+import { extFromName, runGeocode, runIngestPreview, sampleUpload } from '../data/onboard.js';
 
 export interface StatefulApiOptions { store: StatefulStore; tenantId: string; tenantName: string; auth?: StatefulAuthService; publicOrigin?: string; objects?: ObjectStore; maxUploadBytes?: number }
 
@@ -135,11 +140,83 @@ export async function createStatefulApi(options: StatefulApiOptions): Promise<Fa
   app.get<{ Params: { id: string } }>('/api/plans/:id/routes.csv', planExport('routes'));
   app.get<{ Params: { id: string } }>('/api/plans/:id/routesheet.html', planExport('html'));
   app.get<{ Params: { id: string } }>('/api/plans/:id/handoff.json', planExport('handoff'));
-  app.post('/api/import/upload', async (req, reply) => {
+  app.get('/api/import/catalog', async () => CATALOG);
+  app.get('/api/import/summary', async () => statefulImportSummary(await options.store.listDatasets(options.tenantId, true)));
+  app.get<{ Querystring: { file?: string; limit?: string } }>('/api/import/raw', async (req, reply) => {
+    if (!datasets || !options.objects) return reply.code(503).send({ error: 'object storage not configured' });
+    const dataset = await latestDataset(options.store, options.tenantId);
+    const manifest = dataset?.manifest as StatefulDatasetManifest | undefined;
+    const role = req.query.file ?? 'orders';
+    const object = role === 'orders' ? manifest?.source : manifest?.rawInputs?.find((item) => item.role.includes(role));
+    if (!object) return reply.code(404).send({ error: 'raw file not available' });
+    try {
+      const sample = await withObjectFile(options.objects, object, objectName(manifest, object), (path) => sampleUpload(path, safeLimit(req.query.limit)));
+      return { label: role, ...sample };
+    } catch (error) { return reply.code(400).send({ error: `could not read source: ${(error as Error).message}` }); }
+  });
+  app.get<{ Querystring: { limit?: string } }>('/api/import/canonical', async (req, reply) => {
+    if (!options.objects) return reply.code(503).send({ error: 'object storage not configured' });
+    const dataset = await latestDataset(options.store, options.tenantId);
+    const manifest = dataset?.manifest as StatefulDatasetManifest | undefined;
+    const object = manifest?.artifacts?.geocoded;
+    if (!object) return reply.code(404).send({ error: 'canonical not available' });
+    try {
+      const bytes = await options.objects.getVerified(object);
+      const parsed = JSON.parse(new TextDecoder().decode(bytes)) as Record<string, unknown>[] | { records?: Record<string, unknown>[] };
+      const records = Array.isArray(parsed) ? parsed : parsed.records ?? [];
+      const fields = records[0] ? Object.keys(records[0]) : [];
+      return { fields, rows: records.slice(0, safeLimit(req.query.limit)), count: records.length, sha256: object.sha256 };
+    } catch (error) { return reply.code(400).send({ error: `could not read canonical data: ${(error as Error).message}` }); }
+  });
+  app.post<{ Querystring: { entity?: string } }>('/api/import/upload', async (req, reply) => {
     if (!datasets) return reply.code(503).send({ error: 'object storage not configured' });
+    const entity = req.query.entity as Entity | undefined;
+    if (entity && !(['orders', 'vehicles', 'routes'] as string[]).includes(entity)) return reply.code(400).send({ error: 'unknown entity (orders|vehicles|routes)' });
     const file = await req.file(); if (!file) return reply.code(400).send({ error: 'no file' });
     const bytes = await file.toBuffer(); if (!bytes.length) return reply.code(400).send({ error: 'empty file' });
-    return reply.code(201).send(await datasets.upload(bytes, file.mimetype, file.filename));
+    // Keep the lower-level immutable JSON bundle API used by integrations;
+    // browser onboarding always supplies an entity and takes the CSV/XLSX path.
+    if (!entity) return reply.code(201).send(await datasets.upload(bytes, file.mimetype, file.filename));
+    const ext = extFromName(file.filename); if (!ext) return reply.code(400).send({ error: 'unsupported file type (CSV or XLSX only)' });
+    try {
+      const sample = await withBytesFile(bytes, ext, (path) => sampleUpload(path, 8));
+      const uploaded = await datasets.upload(bytes, file.mimetype, file.filename, { entity });
+      return reply.code(201).send({ ...uploaded, uploadId: uploaded.datasetId, entity, ...sample, suggested: suggestMapping(entity, sample.headers) });
+    } catch (error) { return reply.code(400).send({ error: `could not read file: ${(error as Error).message}` }); }
+  });
+  app.post<{ Body: { uploadId?: string; entity?: Entity; mapping?: Mapping } }>('/api/import/preview', async (req, reply) => {
+    if (!datasets || !options.objects) return reply.code(503).send({ error: 'object storage not configured' });
+    const { uploadId, entity, mapping } = req.body ?? {};
+    if (!uploadId || !entity || !mapping) return reply.code(400).send({ error: 'uploadId, entity and mapping required' });
+    const dataset = await datasets.get(uploadId); const manifest = dataset?.manifest as StatefulDatasetManifest | undefined;
+    if (!manifest?.source || manifest.entity !== entity) return reply.code(404).send({ error: 'upload not found (re-upload)' });
+    return withObjectFile(options.objects, manifest.source, objectName(manifest, manifest.source), (path) => runIngestPreview(path, entity, mapping));
+  });
+  app.post<{ Body: { uploadId?: string; mapping?: Mapping } }>('/api/import/geocode', async (req, reply) => {
+    if (!datasets || !options.objects) return reply.code(503).send({ error: 'object storage not configured' });
+    const { uploadId, mapping } = req.body ?? {};
+    if (!uploadId || !mapping) return reply.code(400).send({ error: 'uploadId and mapping required' });
+    const dataset = await datasets.get(uploadId); const manifest = dataset?.manifest as StatefulDatasetManifest | undefined;
+    if (!manifest?.source || manifest.entity !== 'orders') return reply.code(404).send({ error: 'orders upload not found (re-upload)' });
+    return withObjectFile(options.objects, manifest.source, objectName(manifest, manifest.source), (path) => runGeocode(path, mapping));
+  });
+  app.post<{ Body: { uploadId?: string; mapping?: Mapping; label?: string; vehiclesUploadId?: string; vehiclesMapping?: Mapping } }>('/api/import/admit', async (req, reply) => {
+    if (!datasets) return reply.code(503).send({ error: 'object storage not configured' });
+    const { uploadId, mapping, label, vehiclesUploadId, vehiclesMapping } = req.body ?? {};
+    if (!uploadId || !mapping) return reply.code(400).send({ error: 'uploadId and mapping required' });
+    const dataset = await datasets.get(uploadId); const manifest = dataset?.manifest as StatefulDatasetManifest | undefined;
+    if (!manifest?.source || manifest.entity !== 'orders') return reply.code(404).send({ error: 'orders upload not found (re-upload)' });
+    let fleet: ConversionPayload['fleet'];
+    if (vehiclesUploadId) {
+      const vehicles = await datasets.get(vehiclesUploadId); const vm = vehicles?.manifest as StatefulDatasetManifest | undefined;
+      if (!vm?.source || vm.entity !== 'vehicles' || !vehiclesMapping) return reply.code(404).send({ error: 'vehicles upload not found (re-upload)' });
+      fleet = { source: vm.source, sourceName: vm.name ?? 'vehicles.csv', mapping: vehiclesMapping };
+    }
+    const payload: ConversionPayload = { datasetId: uploadId, source: manifest.source, sourceName: manifest.name ?? 'upload.csv', mapping,
+      label: label?.trim() || manifest.name || 'Uploaded dataset', ...(fleet ? { fleet } : {}) };
+    const { conversionIdentity } = await import('./conversion.js'); const identity = await conversionIdentity(payload);
+    const jobId = await options.store.enqueueJob(options.tenantId, 'dataset-admit', `convert/${identity.fingerprint}`, payload);
+    return reply.code(202).send({ jobId });
   });
   app.post<{ Params: { id: string } }>('/api/import/datasets/:id/validate', async (req, reply) => {
     if (!datasets) return reply.code(503).send({ error: 'object storage not configured' });
@@ -162,7 +239,7 @@ export async function createStatefulApi(options: StatefulApiOptions): Promise<Fa
     const jobId = await options.store.enqueueJob(options.tenantId, 'dataset-admit', `convert/${identity.fingerprint}`, payload);
     return reply.code(202).send({ jobId, datasetId: req.params.id, conversionFingerprint: identity.fingerprint });
   });
-  app.get('/api/import/datasets', async (_req, reply) => datasets ? datasets.list() : reply.code(503).send({ error: 'object storage not configured' }));
+  app.get('/api/import/datasets', async (_req, reply) => datasets ? (await datasets.list()).map(statefulDatasetSummary) : reply.code(503).send({ error: 'object storage not configured' }));
   const tilePath = /^\/tiles\/\d{1,2}\/\d{1,7}\/\d{1,7}(?:\.[a-z0-9]{1,8})?$/i;
   const proxyCarta = async (req: FastifyRequest, reply: FastifyReply) => {
     const path = req.url.split('?', 1)[0]!;
@@ -181,6 +258,40 @@ export async function createStatefulApi(options: StatefulApiOptions): Promise<Fa
   app.get('/tiles.vector.json', proxyCarta);
   app.get('/tiles/*', proxyCarta);
   return app;
+}
+
+interface StatefulDatasetManifest { source?: ImmutableObject; name?: string; entity?: Entity; label?: string;
+  rawInputs?: (ImmutableObject & { role: string })[]; artifacts?: { request?: ImmutableObject; geocoded?: ImmutableObject };
+  days?: { dayId: string; isoDate: string; orders?: number }[]; stats?: { routable?: number; excluded?: number } }
+const safeLimit = (value?: string) => Math.min(50, Math.max(1, Number(value) || 8));
+async function latestDataset(store: StatefulStore, tenantId: string) { const all = await store.listDatasets(tenantId, true); return all.at(-1); }
+function objectName(manifest: StatefulDatasetManifest | undefined, object: ImmutableObject) {
+  return manifest?.name && extFromName(manifest.name) ? manifest.name : object.mediaType.includes('spreadsheet') ? 'upload.xlsx' : 'upload.csv';
+}
+async function withBytesFile<T>(bytes: Uint8Array, ext: string, fn: (path: string) => Promise<T>): Promise<T> {
+  const dir = await mkdtemp(join(tmpdir(), 'cursus-upload-')); const path = join(dir, `source.${ext}`);
+  try { await writeFile(path, bytes, { mode: 0o600 }); return await fn(path); } finally { await rm(dir, { recursive: true, force: true }); }
+}
+async function withObjectFile<T>(objects: ObjectStore, object: ImmutableObject, name: string, fn: (path: string) => Promise<T>): Promise<T> {
+  return withBytesFile(await objects.getVerified(object), extFromName(name) ?? 'csv', fn);
+}
+export function statefulDatasetSummary(row: Record<string, unknown>) {
+  const manifest = row.manifest as StatefulDatasetManifest; const days = manifest.days ?? [];
+  return { id: String(row.id), label: manifest.label ?? manifest.name ?? String(row.id), createdAt: String(row.createdAt),
+    days: days.map((d) => ({ dayId: d.dayId, isoDate: d.isoDate, orders: d.orders ?? 0 })),
+    totalOrders: days.reduce((sum, d) => sum + (d.orders ?? 0), 0) || manifest.stats?.routable || 0 };
+}
+export function statefulImportSummary(rows: Record<string, unknown>[]) {
+  const row = rows.at(-1); const manifest = row?.manifest as StatefulDatasetManifest | undefined; const days = manifest?.days ?? [];
+  const source = manifest?.source;
+  return { sources: source ? [{ kind: 'orders', label: manifest?.label ?? manifest?.name ?? 'Orders', file: manifest?.name ?? 'immutable upload', present: true,
+      sha256: source.sha256, rawRows: manifest?.stats?.routable ?? 0 }] : [],
+    canonical: { orders: { count: manifest?.stats?.routable ?? null, sourceSha256: source?.sha256 ?? null, audit: null } },
+    pipeline: [{ stage: 'Upload', detail: 'Checksum-addressed immutable object' }, { stage: 'Nexus', detail: 'Canonical validation and reconciliation' },
+      { stage: 'Geocode + Velo', detail: 'Verified coordinates and road matrix' }, { stage: 'Admission', detail: 'Fenced PostgreSQL publication' }],
+    rules: ['Only admitted immutable datasets are solver-visible.', 'Checksums and converter identities are retained with the dataset manifest.'],
+    scope: { rawOrderLines: manifest?.stats?.routable ?? 0, inScopeHungarian: manifest?.stats?.routable ?? 0,
+      day1: days[0]?.orders ?? 0, day2: days[1]?.orders ?? 0 } };
 }
 
 function randomKey(): string { return `${Date.now()}-${Math.random().toString(36).slice(2)}`; }

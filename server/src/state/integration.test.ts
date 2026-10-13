@@ -212,6 +212,12 @@ integration('two real HTTP server instances share scenarios, jobs, and fenced pl
     assert.equal(uploaded.statusCode, 201);
     const data = uploaded.json();
     assert.equal((await apiB.inject({ method: 'GET', url: '/api/import/datasets' })).json().some((d: { id: string }) => d.id === data.datasetId), false);
+    const csv = Buffer.from('--y\r\nContent-Disposition: form-data; name="file"; filename="orders.csv"\r\nContent-Type: text/csv\r\n\r\nRendeles;Varos\n1;Budapest\n\r\n--y--\r\n');
+    const browserUpload = await apiA.inject({ method: 'POST', url: '/api/import/upload?entity=orders', payload: csv,
+      headers: { 'content-type': 'multipart/form-data; boundary=y', 'content-length': String(csv.length) } });
+    assert.equal(browserUpload.statusCode, 201);
+    assert.ok(Array.isArray(browserUpload.json().headers)); assert.ok(Array.isArray(browserUpload.json().rows));
+    assert.equal(typeof browserUpload.json().suggested, 'object'); assert.equal(browserUpload.json().uploadId, browserUpload.json().datasetId);
     assert.equal((await apiB.inject({ method: 'POST', url: `/api/import/datasets/${data.datasetId}/validate` })).statusCode, 200);
     assert.equal((await apiA.inject({ method: 'POST', url: `/api/import/datasets/${data.datasetId}/admit` })).statusCode, 200);
     assert.equal((await apiB.inject({ method: 'GET', url: '/api/import/datasets' })).json().some((d: { id: string }) => d.id === data.datasetId), true);

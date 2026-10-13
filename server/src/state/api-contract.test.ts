@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { statefulDaySummaries, statefulJobResponse } from './api.js';
+import { statefulDatasetSummary, statefulDaySummaries, statefulImportSummary, statefulJobResponse } from './api.js';
 import type { Scenario } from '../store.js';
 import type { Plan } from '../types.js';
 
@@ -38,4 +38,15 @@ test('job response maps durable state and result to the SPA contract', () => {
   assert.equal(job.planId, 'pln-1');
   assert.equal(job.scenarioId, 'day1-base');
   assert.equal(job.elapsedSec, 3);
+});
+
+test('stateful dataset and provenance adapters preserve the SPA contract', () => {
+  const source = { key: 'tenants/t/sha256/abc', sha256: 'abc', size: 42, mediaType: 'text/csv' };
+  const row = { id: 'ds_1', createdAt: '2026-05-01T00:00:00Z', manifest: { label: 'Gyermelyi', source,
+    days: [{ dayId: 'd1', isoDate: '2026-05-06', orders: 10 }, { dayId: 'd2', isoDate: '2026-05-07', orders: 12 }], stats: { routable: 22 } } };
+  assert.deepEqual(statefulDatasetSummary(row), { id: 'ds_1', label: 'Gyermelyi', createdAt: row.createdAt,
+    days: [{ dayId: 'd1', isoDate: '2026-05-06', orders: 10 }, { dayId: 'd2', isoDate: '2026-05-07', orders: 12 }], totalOrders: 22 });
+  const summary = statefulImportSummary([row]);
+  assert.equal(summary.sources[0]?.sha256, 'abc'); assert.equal(summary.scope.day1, 10); assert.equal(summary.scope.day2, 12);
+  assert.ok(summary.pipeline.length > 0); assert.ok(summary.rules.length > 0);
 });

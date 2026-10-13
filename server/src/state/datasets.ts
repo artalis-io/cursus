@@ -9,12 +9,12 @@ export interface DatasetUpload { datasetId: string; object: ImmutableObject; sta
 export class DatasetRepository {
   constructor(private db: StatefulStore, private objects: ObjectStore, private tenantId: string) {}
 
-  async upload(bytes: Uint8Array, mediaType: string, name?: string): Promise<DatasetUpload> {
+  async upload(bytes: Uint8Array, mediaType: string, name?: string, metadata: Record<string, unknown> = {}): Promise<DatasetUpload> {
     if (!bytes.byteLength) throw new Error('empty dataset upload');
     const object = await this.objects.putImmutable(this.tenantId, bytes, mediaType);
     await this.db.stageObject(this.tenantId, object);
     const datasetId = `ds_${randomUUID().slice(0, 10)}`;
-    await this.db.createDatasetUpload(this.tenantId, datasetId, { schemaVersion: 1, source: object, name: name ?? null });
+    await this.db.createDatasetUpload(this.tenantId, datasetId, { schemaVersion: 1, source: object, name: name ?? null, ...metadata });
     return { datasetId, object, status: 'uploaded' };
   }
 
