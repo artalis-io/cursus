@@ -109,6 +109,36 @@ class HATests(unittest.TestCase):
     def test_apply_requires_approval(self):
         with self.assertRaisesRegex(ha.HAError, "requires --approve"): ha.apply(FakeClient(), CFG, False)
 
+    def test_origin_drain_preserves_pool_and_origin_fields(self):
+        fake = FakeClient()
+        pool = fake.state["nodes"][0]["pool"]
+        pool["notification_email"] = "ops@example.invalid"
+        pool["origins"][0]["unknown_origin_field"] = {"keep": True}
+        with contextlib.redirect_stdout(io.StringIO()):
+            ha.set_origin_enabled(fake, CFG, CFG["nodes"][0]["name"], False, True)
+        self.assertFalse(fake.state["nodes"][0]["pool"]["origins"][0]["enabled"])
+        body = fake.writes[-1][2]
+        self.assertEqual("ops@example.invalid", body["notification_email"])
+        self.assertEqual({"keep": True}, body["origins"][0]["unknown_origin_field"])
+
+    def test_origin_state_change_is_approved_idempotent_and_adopted(self):
+        fake = FakeClient()
+        with self.assertRaisesRegex(ha.HAError, "requires --approve"):
+            ha.set_origin_enabled(fake, CFG, CFG["nodes"][0]["name"], False, False)
+        self.assertEqual([], fake.writes)
+        with self.assertRaisesRegex(ha.HAError, "unknown HA node"):
+            ha.set_origin_enabled(fake, CFG, "not-a-node", False, True)
+        with contextlib.redirect_stdout(io.StringIO()):
+            ha.set_origin_enabled(fake, CFG, CFG["nodes"][0]["name"], True, True)
+        self.assertEqual([], fake.writes)
+
+    def test_origin_drain_refuses_unexpected_origin_inventory(self):
+        fake = FakeClient()
+        fake.state["nodes"][0]["pool"]["origins"].append({"name": "duplicate", "address": "invalid"})
+        with self.assertRaisesRegex(ha.HAError, "one-origin topology"):
+            ha.set_origin_enabled(fake, CFG, CFG["nodes"][0]["name"], False, True)
+        self.assertEqual([], fake.writes)
+
     def test_partial_update_failure_is_reported_and_successes_verified(self):
         state = converged_state()
         state["monitor"]["timeout"] = 4

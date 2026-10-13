@@ -125,14 +125,37 @@ integration('PostgreSQL magic links persist sessions and queue email atomically'
   const allow = join(dir, 'allowed'); await writeFile(allow, 'admin@example.test\n', { mode: 0o600 });
   const auth = new StatefulAuthService(a, { allowedEmailsFile: allow, publicOrigin: 'https://cursus.example.test',
     from: 'Cursus <login@example.test>', tenantId: tenant, tenantName: 'Integration tenant', secureCookies: true });
-  await auth.initialize(); await auth.requestMagicLink('admin@example.test');
+  await auth.initialize();
+  const objects = new ObjectStore(bucket, { endpoint: s3Endpoint, accessKeyId: 'integration', secretAccessKey: 'integration' });
+  const protectedApi = await createStatefulApi({ store: a, objects, auth, tenantId: tenant,
+    tenantName: 'Integration tenant', publicOrigin: 'https://cursus.example.test' });
+  {
+    assert.notEqual((await protectedApi.inject({ method: 'GET', url: '/' })).statusCode, 401,
+      'SPA shell must remain reachable for login');
+    assert.equal((await protectedApi.inject({ method: 'GET', url: '/api/scenarios' })).statusCode, 401);
+    assert.equal((await protectedApi.inject({ method: 'GET', url: '/tiles.vector.json' })).statusCode, 401);
+    const ready = await protectedApi.inject({ method: 'GET', url: '/health/ready' });
+    assert.equal(ready.statusCode, 200); assert.match(ready.body, /"status": "ready"/);
+  }
+  await auth.requestMagicLink('admin@example.test');
   const { rows } = await a.pool.query<{ payload: { html: string } }>(`SELECT payload FROM email_outbox WHERE tenant_id=$1
     AND payload->'to'->>0='admin@example.test' ORDER BY created_at DESC LIMIT 1`, [tenant]);
   const token = decodeURIComponent(rows[0]!.payload.html.match(/token=([^"<]+)/)![1]!);
-  const session = await auth.consumeMagicLink(token); assert.ok(session);
+  const scanned = await protectedApi.inject({ method: 'GET', url: `/api/auth/verify?token=${encodeURIComponent(token)}` });
+  assert.equal(scanned.statusCode, 200); assert.match(scanned.body, /Continue to Cursus/);
+  assert.equal(scanned.headers['set-cookie'], undefined, 'a GET from an email scanner must not create a session');
+  assert.equal((await b.pool.query('SELECT count(*)::int n FROM sessions WHERE tenant_id=$1', [tenant])).rows[0].n, 0);
+  const verified = await protectedApi.inject({ method: 'POST', url: `/api/auth/verify?token=${encodeURIComponent(token)}`,
+    headers: { 'content-type': 'application/x-www-form-urlencoded' }, payload: '' });
+  assert.equal(verified.statusCode, 302); assert.match(String(verified.headers['set-cookie']), /^cursus_session=/);
+  const session = String(verified.headers['set-cookie']).match(/^cursus_session=([^;]+)/)![1]!;
   assert.equal((await b.pool.query('SELECT count(*)::int n FROM sessions WHERE tenant_id=$1', [tenant])).rows[0].n, 1);
   assert.equal((await auth.authenticate(session!))?.email, 'admin@example.test');
+  const reused = await protectedApi.inject({ method: 'POST', url: `/api/auth/verify?token=${encodeURIComponent(token)}`,
+    headers: { 'content-type': 'application/x-www-form-urlencoded' }, payload: '' });
+  assert.equal(reused.statusCode, 302); assert.equal(reused.headers.location, '/?auth=invalid');
   await auth.logout(session!); assert.equal(await auth.authenticate(session!), null);
+  await protectedApi.close();
   await a.pool.query("UPDATE email_outbox SET state='sent',sent_at=now() WHERE tenant_id=$1 AND payload->'to'->>0='admin@example.test'", [tenant]);
 });
 
@@ -189,6 +212,12 @@ integration('two real HTTP server instances share scenarios, jobs, and fenced pl
     assert.equal(uploaded.statusCode, 201);
     const data = uploaded.json();
     assert.equal((await apiB.inject({ method: 'GET', url: '/api/import/datasets' })).json().some((d: { id: string }) => d.id === data.datasetId), false);
+    const csv = Buffer.from('--y\r\nContent-Disposition: form-data; name="file"; filename="orders.csv"\r\nContent-Type: text/csv\r\n\r\nRendeles;Varos\n1;Budapest\n\r\n--y--\r\n');
+    const browserUpload = await apiA.inject({ method: 'POST', url: '/api/import/upload?entity=orders', payload: csv,
+      headers: { 'content-type': 'multipart/form-data; boundary=y', 'content-length': String(csv.length) } });
+    assert.equal(browserUpload.statusCode, 201);
+    assert.ok(Array.isArray(browserUpload.json().headers)); assert.ok(Array.isArray(browserUpload.json().rows));
+    assert.equal(typeof browserUpload.json().suggested, 'object'); assert.equal(browserUpload.json().uploadId, browserUpload.json().datasetId);
     assert.equal((await apiB.inject({ method: 'POST', url: `/api/import/datasets/${data.datasetId}/validate` })).statusCode, 200);
     assert.equal((await apiA.inject({ method: 'POST', url: `/api/import/datasets/${data.datasetId}/admit` })).statusCode, 200);
     assert.equal((await apiB.inject({ method: 'GET', url: '/api/import/datasets' })).json().some((d: { id: string }) => d.id === data.datasetId), true);
@@ -202,15 +231,18 @@ integration('two real HTTP server instances share scenarios, jobs, and fenced pl
     assert.deepEqual(visible.json().removedVehicleIds, [7]);
     const queued = await apiA.inject({ method: 'POST', url: `/api/scenarios/${scenario.id}/solve`, payload: { budgetSec: 1 } });
     assert.equal(queued.statusCode, 202);
+    const jobId = queued.json().jobId;
+    assert.equal(typeof jobId, 'string');
     await workOneSolve(b, async (lease) => ({ planId: `http-plan-${lease.id}`, scenarioId: scenario.id,
       scenarioRevision: scenario.revision, plan: { id: `http-plan-${lease.id}`, scenarioId: scenario.id, scenarioRevision: scenario.revision,
         shared: true, day: '2026-01-01', createdAt: new Date().toISOString(), objective: 'vehicles', source: 'live',
         stats: { vehiclesUsed: 0, servedOrders: 0, totalOrders: 0, totalDistanceKm: 0 }, vehicles: [], unassigned: [] } }), 'http-worker');
-    const job = await apiB.inject({ method: 'GET', url: `/api/jobs/${queued.json().id}` });
-    assert.equal(job.json().state, 'succeeded');
-    const plan = await apiA.inject({ method: 'GET', url: `/api/plans/http-plan-${queued.json().id}` });
+    const job = await apiB.inject({ method: 'GET', url: `/api/jobs/${jobId}` });
+    assert.equal(job.json().status, 'completed');
+    assert.equal(job.json().planId, `http-plan-${jobId}`);
+    const plan = await apiA.inject({ method: 'GET', url: `/api/plans/http-plan-${jobId}` });
     assert.equal(plan.json().shared, true);
-    const handoff = await apiB.inject({ method: 'GET', url: `/api/plans/http-plan-${queued.json().id}/handoff.json` });
+    const handoff = await apiB.inject({ method: 'GET', url: `/api/plans/http-plan-${jobId}/handoff.json` });
     assert.equal(handoff.statusCode, 200);
   } finally { await Promise.all([apiA.close(), apiB.close()]); }
 });

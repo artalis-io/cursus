@@ -20,7 +20,8 @@ import { StaleFenceError, type Lease, type StatefulStore } from './postgres.js';
 
 const OUTPUT_SCHEMA_VERSION = 1;
 const run = promisify(execFile);
-export interface ConversionPayload { datasetId: string; source: ImmutableObject; sourceName: string; mapping: Mapping; label: string }
+export interface ConversionPayload { datasetId: string; source: ImmutableObject; sourceName: string; mapping: Mapping; label: string;
+  fleet?: { source: ImmutableObject; sourceName: string; mapping: Mapping } }
 export interface ConversionOutput { datasetId: string; fingerprint: string; manifest: Record<string, unknown>; artifacts: ImmutableObject[] }
 
 function stable(value: unknown): string {
@@ -39,7 +40,7 @@ export async function conversionIdentity(payload: ConversionPayload): Promise<{ 
     routingGraph: config.veloGraph, matrix: config.matrixBuildBin };
   const converters: Record<string, string> = {};
   for (const [name, path] of Object.entries(paths)) converters[name] = await fileDigest(path);
-  const identity = { source: payload.source.sha256, mapping: payload.mapping, converters,
+  const identity = { source: payload.source.sha256, mapping: payload.mapping, fleet: payload.fleet ? { source: payload.fleet.source.sha256, mapping: payload.fleet.mapping } : null, converters,
     matrix: { profile: config.veloProfile, maxLocations: config.maxMatrixLocations }, outputSchemaVersion: OUTPUT_SCHEMA_VERSION };
   return { fingerprint: createHash('sha256').update(stable(identity)).digest('hex'), converters };
 }
@@ -56,7 +57,13 @@ export async function executeDatasetConversion(lease: Lease, objects: ObjectStor
     const sourceBytes = await objects.getVerified(payload.source);
     const sourcePath = join(workspace, basename(payload.sourceName || 'upload.csv'));
     await writeFile(sourcePath, sourceBytes, { mode: 0o600 });
-    const result = await admitDataset(sourcePath, payload.mapping, payload.label, undefined, undefined,
+    let fleetSource: { path: string; mapping: Mapping } | undefined;
+    if (payload.fleet) {
+      const fleetPath = join(workspace, basename(payload.fleet.sourceName || 'vehicles.csv'));
+      await writeFile(fleetPath, await objects.getVerified(payload.fleet.source), { mode: 0o600 });
+      fleetSource = { path: fleetPath, mapping: payload.fleet.mapping };
+    }
+    const result = await admitDataset(sourcePath, payload.mapping, payload.label, undefined, fleetSource,
       { workspaceRoot: workspace, datasetId: payload.datasetId, register: false, signal });
     if (!result.ok) throw new Error(result.error ?? 'dataset conversion failed');
     if (signal.aborted) throw new Error('conversion lease lost');

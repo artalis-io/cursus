@@ -133,6 +133,8 @@ const okStats = {
 
 test('maps a multi-trip route: by-id vehicle lookup, trip grouping, legs, load, stats', () => {
   const request = buildRequest();
+  // Order references are display labels and may repeat across distinct tasks.
+  request.tasks[1]!.ref = request.tasks[0]!.ref;
   // Vehicle 42 runs two trips: trip 0 visits tasks 1 then 2; trip 1 visits task 3.
   const solution: SurgeSolution = {
     status: 'OK',

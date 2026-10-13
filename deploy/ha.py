@@ -214,6 +214,41 @@ def apply(client: Any, cfg: dict[str, Any], approved: bool) -> None:
     if failures: raise HAError("partial apply; inspect before retry: " + "; ".join(failures))
 
 
+def set_origin_enabled(client: Any, cfg: dict[str, Any], node_name: str,
+                       enabled: bool, approved: bool) -> None:
+    """Drain/restore one adopted origin without reconciling any other field."""
+    if not approved:
+        raise HAError("origin state change requires --approve; no changes were made")
+    try:
+        node = next(item for item in cfg["nodes"] if item["name"] == node_name)
+    except StopIteration:
+        raise HAError(f"unknown HA node: {node_name}") from None
+    path = f"/accounts/{cfg['account_id']}/load_balancers/pools/{node['pool']['id']}"
+    live = client.get(path)
+    origins = live.get("origins")
+    expected = node["pool"]["origin"]
+    matches = [origin for origin in origins or []
+               if origin.get("name") == expected["name"] and origin.get("address") == expected["address"]]
+    if len(origins or []) != 1 or len(matches) != 1:
+        raise HAError("pool origin inventory differs from the adopted one-origin topology")
+    if bool(matches[0].get("enabled")) == enabled:
+        print(f"{node_name}: origin already {'enabled' if enabled else 'drained'}")
+        return
+    # Re-read immediately before the write. The entire live pool document is
+    # retained so Cloudflare fields unknown to this client are not erased.
+    fresh = client.get(path)
+    if fresh != live:
+        raise HAError("pool changed during approval window; retry after inspection")
+    desired = copy.deepcopy(fresh)
+    desired["origins"][0]["enabled"] = enabled
+    client.patch(path, desired)
+    verified = client.get(path)
+    verified_origins = verified.get("origins", [])
+    if len(verified_origins) != 1 or bool(verified_origins[0].get("enabled")) != enabled:
+        raise HAError("origin update could not be verified")
+    print(f"{node_name}: origin {'restored' if enabled else 'drained'} and verified")
+
+
 def run(args: list[str], timeout: int = 12) -> tuple[bool, str]:
     try:
         p = subprocess.run(args, text=True, capture_output=True, timeout=timeout, check=False)
@@ -310,6 +345,10 @@ def main(argv: list[str] | None = None) -> int:
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("plan"); sub.add_parser("status")
     ap = sub.add_parser("apply"); ap.add_argument("--approve", action="store_true")
+    for command in ("drain", "restore"):
+        origin = sub.add_parser(command)
+        origin.add_argument("--node", required=True)
+        origin.add_argument("--approve", action="store_true")
     tp = sub.add_parser("test"); tp.add_argument("--failover", action="store_true")
     tp.add_argument("--confirm-failover", action="store_true"); tp.add_argument("--stop-command")
     tp.add_argument("--start-command"); tp.add_argument("--wait-seconds", type=int, default=240)
@@ -321,6 +360,9 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "plan": print_plan(build_plan(cfg, fetch_state(client, cfg))); return 0
         if args.command == "status": return 0 if status(client, cfg) else 1
         if args.command == "apply": apply(client, cfg, args.approve); return 0
+        if args.command in ("drain", "restore"):
+            set_origin_enabled(client, cfg, args.node, args.command == "restore", args.approve)
+            return 0
         return 0 if failover_test(client, cfg, args) else 1
     except (HAError, json.JSONDecodeError) as exc:
         print(f"error: {exc}", file=sys.stderr); return 2

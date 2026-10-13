@@ -111,7 +111,10 @@ export const api = {
     fd.append('file', file);
     const r = await fetch(`/api/import/upload?entity=${entity}`, { method: 'POST', body: fd });
     if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error ?? `upload: ${r.status}`);
-    return r.json() as Promise<UploadResult>;
+    const result = await r.json() as Partial<UploadResult>;
+    if (!result.uploadId || !Array.isArray(result.headers) || !Array.isArray(result.rows) || !result.suggested || typeof result.totalRows !== 'number')
+      throw new Error('upload response is incomplete; please retry after refreshing');
+    return result as UploadResult;
   },
   onboardPreview: (uploadId: string, entity: Entity, mapping: Record<string, number>) =>
     jsend<OnboardPreview>('/api/import/preview', 'POST', { uploadId, entity, mapping }),

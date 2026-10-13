@@ -18,6 +18,11 @@ services:
       <<: *otto-build
       dockerfile: docker/Dockerfile.velo
     command: ["/data/osm/cursus/${OSM_ASSET_NAME:-default}/current/map.vlg"]
+    # Cursus expands each displayed trip into several internal route requests.
+    # The browser-facing API remains rate-limited; throttling this private
+    # service-to-service fan-out produces incomplete route geometry.
+    environment:
+      VELO_RATE_LIMIT_ENABLED: "0"
     volumes:
       - type: bind
         source: ${OSM_DATA_PATH:?set OSM_DATA_PATH}
@@ -68,7 +73,7 @@ services:
       context: .
       dockerfile: Dockerfile
       args:
-        OTTO_REVISION: ${OTTO_REVISION:-a549fdca3fdba2148b6f034754e99e77f6b86729}
+        OTTO_REVISION: ${OTTO_REVISION:-b650a2534d0c36dc45723c991aad1985fb9328ec}
     user: ${CURSUS_UID:-10001}:${CURSUS_GID:-10001}
     depends_on:
       velo: { condition: service_healthy }
@@ -137,7 +142,7 @@ services:
       OSM_PBF_FILE: ${OSM_PBF_FILE:-hungary-latest.osm.pbf}
       OSM_PBF_URL: ${OSM_PBF_URL:-https://download.geofabrik.de/europe/hungary-latest.osm.pbf}
       OSM_ASSET_NAME: ${OSM_ASSET_NAME:-default}
-      OTTO_REVISION: ${OTTO_REVISION:-a549fdca3fdba2148b6f034754e99e77f6b86729}
+      OTTO_REVISION: ${OTTO_REVISION:-b650a2534d0c36dc45723c991aad1985fb9328ec}
     volumes:
       - type: bind
         source: ${OSM_DATA_PATH:?set OSM_DATA_PATH}

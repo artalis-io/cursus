@@ -115,9 +115,17 @@ documented in [`docs/stateful-deployment.md`](docs/stateful-deployment.md).
 The pre-deployment PostgreSQL/R2 primitives and local concurrency tests are in
 [`docs/stateful-infrastructure.md`](docs/stateful-infrastructure.md).
 That document also records the merged stateful runtime adapters and native
-Surge fencing tests. Production remains in `legacy` mode until the explicit
-cutover milestone; this repository does not claim active-active production
-readiness yet.
+Surge fencing tests. The separately approved production provision, migration,
+write-freeze, origin-draining cutover, and rollback procedure is documented in
+[`docs/production-cutover.md`](docs/production-cutover.md). PostgreSQL recovery
+remains manual and fail-closed; application routing HA is not a claim of
+automatic database HA or a hard asynchronous-replication RPO.
+
+The stateful PostgreSQL/R2 runtime is the accepted production system of record.
+The legacy writer remains frozen pending separately approved cleanup; its
+snapshots and backups are recovery evidence, not an automatic rollback target.
+Production application rollback must preserve all post-cutover PostgreSQL
+writes.
 
 ```bash
 git submodule update --init --recursive
@@ -156,6 +164,14 @@ baseline remained 117/117 orders, 11 vehicles and 3,860 km. Restarting Cursus
 preserved the generated plan. Steady post-solve memory was approximately 118
 MiB for Cursus, 5.52 GiB for Velo and 1.09 GiB for Carta. These measurements are
 host/workload observations, not configured resource limits.
+
+A cold full-country geometry pass needs additional transient Velo query memory.
+The current 7.7 GiB local Docker limit can run the idle services but can OOM
+Velo while Carta is resident. Allocate at least 10 GiB to Docker for a cold
+Hungary browser acceptance run. On a smaller developer VM, stop Carta, request
+both baseline plans once to populate the external geometry cache, then restart
+Carta before Playwright. This is a developer-machine workaround only; the
+128 GiB Sparks run the complete stack concurrently.
 
 Compose 2.7 does not support `docker compose up --pull never`; use the
 documented `--no-build` command after building. Newer Compose versions may add
@@ -208,6 +224,10 @@ registry.
   vehicle→trip→stop navigation, the staged edit stack + a full Replan, week view,
   constraint advisories, playback and solve settings. Uses the cached Chromium
   (`PW_CHROMIUM`) with software WebGL.
+  `app.spec.ts` is also the release regression for the real two-day dataset: it
+  requires Day 1 and Day 2 and rejects any trip without road geometry. Run it
+  against the locally built image before deployment with
+  `VIEWER_URL=http://127.0.0.1:18080 npm run test:ui -- app.spec.ts`.
 - Screenshots (real browser via Playwright, cached Chromium):
   `cd web && PW_CHROMIUM=… node scripts/shot.mjs` (and `shot-replan`,
   `shot-import`, `shot-stage4`). Committed screenshots are captured with

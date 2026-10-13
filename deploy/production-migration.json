@@ -1,0 +1,41 @@
+{
+  "schema_version": 1,
+  "tenant_id": "production",
+  "tenant_name": "Cursus Production",
+  "r2_endpoint": "https://344ef7f03f70e84066cc16cd5525e41d.r2.cloudflarestorage.com",
+  "legacy_state": "/Users/mark/artalis.io/data/cursus-state/application",
+  "dataset_root": "/Users/mark/artalis.io/data/gyermelyi",
+  "dataset_id": "gyermelyi-2026-09",
+  "expected": {
+    "scenarios": 2,
+    "plans": 1,
+    "jobs": 1,
+    "dataset_files": 2395,
+    "admins": 5
+  },
+  "authoritative_dataset_files": [
+    {"path": "raw/gyermelyi_orders_raw.csv", "role": "raw-orders", "media_type": "text/csv"},
+    {"path": "raw/gyermelyi_vehicles_raw.csv", "role": "raw-vehicles", "media_type": "text/csv"},
+    {"path": "raw/gyermelyi_routes_fact_raw.csv", "role": "raw-routes", "media_type": "text/csv"},
+    {"path": "surge_request.json", "role": "solver-request", "media_type": "application/json"},
+    {"path": "input/orders.geocoded.json", "role": "geocoded-orders", "media_type": "application/json"}
+  ],
+  "days": [
+    {"dayId": "day1", "date": "5/6/26", "isoDate": "2026-05-06", "label": "2026-05-06"},
+    {"dayId": "day2", "date": "5/7/26", "isoDate": "2026-05-07", "label": "2026-05-07"}
+  ],
+  "excluded_prefixes": [
+    ".geocode_cache/", ".velo_cache/", "benchmark/", "cockpit/", "deliverables/",
+    "matrices/", "results/", "tiles/", "uploads/"
+  ],
+  "controller_secrets": {
+    "allowlist": "~/.config/cursus/auth-allowlist",
+    "r2_access_key": "~/.config/cursus/production-r2-access-key-id",
+    "r2_secret_key": "~/.config/cursus/production-r2-secret-access-key",
+    "r2_bucket": "~/.config/cursus/production-r2-bucket"
+  },
+  "primary": {
+    "ssh_alias": "spark-7468",
+    "postgres_container": "cursus-production-primary-postgres-1"
+  }
+}
