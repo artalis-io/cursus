@@ -165,6 +165,14 @@ preserved the generated plan. Steady post-solve memory was approximately 118
 MiB for Cursus, 5.52 GiB for Velo and 1.09 GiB for Carta. These measurements are
 host/workload observations, not configured resource limits.
 
+A cold full-country geometry pass needs additional transient Velo query memory.
+The current 7.7 GiB local Docker limit can run the idle services but can OOM
+Velo while Carta is resident. Allocate at least 10 GiB to Docker for a cold
+Hungary browser acceptance run. On a smaller developer VM, stop Carta, request
+both baseline plans once to populate the external geometry cache, then restart
+Carta before Playwright. This is a developer-machine workaround only; the
+128 GiB Sparks run the complete stack concurrently.
+
 Compose 2.7 does not support `docker compose up --pull never`; use the
 documented `--no-build` command after building. Newer Compose versions may add
 `--pull never` when an explicit registry-pull guard is desired. All application
@@ -216,6 +224,10 @@ registry.
   vehicle→trip→stop navigation, the staged edit stack + a full Replan, week view,
   constraint advisories, playback and solve settings. Uses the cached Chromium
   (`PW_CHROMIUM`) with software WebGL.
+  `app.spec.ts` is also the release regression for the real two-day dataset: it
+  requires Day 1 and Day 2 and rejects any trip without road geometry. Run it
+  against the locally built image before deployment with
+  `VIEWER_URL=http://127.0.0.1:18080 npm run test:ui -- app.spec.ts`.
 - Screenshots (real browser via Playwright, cached Chromium):
   `cd web && PW_CHROMIUM=… node scripts/shot.mjs` (and `shot-replan`,
   `shot-import`, `shot-stage4`). Committed screenshots are captured with

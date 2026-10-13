@@ -20,6 +20,31 @@ test('onboarding shows a progress stepper (upload -> admit)', async ({ page }) =
   expectNoErrors(page);
 });
 
+test('provenance loads the canonical Gyermelyi audit and pipeline', async ({ page }) => {
+  await loadApp(page);
+  await page.getByRole('button', { name: 'Data' }).click();
+  await page.getByRole('tab', { name: 'Provenance' }).click();
+  await expect(page.getByText(/332\/332 accepted/).first()).toBeVisible();
+  await expect(page.getByText('Nexus validate')).toBeVisible();
+  await expect(page.getByText(/canonical records/i)).toBeVisible();
+  expectNoErrors(page);
+});
+
+test('upload accepts a small CSV and renders its mapping without a runtime error', async ({ page }) => {
+  await loadApp(page);
+  await page.getByRole('button', { name: 'Data' }).click();
+  await page.getByRole('tab', { name: 'Upload' }).click();
+  await page.locator('input[type=file]').first().setInputFiles({
+    name: 'playwright-orders.csv',
+    mimeType: 'text/csv',
+    buffer: Buffer.from('order_no,customer,city,delivery_date,address\nPW-1,Test Customer,Budapest,2026-10-13,Test utca 1\n'),
+  });
+  await expect(page.getByText('Map columns')).toBeVisible();
+  await expect(page.getByText('1 rows')).toBeVisible();
+  expect(await page.locator('table select').count()).toBeGreaterThan(0);
+  expectNoErrors(page);
+});
+
 test.describe('data onboarding (M1)', () => {
   test.skip(!existsSync(RAW), 'raw dataset not present');
 

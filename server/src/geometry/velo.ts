@@ -90,38 +90,54 @@ async function rawRoute(from: LonLat, to: LonLat): Promise<LonLat[] | null> {
  * route via it. The stop keeps its true coordinate on the map; only the route
  * line approaches within a few hundred metres. This is a geometry-visualisation
  * fallback, not a straight-line substitute. */
-const surrogate = new Map<string, LonLat | null>();
+const surrogate = new Map<string, LonLat>();
 async function findSurrogate(p: LonLat, ref: LonLat): Promise<LonLat | null> {
   const key = `${r5(p[0])},${r5(p[1])}`;
-  if (surrogate.has(key)) return surrogate.get(key)!;
+  const cached = surrogate.get(key);
+  if (cached) return cached;
+  // A usable point must be in the depot's strongly connected component. A
+  // one-way check can select a point that is reachable but cannot depart (or
+  // vice versa), which merely moves the failure to the following leg.
+  if (await rawRoute(ref, p) && await rawRoute(p, ref)) {
+    surrogate.set(key, p);
+    return p;
+  }
   const cosLat = Math.cos((p[1] * Math.PI) / 180) || 1;
   for (const rad of [0.004, 0.008]) {       // ~300m, ~600m
     for (let k = 0; k < 8; k++) {
       const a = (2 * Math.PI * k) / 8;
       const cand: LonLat = [p[0] + (rad * Math.cos(a)) / cosLat, p[1] + rad * Math.sin(a)];
-      if (await rawRoute(ref, cand)) { surrogate.set(key, cand); return cand; }
+      if (await rawRoute(ref, cand) && await rawRoute(cand, ref)) {
+        surrogate.set(key, cand);
+        return cand;
+      }
     }
   }
-  surrogate.set(key, null);
+  // Do not negatively cache failures: overload, startup, or a transient Velo
+  // response must not make this address unroutable for the process lifetime.
   return null;
 }
 
-async function fetchLeg(from: LonLat, to: LonLat): Promise<LonLat[] | null> {
+async function fetchLeg(from: LonLat, to: LonLat, anchor: LonLat): Promise<LonLat[] | null> {
   loadCache();
   const key = legKey(from, to);
+  // Multiple orders can share the exact geocode. Velo correctly returns a
+  // zero-distance route for the same snapped node, but has no encoded line;
+  // treat that as a complete no-op leg rather than a routing failure.
+  if (r5(from[0]) === r5(to[0]) && r5(from[1]) === r5(to[1])) return [from];
   const hit = mem.get(key);
   if (hit) return hit;
 
   let coords = await rawRoute(from, to);
   if (!coords) {
-    // Retry via routable surrogates for the failing endpoint(s).
-    const tS = await findSurrogate(to, from);
-    if (tS) coords = await rawRoute(from, tS);
-    if (!coords) {
-      const fS = await findSurrogate(from, to);
-      if (fS) coords = await rawRoute(fS, to);
-      if (!coords && fS && tS) coords = await rawRoute(fS, tS);
-    }
+    // Discover each endpoint against the known-connected depot. Using one
+    // failing endpoint as the other's probe reference deadlocks when both
+    // happen to snap to isolated/restricted graph components.
+    const [fS, tS] = await Promise.all([
+      findSurrogate(from, anchor),
+      findSurrogate(to, anchor),
+    ]);
+    if (fS && tS) coords = await rawRoute(fS, tS);
   }
   if (!coords) return null;
   rememberLeg(key, coords);
@@ -142,10 +158,10 @@ async function pool<T>(items: (() => Promise<T>)[], limit = 8): Promise<T[]> {
   return out;
 }
 
-function stitch(legs: (LonLat[] | null)[]): LonLat[] {
+function stitch(legs: LonLat[][]): LonLat[] {
   const coords: LonLat[] = [];
   for (const leg of legs) {
-    if (!leg || leg.length === 0) continue;
+    if (leg.length === 0) continue;
     const start = coords.length > 0 ? 1 : 0; // drop shared vertex
     for (let k = start; k < leg.length; k++) coords.push(leg[k]!);
   }
@@ -172,9 +188,15 @@ export async function fillPlanGeometry(plan: Plan): Promise<boolean> {
   // retrying a trip only re-fetches the legs that failed transiently (cold Velo).
   for (const job of jobs) {
     for (let attempt = 0; attempt < 3 && !job.trip.geometry; attempt++) {
-      const legFns = job.pts.slice(0, -1).map((_, k) => () => fetchLeg(job.pts[k]!, job.pts[k + 1]!));
-      const legs = await pool(legFns, 6);
-      const coords = stitch(legs);
+      const legFns = job.pts.slice(0, -1).map((_, k) => () => fetchLeg(job.pts[k]!, job.pts[k + 1]!, depot));
+      // A Velo query context allocates working arrays proportional to the
+      // country graph. Parallel cold-plan fan-out can OOM a constrained Docker
+      // VM (and restart Velo mid-response), so serialize geometry queries.
+      const legs = await pool(legFns, 1);
+      // Never bridge a failed leg with a fabricated straight segment. A trip
+      // is publishable only when every consecutive stop pair was routed.
+      if (legs.some((leg) => !leg || leg.length === 0)) continue;
+      const coords = stitch(legs as LonLat[][]);
       if (coords.length >= 2) {
         job.trip.geometry = { type: 'LineString', coordinates: coords } as GeoJSONLineString;
         any = true;

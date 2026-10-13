@@ -4,6 +4,7 @@ import { randomUUID } from 'node:crypto';
 import { config } from './config.js';
 import { writeJsonAtomic } from './util/jsonfile.js';
 import type { Plan } from './types.js';
+import { withNormalizedPlanStats } from './plan/stats.js';
 
 /* Minimal durable store for scenarios, plans and jobs. JSON files under the
  * local data dir (not SQLite) - fastest reliable for a single-node demo, and
@@ -471,9 +472,12 @@ export class Store {
       if (this.plans.size > config.retainPlans + 20) this.gcPlans(); // cheap trigger
     }
   }
-  getPlan(id: string): Plan | undefined { return this.plans.get(id); }
+  getPlan(id: string): Plan | undefined {
+    const plan = this.plans.get(id);
+    return plan ? withNormalizedPlanStats(plan) : undefined;
+  }
   plansForScenario(scenarioId: string): Plan[] {
-    return [...this.plans.values()].filter((p) => p.scenarioId === scenarioId);
+    return [...this.plans.values()].filter((p) => p.scenarioId === scenarioId).map(withNormalizedPlanStats);
   }
   /** The most recent plan for a scenario (its current "result"), if any. */
   latestPlanForScenario(scenarioId: string): Plan | undefined {

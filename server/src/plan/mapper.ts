@@ -60,7 +60,6 @@ export function mapSolutionToPlan(inp: MapInputs): Plan {
 
   const depotLoc = 0;
   const violations: unknown[] = [];
-  const servedOrderNos = new Set<string>();
   const tariff = inp.tariff ?? loadTariff();
 
   const vehicles: PlanVehicle[] = solution.routes.map((route, ri) => {
@@ -95,7 +94,6 @@ export function mapSolutionToPlan(inp: MapInputs): Plan {
         const travelToSec = task ? leg.durSec(prevLoc, task.location_id) : 0;
         tripMeters += task ? leg.distM(prevLoc, task.location_id) : 0;
         if (task) prevLoc = task.location_id;
-        servedOrderNos.add(orderNo);
         const twLate = task?.tw_late ?? 0;
         const lateBySec = lateSec(s.arrival, twLate);
         if (lateBySec > 1) violations.push({ type: 'HARD_TW', vehicle_id: route.vehicle_id, request_id: s.request_id, actual: s.arrival, limit: twLate });
@@ -238,7 +236,10 @@ export function mapSolutionToPlan(inp: MapInputs): Plan {
       validation: { valid, violations },
     },
     stats: {
-      servedOrders: servedOrderNos.size,
+      // The scoped task count and Surge's explicit unassigned list are the
+      // authoritative partition. Display references and even solver stop IDs
+      // need not be unique, so counting either can under-report served loads.
+      servedOrders: Math.max(0, inp.day.scopeTaskIds.size - unassigned.length),
       totalOrders: inp.day.scopeTaskIds.size,
       deliveryStops,
       trips: solution.stats.trips ?? vehicles.reduce((n, v) => n + v.tripCount, 0),

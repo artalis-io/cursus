@@ -61,7 +61,7 @@ test.describe('tier-2 features', () => {
     await page.getByRole('button', { name: 'Week' }).click();
     const dialog = page.getByRole('dialog');
     await expect(dialog.getByText('Week overview')).toBeVisible();
-    await expect(dialog.getByText('262/263')).toBeVisible();   // orders across both days
+    await expect(dialog.getByText('263/263')).toBeVisible();   // orders across both days
     await expect(dialog.getByText('Per-vehicle utilization')).toBeVisible();
     await expect(dialog.getByText('both days').first()).toBeVisible();
     expectNoErrors(page);

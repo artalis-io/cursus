@@ -25,11 +25,15 @@ export function ImportDialog({ open, onOpenChange, onAdmitted, onDatasetsChanged
     return () => { alive = false; };
   }, [open, t]);
   useEffect(() => {
-    if (!open) return;
+    const source = summary?.sources.find((candidate) => candidate.kind === rawFile);
+    if (!open || mode !== 'provenance' || !source?.present) {
+      setRaw(null);
+      return;
+    }
     let alive = true;   // guard the last-write-wins race when switching raw file fast
     api.importRaw(rawFile).then((r) => { if (alive) setRaw(r); }).catch(() => { if (alive) setRaw(null); });
     return () => { alive = false; };
-  }, [open, rawFile]);
+  }, [open, mode, rawFile, summary]);
 
   const audit = summary?.canonical.orders.audit;
   const shaMatch = summary && summary.canonical.orders.sourceSha256 && summary.sources.find((s) => s.kind === 'orders')?.sha256

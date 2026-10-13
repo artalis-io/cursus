@@ -5,6 +5,7 @@ import { randomUUID } from 'node:crypto';
 import pg, { type Pool, type PoolClient } from 'pg';
 import type { Plan } from '../types.js';
 import type { Scenario } from '../store.js';
+import { withNormalizedPlanStats } from '../plan/stats.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const migration = resolve(here, '../../migrations/001_stateful.sql');
@@ -66,13 +67,13 @@ export class StatefulStore {
 
   async getPlan(tenantId: string, id: string): Promise<Plan | null> {
     const { rows } = await this.pool.query<{ body: Plan }>('SELECT body FROM plans WHERE tenant_id=$1 AND id=$2', [tenantId, id]);
-    return rows[0]?.body ?? null;
+    return rows[0]?.body ? withNormalizedPlanStats(rows[0].body) : null;
   }
 
   async listPlans(tenantId: string, scenarioId?: string): Promise<Plan[]> {
     const { rows } = await this.pool.query<{ body: Plan }>(`SELECT body FROM plans WHERE tenant_id=$1
       AND ($2::text IS NULL OR scenario_id=$2) ORDER BY created_at`, [tenantId, scenarioId ?? null]);
-    return rows.map((r) => r.body);
+    return rows.map((r) => withNormalizedPlanStats(r.body));
   }
 
   async getJob(tenantId: string, id: string): Promise<Record<string, unknown> | null> {
