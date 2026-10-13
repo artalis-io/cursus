@@ -67,6 +67,15 @@ test.describe('tier-2 features', () => {
     expectNoErrors(page);
   });
 
+  test('saved plans opens without a render error', async ({ page }) => {
+    await loadApp(page);
+    await page.getByRole('button', { name: 'Plans' }).click();
+    const dialog = page.getByRole('dialog');
+    await expect(dialog.getByText('Saved plans')).toBeVisible();
+    await expect(dialog.getByText(/km/).first()).toBeVisible();
+    expectNoErrors(page);
+  });
+
   test('constraint advisories: filter chip and inspector block', async ({ page }) => {
     await loadApp(page);
     await expect(page.getByText(/Has advisories/)).toBeVisible();

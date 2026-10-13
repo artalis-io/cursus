@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { statefulDatasetSummary, statefulDaySummaries, statefulImportSummary, statefulJobResponse } from './api.js';
+import { statefulDatasetSummary, statefulDaySummaries, statefulImportSummary, statefulJobResponse, statefulPlanSummaries, statefulWeekSummary } from './api.js';
 import type { Scenario } from '../store.js';
 import type { Plan } from '../types.js';
 
@@ -29,6 +29,28 @@ test('day summaries prefer the saved baseline over a newer live replan', () => {
     plan('pln-live', 'day1-base', '2026-05-06', '2026-05-03T00:00:00Z', 'live'),
   ]);
   assert.equal(days[0]?.baselinePlanId, 'day1-baseline');
+});
+
+test('plan summaries preserve the history dialog contract and day filter', () => {
+  const scenarios = [scenario('day1-base', 'day1'), scenario('day2-base', 'day2')];
+  const plans = [plan('day1-baseline', 'day1-base', '2026-05-06'), plan('day2-baseline', 'day2-base', '2026-05-07')];
+  const summaries = statefulPlanSummaries(scenarios, plans, 'day1');
+  assert.equal(summaries.length, 1);
+  assert.deepEqual(summaries[0], {
+    id: 'day1-baseline', scenarioId: 'day1-base', day: 'day1', label: 'day1 label', source: 'saved',
+    createdAt: '2026-05-02T00:00:00Z', termination: 'UNKNOWN', servedOrders: 7, totalOrders: 8,
+    vehiclesUsed: 1, totalDistanceKm: 10,
+  });
+});
+
+test('week summary rolls up both stateful base plans', () => {
+  const scenarios = [scenario('day1-base', 'day1'), scenario('day2-base', 'day2')];
+  const summary = statefulWeekSummary(scenarios, [
+    plan('day1-baseline', 'day1-base', '2026-05-06'), plan('day2-baseline', 'day2-base', '2026-05-07'),
+  ]);
+  assert.equal(summary.days.length, 2);
+  assert.equal(summary.totals.servedOrders, 14);
+  assert.equal(summary.totals.totalDistanceKm, 20);
 });
 
 test('job response maps durable state and result to the SPA contract', () => {

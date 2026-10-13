@@ -30,6 +30,25 @@ test('provenance loads the canonical Gyermelyi audit and pipeline', async ({ pag
   expectNoErrors(page);
 });
 
+test('a full provenance checksum wraps inside its source card', async ({ page }) => {
+  const sha = '1306949c1ba9d00d85eba628a675df071843fd5e7c9f44a7e635a1ab946e871c';
+  await loadApp(page);
+  await page.route('**/api/import/summary', async (route) => {
+    const response = await route.fetch();
+    const body = await response.json();
+    body.sources[0].sha256 = sha;
+    await route.fulfill({ response, json: body });
+  });
+  await page.getByRole('button', { name: 'Data' }).click();
+  const checksum = page.getByText(new RegExp(`sha ${sha}`));
+  await expect(checksum).toBeVisible();
+  const textBox = await checksum.boundingBox();
+  const cardBox = await checksum.locator('..').boundingBox();
+  expect(textBox).not.toBeNull(); expect(cardBox).not.toBeNull();
+  expect(textBox!.x + textBox!.width).toBeLessThanOrEqual(cardBox!.x + cardBox!.width + 1);
+  expectNoErrors(page);
+});
+
 test('upload accepts a small CSV and renders its mapping without a runtime error', async ({ page }) => {
   await loadApp(page);
   await page.getByRole('button', { name: 'Data' }).click();
