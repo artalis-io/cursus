@@ -58,9 +58,9 @@ export function ImportDialog({ open, onOpenChange, onAdmitted, onDatasetsChanged
               {/* Provenance summary */}
               <div className="grid grid-cols-3 gap-2">
                 {summary.sources.map((s) => (
-                  <div key={s.kind} className="rounded-md border border-divider bg-card p-2.5">
+                  <div key={s.kind} className="min-w-0 rounded-md border border-divider bg-card p-2.5">
                     <div className="text-xs font-semibold">{s.label}</div>
-                    <div className="tnum text-[11px] text-muted-foreground">{s.rawRows} rows · sha {s.sha256}</div>
+                    <div className="tnum break-all text-[11px] text-muted-foreground">{s.rawRows} rows · sha {s.sha256}</div>
                   </div>
                 ))}
               </div>

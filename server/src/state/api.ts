@@ -21,6 +21,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { CATALOG, suggestMapping, type Entity } from '../data/catalog.js';
 import { extFromName, runGeocode, runIngestPreview, sampleUpload } from '../data/onboard.js';
+import { weekSummary } from '../plan/week.js';
 
 export interface StatefulApiOptions { store: StatefulStore; tenantId: string; tenantName: string; auth?: StatefulAuthService; publicOrigin?: string; objects?: ObjectStore; maxUploadBytes?: number }
 
@@ -128,7 +129,12 @@ export async function createStatefulApi(options: StatefulApiOptions): Promise<Fa
     await fillPlanGeometry(plan).catch(() => false);
     return plan;
   });
-  app.get('/api/plans', async () => options.store.listPlans(options.tenantId));
+  app.get<{ Querystring: { day?: string } }>('/api/plans', async (req) => statefulPlanSummaries(
+    await scenarios.list(), await options.store.listPlans(options.tenantId), req.query.day,
+  ));
+  app.get('/api/week', async () => statefulWeekSummary(
+    await scenarios.list(), await options.store.listPlans(options.tenantId),
+  ));
   const planExport = (kind: 'csv' | 'routes' | 'html' | 'handoff') => async (req: { params: { id: string } }, reply: FastifyReply) => {
     const plan = await options.store.getPlan(options.tenantId, req.params.id); if (!plan) return reply.code(404).send({ error: 'plan not found' });
     if (kind === 'csv') { reply.type('text/csv; charset=utf-8'); return reply.send(planToCsv(plan)); }
@@ -319,6 +325,41 @@ export function statefulDaySummaries(scenarios: Scenario[], plans: Plan[]) {
       };
     })
     .filter((day): day is NonNullable<typeof day> => day !== null);
+}
+
+function preferredPlan(scenario: Scenario, plans: Plan[]): Plan | undefined {
+  return plans
+    .filter((candidate) => candidate.scenarioId === scenario.id)
+    .sort((a, b) => Number(b.source === 'saved') - Number(a.source === 'saved') || b.createdAt.localeCompare(a.createdAt))[0];
+}
+
+/** Keep the stateful /api/plans response identical to the legacy SPA contract.
+ * PostgreSQL stores full plans, but the history dialog consumes summaries. */
+export function statefulPlanSummaries(scenarios: Scenario[], plans: Plan[], day?: string) {
+  const byId = new Map(scenarios.map((scenario) => [scenario.id, scenario]));
+  return plans
+    .filter((plan) => !day || byId.get(plan.scenarioId)?.day === day)
+    .map((plan) => {
+      const scenario = byId.get(plan.scenarioId);
+      return {
+        id: plan.id, scenarioId: plan.scenarioId, day: scenario?.day ?? null,
+        label: scenario?.label ?? plan.scenarioId, source: plan.source, createdAt: plan.createdAt,
+        termination: plan.provenance?.termination ?? 'UNKNOWN',
+        servedOrders: plan.stats.servedOrders, totalOrders: plan.stats.totalOrders,
+        vehiclesUsed: plan.stats.vehiclesUsed, totalDistanceKm: plan.stats.totalDistanceKm,
+      };
+    })
+    .sort((a, b) => Number(a.source !== 'saved') - Number(b.source !== 'saved') || a.createdAt.localeCompare(b.createdAt));
+}
+
+/** Week view uses each base scenario's preferred saved plan, matching the day
+ * selector and legacy runtime semantics. */
+export function statefulWeekSummary(scenarios: Scenario[], plans: Plan[]) {
+  return weekSummary(scenarios
+    .filter((scenario) => scenario.kind === 'base')
+    .map((scenario) => ({ scenario, plan: preferredPlan(scenario, plans) }))
+    .filter((item): item is { scenario: Scenario; plan: Plan } => Boolean(item.plan))
+    .map(({ scenario, plan }) => ({ dayId: scenario.day, isoDate: plan.day, label: scenario.label, plan })));
 }
 
 export function statefulJobResponse(job: Record<string, unknown>) {

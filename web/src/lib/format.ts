@@ -7,7 +7,8 @@ export function hhmm(secFromMidnight: number): string {
   return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
 }
 
-export function km(value: number, digits = 0): string {
+export function km(value: number | null | undefined, digits = 0): string {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return '—';
   return `${value.toLocaleString('en-US', {
     minimumFractionDigits: digits,
     maximumFractionDigits: digits,
