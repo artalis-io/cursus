@@ -167,6 +167,12 @@ services:
   velo:
     <<: *runtime-security
     image: ${CURSUS_VELO_IMAGE:-cursus-velo:staging}
+    # Velo is private to the Compose network and Cursus legitimately fans out
+    # many legs while deriving route geometry. The public Cursus API retains
+    # its own rate limits; Velo's per-container 10 RPS limiter would otherwise
+    # turn valid geometry batches into partial routes after its burst is spent.
+    environment:
+      VELO_RATE_LIMIT_ENABLED: "0"
     build:
       <<: *otto-build
       dockerfile: docker/Dockerfile.velo
