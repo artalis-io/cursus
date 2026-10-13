@@ -29,6 +29,15 @@ class StatefulDeploymentTests(unittest.TestCase):
         self.assertIn('network_mode: service:postgres', compose)
         self.assertIn('CURSUS_PRIMARY_HOST: 127.0.0.1', compose)
 
+    def test_runtime_overlay_does_not_duplicate_base_security_lists(self):
+        base = (ROOT / "compose.yaml").read_text()
+        overlay = (ROOT / "compose.stateful.yaml").read_text()
+        runtime_anchor = overlay.split("x-runtime-security:", 1)[1].split("x-otto-build:", 1)[0]
+        self.assertIn("cap_drop: [ALL]", base)
+        self.assertIn("security_opt: [no-new-privileges:true]", base)
+        self.assertNotIn("cap_drop:", runtime_anchor)
+        self.assertNotIn("security_opt:", runtime_anchor)
+
     def test_replication_is_explicitly_asynchronous(self):
         compose = (ROOT / "compose.stateful.yaml").read_text()
         self.assertIn('synchronous_standby_names=', compose)

@@ -2,8 +2,9 @@ name: ${COMPOSE_PROJECT_NAME:?set an isolated COMPOSE_PROJECT_NAME}
 
 x-runtime-security: &runtime-security
   read_only: true
-  cap_drop: [ALL]
-  security_opt: [no-new-privileges:true]
+  # cap_drop and security_opt are inherited from compose.yaml. Repeating
+  # list-valued security settings here makes Compose v5 reject the merged
+  # configuration as containing duplicate items.
   restart: unless-stopped
   pids_limit: 1024
   networks: [cursus-stateful]
