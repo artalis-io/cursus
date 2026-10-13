@@ -1,4 +1,4 @@
-import Fastify, { type FastifyInstance, type FastifyReply } from 'fastify';
+import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from 'fastify';
 import type { StatefulStore } from './postgres.js';
 import { ScenarioRepository } from './scenarios.js';
 import { validateScenarioEdit, type ScenarioEdit } from '../store.js';
@@ -14,6 +14,8 @@ import type { Mapping } from '../data/onboard.js';
 import { magicLinkConfirmation, registerMagicLinkFormParser } from '../magic-link.js';
 import type { Plan } from '../types.js';
 import type { Scenario } from '../store.js';
+import { config } from '../config.js';
+import { fillPlanGeometry } from '../geometry/velo.js';
 
 export interface StatefulApiOptions { store: StatefulStore; tenantId: string; tenantName: string; auth?: StatefulAuthService; publicOrigin?: string; objects?: ObjectStore; maxUploadBytes?: number }
 
@@ -31,7 +33,8 @@ export async function createStatefulApi(options: StatefulApiOptions): Promise<Fa
     // The SPA shell and its static assets must remain public so an
     // unauthenticated browser can render the magic-link login screen.
     const path = req.url.split('?', 1)[0]!;
-    if (!options.auth || !path.startsWith('/api/') || path.startsWith('/api/health') || path.startsWith('/api/auth/')) return;
+    const protectedPath = path.startsWith('/api/') || path === '/tiles.vector.json' || path.startsWith('/tiles/');
+    if (!options.auth || !protectedPath || path.startsWith('/api/health') || path.startsWith('/api/auth/')) return;
     const principal = await options.auth.authenticate(cookieValue(req.headers.cookie, 'cursus_session'));
     if (!principal || principal.tenantId !== options.tenantId) return reply.code(401).send({ error: 'authentication required' });
     if (!['GET', 'HEAD', 'OPTIONS'].includes(req.method) && req.headers.origin !== options.publicOrigin)
@@ -114,7 +117,12 @@ export async function createStatefulApi(options: StatefulApiOptions): Promise<Fa
     const job = await options.store.getJob(options.tenantId, req.params.id);
     return job ? statefulJobResponse(job) : reply.code(404).send({ error: 'job not found' });
   });
-  app.get<{ Params: { id: string } }>('/api/plans/:id', async (req, reply) => (await options.store.getPlan(options.tenantId, req.params.id)) ?? reply.code(404).send({ error: 'plan not found' }));
+  app.get<{ Params: { id: string } }>('/api/plans/:id', async (req, reply) => {
+    const plan = await options.store.getPlan(options.tenantId, req.params.id);
+    if (!plan) return reply.code(404).send({ error: 'plan not found' });
+    await fillPlanGeometry(plan).catch(() => false);
+    return plan;
+  });
   app.get('/api/plans', async () => options.store.listPlans(options.tenantId));
   const planExport = (kind: 'csv' | 'routes' | 'html' | 'handoff') => async (req: { params: { id: string } }, reply: FastifyReply) => {
     const plan = await options.store.getPlan(options.tenantId, req.params.id); if (!plan) return reply.code(404).send({ error: 'plan not found' });
@@ -155,6 +163,23 @@ export async function createStatefulApi(options: StatefulApiOptions): Promise<Fa
     return reply.code(202).send({ jobId, datasetId: req.params.id, conversionFingerprint: identity.fingerprint });
   });
   app.get('/api/import/datasets', async (_req, reply) => datasets ? datasets.list() : reply.code(503).send({ error: 'object storage not configured' }));
+  const tilePath = /^\/tiles\/\d{1,2}\/\d{1,7}\/\d{1,7}(?:\.[a-z0-9]{1,8})?$/i;
+  const proxyCarta = async (req: FastifyRequest, reply: FastifyReply) => {
+    const path = req.url.split('?', 1)[0]!;
+    if (path !== '/tiles.vector.json' && !tilePath.test(path)) return reply.code(400).send({ error: 'bad tile path' });
+    try {
+      const response = await fetch(config.cartaOrigin + path, { signal: AbortSignal.timeout(15_000) });
+      reply.code(response.status);
+      for (const header of ['content-type', 'cache-control', 'etag']) {
+        const value = response.headers.get(header); if (value) reply.header(header, value);
+      }
+      return reply.send(Buffer.from(await response.arrayBuffer()));
+    } catch (error) {
+      return reply.code(502).send({ error: `carta proxy failed: ${(error as Error).message}` });
+    }
+  };
+  app.get('/tiles.vector.json', proxyCarta);
+  app.get('/tiles/*', proxyCarta);
   return app;
 }
 
@@ -169,7 +194,7 @@ export function statefulDaySummaries(scenarios: Scenario[], plans: Plan[]) {
     .map((scenario) => {
       const plan = plans
         .filter((candidate) => candidate.scenarioId === scenario.id)
-        .sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
+        .sort((a, b) => Number(b.source === 'saved') - Number(a.source === 'saved') || b.createdAt.localeCompare(a.createdAt))[0];
       if (!plan) return null;
       return {
         id: scenario.day,

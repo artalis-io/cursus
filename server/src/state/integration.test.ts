@@ -133,6 +133,7 @@ integration('PostgreSQL magic links persist sessions and queue email atomically'
     assert.notEqual((await protectedApi.inject({ method: 'GET', url: '/' })).statusCode, 401,
       'SPA shell must remain reachable for login');
     assert.equal((await protectedApi.inject({ method: 'GET', url: '/api/scenarios' })).statusCode, 401);
+    assert.equal((await protectedApi.inject({ method: 'GET', url: '/tiles.vector.json' })).statusCode, 401);
     const ready = await protectedApi.inject({ method: 'GET', url: '/health/ready' });
     assert.equal(ready.statusCode, 200); assert.match(ready.body, /"status": "ready"/);
   }

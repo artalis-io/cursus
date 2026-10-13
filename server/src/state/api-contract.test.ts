@@ -8,8 +8,8 @@ const scenario = (id: string, day: string, kind: 'base' | 'copy' = 'base'): Scen
   id, day, kind, parentId: null, revision: 0, label: `${day} label`, createdAt: '2026-05-01T00:00:00Z',
   removedVehicleIds: [], pins: [], forbids: [], vehicleOverrides: [], sequences: [],
 });
-const plan = (id: string, scenarioId: string, day: string, createdAt = '2026-05-02T00:00:00Z') => ({
-  id, scenarioId, scenarioRevision: 0, day, createdAt, source: 'saved', objective: 'vehicles',
+const plan = (id: string, scenarioId: string, day: string, createdAt = '2026-05-02T00:00:00Z', source: 'saved' | 'live' = 'saved') => ({
+  id, scenarioId, scenarioRevision: 0, day, createdAt, source, objective: 'vehicles',
   stats: { servedOrders: 7, totalOrders: 8, deliveryStops: 7, trips: 2, vehiclesUsed: 1, totalDistanceKm: 10, solveElapsedSeconds: 1 },
   vehicles: [{ id: 1 }], unassigned: [],
 } as unknown as Plan);
@@ -21,6 +21,14 @@ test('day summaries expose real published plan ids and omit unsolved days', () =
   );
   assert.deepEqual(days, [{ id: 'day1', isoDate: '2026-05-06', label: 'day1 label', datasetLabel: null,
     orders: 8, vehicles: 1, baseScenarioId: 'day1-base', baselinePlanId: 'pln-current' }]);
+});
+
+test('day summaries prefer the saved baseline over a newer live replan', () => {
+  const days = statefulDaySummaries([scenario('day1-base', 'day1')], [
+    plan('day1-baseline', 'day1-base', '2026-05-06', '1970-01-01T00:00:00Z'),
+    plan('pln-live', 'day1-base', '2026-05-06', '2026-05-03T00:00:00Z', 'live'),
+  ]);
+  assert.equal(days[0]?.baselinePlanId, 'day1-baseline');
 });
 
 test('job response maps durable state and result to the SPA contract', () => {
