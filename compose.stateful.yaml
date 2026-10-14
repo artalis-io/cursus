@@ -269,7 +269,7 @@ services:
         bind: { create_host_path: false }
     secrets: [database_url, r2_access_key_id, r2_secret_access_key, auth_allowlist, resend_api_key]
     tmpfs: ["/tmp:size=2g,mode=1777"]
-    mem_limit: ${CURSUS_APP_MEMORY:-24g}
+    mem_limit: ${CURSUS_APP_MEMORY:-32g}
     cpus: ${CURSUS_APP_CPUS:-12}
     healthcheck:
       test: [CMD, node, -e, "fetch('http://127.0.0.1:8091/health/ready').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]

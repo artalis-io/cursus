@@ -20,6 +20,7 @@ test('Optimize the base day: the live plan is saved, listed in Plans, and reopen
 
   await page.getByRole('button', { name: 'Optimize', exact: true }).click();
   await expect(page.getByText('Optimizing')).toBeVisible();
+  await expect(page.getByRole('button', { name: /Optimizing [1-9]\d*s/ })).toBeVisible({ timeout: 5_000 });
   await expect(page.getByText('Optimizing')).toHaveCount(0, { timeout: 90_000 });
   // the fresh live plan reports a solve time
   await expect(page.getByText('Solve time')).toBeVisible();

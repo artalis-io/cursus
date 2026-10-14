@@ -7,7 +7,7 @@ import { join } from 'node:path';
 import { CreateBucketCommand, S3Client } from '@aws-sdk/client-s3';
 import { ObjectStore } from './objects.js';
 import { DatasetRepository } from './datasets.js';
-import { RevisionConflictError, StaleFenceError, StatefulStore } from './postgres.js';
+import { JobQueueFullError, RevisionConflictError, StaleFenceError, StatefulStore } from './postgres.js';
 import { StatefulAuthService } from './auth.js';
 import { ScenarioRepository } from './scenarios.js';
 import { deliverOne, type EmailSender } from './outbox.js';
@@ -49,6 +49,18 @@ integration('idempotent enqueue and SKIP LOCKED give one worker the job', async 
   const [one, two] = await Promise.all([a.claimJob('solve', 'worker-a', 30), b.claimJob('solve', 'worker-b', 30)]);
   assert.equal([one, two].filter(Boolean).length, 1);
   await a.failJob((one ?? two)!, 'test cleanup');
+});
+
+integration('queue admission is bounded atomically across API replicas', async () => {
+  const results = await Promise.allSettled([
+    a.enqueueJob(tenant, 'solve', 'solve/bounded-a', {}, 1),
+    b.enqueueJob(tenant, 'solve', 'solve/bounded-b', {}, 1),
+  ]);
+  assert.equal(results.filter((result) => result.status === 'fulfilled').length, 1);
+  const rejected = results.find((result): result is PromiseRejectedResult => result.status === 'rejected');
+  assert.ok(rejected?.reason instanceof JobQueueFullError);
+  const lease = await a.claimJob('solve', 'bounded-cleanup', 30); assert.ok(lease);
+  await a.failJob(lease!, 'test cleanup');
 });
 
 integration('stale fencing generation cannot publish a plan', async () => {

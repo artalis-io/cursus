@@ -18,6 +18,9 @@ export interface AdmissionArtifact { key: string; sha256: string; size: number; 
 export class StaleFenceError extends Error {
   constructor() { super('lease lost: stale fencing generation'); this.name = 'StaleFenceError'; }
 }
+export class JobQueueFullError extends Error {
+  constructor() { super('optimization queue is full'); this.name = 'JobQueueFullError'; }
+}
 export class RevisionConflictError extends Error {
   constructor() { super('scenario revision conflict'); this.name = 'RevisionConflictError'; }
 }
@@ -134,12 +137,23 @@ export class StatefulStore {
     return rows;
   }
 
-  async enqueueJob(tenantId: string, kind: 'solve' | 'dataset-admit', idempotencyKey: string, payload: unknown): Promise<string> {
-    const id = randomUUID();
-    const { rows } = await this.pool.query<{ id: string }>(`INSERT INTO jobs(tenant_id,id,kind,idempotency_key,payload)
-      VALUES($1,$2,$3,$4,$5) ON CONFLICT(tenant_id,kind,idempotency_key)
-      DO UPDATE SET idempotency_key=excluded.idempotency_key RETURNING id`, [tenantId, id, kind, idempotencyKey, payload]);
-    return rows[0]!.id;
+  async enqueueJob(tenantId: string, kind: 'solve' | 'dataset-admit', idempotencyKey: string, payload: unknown, maxQueued?: number): Promise<string> {
+    return this.tx(async (client) => {
+      // Serialize admission per tenant/job-kind so two HTTP replicas cannot
+      // race past the queue bound. Idempotent retries remain free.
+      await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [`${tenantId}:${kind}`]);
+      const existing = await client.query<{ id: string }>('SELECT id::text FROM jobs WHERE tenant_id=$1 AND kind=$2 AND idempotency_key=$3',
+        [tenantId, kind, idempotencyKey]);
+      if (existing.rows[0]) return existing.rows[0].id;
+      if (maxQueued != null) {
+        const queued = await client.query<{ count: string }>("SELECT count(*)::text count FROM jobs WHERE tenant_id=$1 AND kind=$2 AND state='queued'", [tenantId, kind]);
+        if (Number(queued.rows[0]?.count ?? 0) >= Math.max(0, maxQueued)) throw new JobQueueFullError();
+      }
+      const id = randomUUID();
+      await client.query('INSERT INTO jobs(tenant_id,id,kind,idempotency_key,payload) VALUES($1,$2,$3,$4,$5)',
+        [tenantId, id, kind, idempotencyKey, payload]);
+      return id;
+    });
   }
 
   async claimJob(kind: 'solve' | 'dataset-admit', owner: string, leaseSeconds = 30): Promise<Lease | null> {
