@@ -248,6 +248,7 @@ export default function App() {
         resetSelection();
         return revised;
       }
+      if (final.status === 'failed') setError(final.error ?? 'Optimization failed.');
       return null;
     } catch (e) {
       if ((e as Error).name === 'AbortError') return null;
