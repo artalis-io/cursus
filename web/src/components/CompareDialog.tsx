@@ -83,11 +83,13 @@ export function CompareDialog({ open, onOpenChange, basePlanId, revisedPlanId, s
               <Row label={t('compare.vehiclesUsed')} base={`${b!.vehiclesUsed}`} revised={`${r!.vehiclesUsed}`} delta={<DeltaCell value={cmp.deltas.vehiclesUsed} goodWhenNegative />} />
               <Row label={t('compare.trips')} base={`${b!.trips}`} revised={`${r!.trips}`} delta={<DeltaCell value={cmp.deltas.trips} goodWhenNegative />} />
               <Row label={t('compare.totalDistance')} base={km(b!.totalDistanceKm)} revised={km(r!.totalDistanceKm)} delta={<DeltaCell value={cmp.deltas.totalDistanceKm} goodWhenNegative unit=" km" />} />
-              {cmp.base.cost && cmp.revised.cost && cmp.deltas.costTotal != null && (
+              {cmp.base.cost && cmp.revised.cost && (
                 <Row label={t('compare.cost')}
                   base={money(cmp.base.cost.total, cmp.base.cost.currency, true)}
                   revised={money(cmp.revised.cost.total, cmp.revised.cost.currency, true)}
-                  delta={<CostDelta delta={cmp.deltas.costTotal} baseTotal={cmp.base.cost.total} currency={cmp.revised.cost.currency} savedLabel={(p) => t('compare.saved', { p })} />} />
+                  delta={cmp.costComparison === 'comparable' && cmp.deltas.costTotal != null
+                    ? <CostDelta delta={cmp.deltas.costTotal} baseTotal={cmp.base.cost.total} currency={cmp.revised.cost.currency} savedLabel={(p) => t('compare.saved', { p })} />
+                    : <span className="text-xs font-medium text-warning" title={t('compare.notComparableDetail')}>{t('compare.notComparable')}</span>} />
               )}
             </div>
 

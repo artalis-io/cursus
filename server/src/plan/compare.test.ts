@@ -208,3 +208,25 @@ test('comparePlans: identical plans yield empty diffs and zero deltas', () => {
   assert.equal(cmp.removedVehicles.length, 0);
   assert.equal(cmp.addedVehicles.length, 0);
 });
+
+test('comparePlans: never reports savings across external and demo tariffs', () => {
+  const base = mkPlan('base', [mkVehicle('VAN-A', [mkStop('A1')])], stats({ servedOrders: 1 }), []);
+  const revised = mkPlan('revised', [mkVehicle('VAN-A', [mkStop('A1')])], stats({ servedOrders: 1 }), []);
+  base.cost = { currency: 'HUF', source: 'external', total: 2_331_941, fixed: 708_050, variable: 1_623_891, perVehicle: [] };
+  revised.cost = { currency: 'HUF', source: 'demo', total: 1_915_950, fixed: 598_000, variable: 1_317_950, perVehicle: [] };
+
+  const cmp = comparePlans(base, revised);
+  assert.equal(cmp.costComparison, 'different_tariff');
+  assert.equal(cmp.deltas.costTotal, null);
+});
+
+test('comparePlans: reports a cost delta for the same tariff source and currency', () => {
+  const base = mkPlan('base', [], stats({}), []);
+  const revised = mkPlan('revised', [], stats({}), []);
+  base.cost = { currency: 'HUF', source: 'external', total: 1000, fixed: 400, variable: 600, perVehicle: [] };
+  revised.cost = { currency: 'HUF', source: 'external', total: 800, fixed: 400, variable: 400, perVehicle: [] };
+
+  const cmp = comparePlans(base, revised);
+  assert.equal(cmp.costComparison, 'comparable');
+  assert.equal(cmp.deltas.costTotal, -200);
+});

@@ -154,6 +154,8 @@ const en: Dict = {
   // Cost
   'kpi.cost': 'Est. cost', 'kpi.demoTariff': 'demo tariff', 'kpi.extTariff': 'tariff',
   'compare.cost': 'Est. cost', 'compare.saved': '{p}% saved',
+  'compare.notComparable': 'Not comparable',
+  'compare.notComparableDetail': 'The plans use different tariff sources or currencies, so no saving is calculated.',
   'inspector.cost': 'Est. cost',
   // Constraint surfacing (access: tail lift, vehicle size)
   'constraint.tailLift': 'tail lift', 'constraint.maxT': 'max {n}t', 'constraint.tonnage': '{n}t',
@@ -365,6 +367,8 @@ const hu: Dict = {
   // Cost
   'kpi.cost': 'Becsült költség', 'kpi.demoTariff': 'teszt tarifa', 'kpi.extTariff': 'tarifa',
   'compare.cost': 'Becsült költség', 'compare.saved': '{p}% megtakarítás',
+  'compare.notComparable': 'Nem összehasonlítható',
+  'compare.notComparableDetail': 'A tervek eltérő tarifaforrást vagy pénznemet használnak, ezért megtakarítás nem számítható.',
   'inspector.cost': 'Becsült költség',
   // Constraint surfacing
   'constraint.tailLift': 'emelőhátfal', 'constraint.maxT': 'max {n}t', 'constraint.tonnage': '{n}t',

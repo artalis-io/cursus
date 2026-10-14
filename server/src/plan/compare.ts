@@ -19,6 +19,7 @@ export interface Comparison {
   base: { planId: string; stats: Plan['stats']; cost: Plan['cost'] };
   revised: { planId: string; stats: Plan['stats']; cost: Plan['cost'] };
   deltas: { servedOrders: number; vehiclesUsed: number; trips: number; totalDistanceKm: number; unassigned: number; costTotal: number | null };
+  costComparison: 'comparable' | 'different_tariff' | 'unavailable';
   newlyUnassigned: { orderNo: string; customer: string | null; city: string | null; fromVehicleRef: string }[];
   nowServed: { orderNo: string; customer: string | null; city: string | null; toVehicleRef: string }[];
   movedOrders: { orderNo: string; customer: string | null; fromVehicleRef: string; toVehicleRef: string }[];
@@ -45,11 +46,21 @@ export function comparePlans(base: Plan, revised: Plan): Comparison {
   const removedVehicles = [...baseRefs].filter((r) => !revRefs.has(r));
   const addedVehicles = [...revRefs].filter((r) => !baseRefs.has(r));
 
-  const costTotal = base.cost && revised.cost ? revised.cost.total - base.cost.total : null;
+  // A numerical delta is meaningful only when both plans were priced in the
+  // same currency using the same tariff class. In particular, never present a
+  // fallback demo estimate as a saving against a confidential external rate
+  // card: those totals use different models and rates.
+  const costComparison = !base.cost || !revised.cost
+    ? 'unavailable'
+    : base.cost.currency !== revised.cost.currency || base.cost.source !== revised.cost.source
+      ? 'different_tariff'
+      : 'comparable';
+  const costTotal = costComparison === 'comparable' ? revised.cost!.total - base.cost!.total : null;
 
   return {
     base: { planId: base.id, stats: base.stats, cost: base.cost },
     revised: { planId: revised.id, stats: revised.stats, cost: revised.cost },
+    costComparison,
     deltas: {
       servedOrders: revised.stats.servedOrders - base.stats.servedOrders,
       vehiclesUsed: revised.stats.vehiclesUsed - base.stats.vehiclesUsed,
