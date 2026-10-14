@@ -22,6 +22,7 @@ import { join } from 'node:path';
 import { CATALOG, suggestMapping, type Entity } from '../data/catalog.js';
 import { extFromName, runGeocode, runIngestPreview, sampleUpload } from '../data/onboard.js';
 import { weekSummary } from '../plan/week.js';
+import { comparePlans } from '../plan/compare.js';
 
 export interface StatefulApiOptions { store: StatefulStore; tenantId: string; tenantName: string; auth?: StatefulAuthService; publicOrigin?: string; objects?: ObjectStore; maxUploadBytes?: number }
 
@@ -138,6 +139,14 @@ export async function createStatefulApi(options: StatefulApiOptions): Promise<Fa
   app.get<{ Querystring: { day?: string } }>('/api/plans', async (req) => statefulPlanSummaries(
     await scenarios.list(), await options.store.listPlans(options.tenantId), req.query.day,
   ));
+  app.get<{ Querystring: { base?: string; revised?: string } }>('/api/compare', async (req, reply) => {
+    const [base, revised] = await Promise.all([
+      req.query.base ? options.store.getPlan(options.tenantId, req.query.base) : undefined,
+      req.query.revised ? options.store.getPlan(options.tenantId, req.query.revised) : undefined,
+    ]);
+    if (!base || !revised) return reply.code(404).send({ error: 'base and revised plan ids required' });
+    return comparePlans(base, revised);
+  });
   app.get('/api/week', async () => statefulWeekSummary(
     await scenarios.list(), await options.store.listPlans(options.tenantId),
   ));

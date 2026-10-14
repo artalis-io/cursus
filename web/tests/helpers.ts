@@ -28,6 +28,5 @@ export async function selectVehicle(page: Page, ref: string): Promise<void> {
 
 /** Close any open popover (Export / Settings) by clicking its backdrop. */
 export async function closePopover(page: Page): Promise<void> {
-  const bd = page.locator('div.fixed.inset-0');
-  if (await bd.count()) { await bd.first().click({ position: { x: 700, y: 500 } }); await page.waitForTimeout(150); }
+  if (await page.getByRole('menu').count()) { await page.keyboard.press('Escape'); await page.waitForTimeout(150); }
 }

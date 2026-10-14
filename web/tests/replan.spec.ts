@@ -9,7 +9,7 @@ test('replan applies a staged removal and opens the comparison', async ({ page }
 
   // shortest solve budget for a fast test
   await page.getByRole('button', { name: 'Solve settings' }).click();
-  await page.locator('input[type=range]').first().fill('15');
+  await page.getByRole('menu').locator('input[type=range]').fill('15');
   await closePopover(page);
 
   // stage: remove RIC-124
@@ -25,7 +25,11 @@ test('replan applies a staged removal and opens the comparison', async ({ page }
   await expect(page.getByText('Replanning')).toHaveCount(0, { timeout: 90_000 });
 
   // comparison opened and RIC-124 is gone from the fleet
-  await expect(page.getByText(/Plan comparison/)).toBeVisible();
-  await page.getByRole('dialog').getByRole('button').first().click().catch(() => {}); // close dialog if needed
+  const comparison = page.getByRole('dialog');
+  await expect(comparison.getByText(/Plan comparison/)).toBeVisible();
+  await expect(comparison.getByText('Served orders')).toBeVisible();
+  await expect(comparison.getByText('Comparing…')).toHaveCount(0);
+  await expect(comparison.getByText(/Not found/)).toHaveCount(0);
+  await comparison.getByRole('button').first().click().catch(() => {}); // close dialog if needed
   await expect(page.locator('aside').first().getByText('RIC-124')).toHaveCount(0);
 });
