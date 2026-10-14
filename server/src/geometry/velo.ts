@@ -2,6 +2,7 @@ import { readFileSync, mkdirSync, existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { config } from '../config.js';
 import { writeJsonAtomic } from '../util/jsonfile.js';
+import { Semaphore } from '../util/semaphore.js';
 import type { Plan, GeoJSONLineString } from '../types.js';
 
 /* Road-following geometry for plan routes, fetched from the Velo route server
@@ -70,7 +71,7 @@ function decodePolyline(str: string, precision = config.polylinePrecision): LonL
 }
 
 /** One raw Velo route request, no caching/surrogates. Returns decoded [lon,lat]. */
-async function rawRoute(from: LonLat, to: LonLat): Promise<LonLat[] | null> {
+async function rawRouteDirect(from: LonLat, to: LonLat): Promise<LonLat[] | null> {
   const url = `${config.veloOrigin}/api/v1/route?from=${from[1]},${from[0]}&to=${to[1]},${to[0]}`
     + `&profile=${config.veloProfile}&mode=fastest&geometry=true`;
   try {
@@ -82,6 +83,17 @@ async function rawRoute(from: LonLat, to: LonLat): Promise<LonLat[] | null> {
   } catch {
     return null;
   }
+}
+
+// Velo allocates country-graph-sized query workspaces. Serializing only inside
+// one fillPlanGeometry call still lets overlapping users/history loads fan out
+// concurrently. Keep one process-wide query lane so a transient overload does
+// not leave a historical plan permanently without route geometry.
+const veloQueryLane = new Semaphore(1);
+async function rawRoute(from: LonLat, to: LonLat): Promise<LonLat[] | null> {
+  const release = await veloQueryLane.acquire();
+  try { return await rawRouteDirect(from, to); }
+  finally { release(); }
 }
 
 /* A few geocodes snap to an isolated graph node that Velo cannot route to/from

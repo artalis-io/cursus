@@ -39,6 +39,22 @@ function readActiveJob(): ActiveJobRef | null {
   try { const s = localStorage.getItem(ACTIVE_JOB_KEY); return s ? (JSON.parse(s) as ActiveJobRef) : null; } catch { return null; }
 }
 
+function hasCompleteRouteGeometry(plan: Plan): boolean {
+  return plan.vehicles.every((vehicle) => vehicle.trips.every((trip) =>
+    trip.stops.length === 0 || (trip.geometry?.coordinates.length ?? 0) >= 2));
+}
+
+/** Velo geometry is derived and may be temporarily incomplete under load.
+ * Refetch a partial plan a few times; the backend only retries missing trips. */
+async function loadPlanWithGeometry(id: string): Promise<Plan> {
+  let plan = await api.plan(id);
+  for (let attempt = 1; attempt < 3 && !hasCompleteRouteGeometry(plan); attempt++) {
+    await new Promise((resolve) => setTimeout(resolve, attempt * 750));
+    plan = await api.plan(id);
+  }
+  return plan;
+}
+
 /* Preview the plan-wide distance/cost of staged (not-yet-replanned) reorders, so
  * the top KPI strip can show where the numbers are heading before Replan. Only
  * reorders are previewable: the stops are unchanged so the backend can recompute
@@ -129,6 +145,10 @@ export default function App() {
   const canGoBack = nav.idx > 0;
   const canGoForward = nav.idx < nav.stack.length - 1;
   const [job, setJob] = useState<JobView | null>(null);
+  // Covers the whole click -> enqueue -> poll -> publish lifecycle. `job` is
+  // replaced between those phases, so deriving UI state from it alone can
+  // briefly render the idle Optimize control between two active states.
+  const [solveActive, setSolveActive] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [compareOpen, setCompareOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
@@ -197,7 +217,7 @@ export default function App() {
     setPlaying(false); setClockSec(null);
     resetSelection();
     setDayId(d.id);
-    const base = await api.plan(d.baselinePlanId);
+    const base = await loadPlanWithGeometry(d.baselinePlanId);
     setBaseline(base);
     setPlan(base);
     setScenario({ id: d.baseScenarioId, day: d.id, kind: 'base', parentId: null, revision: 0, label: d.label, removedVehicleIds: [], pins: [], forbids: [], vehicleOverrides: [], sequences: [], createdAt: '' });
@@ -218,7 +238,7 @@ export default function App() {
       if (activeJobId.current !== jobId) return null; // superseded
       persistActiveJob(null);
       if (final.status === 'completed' && final.planId) {
-        const revised = await api.plan(final.planId);
+        const revised = await loadPlanWithGeometry(final.planId);
         setPlan(revised);
         resetSelection();
         return revised;
@@ -273,15 +293,15 @@ export default function App() {
       const d = ds.find((x) => x.id === sc.day) ?? ds.find((x) => x.id === ref.dayId);
       if (!d) { persistActiveJob(null); return false; }
       setDayId(d.id);
-      setBaseline(await api.plan(d.baselinePlanId));
+      setBaseline(await loadPlanWithGeometry(d.baselinePlanId));
       setScenario(sc);
       if (j.status === 'completed' && j.planId) {
         persistActiveJob(null);
-        setPlan(await api.plan(j.planId));
+        setPlan(await loadPlanWithGeometry(j.planId));
         return true;
       }
       // still running: show its scenario's last plan context and resume polling
-      setPlan(await api.plan(d.baselinePlanId));
+      setPlan(await loadPlanWithGeometry(d.baselinePlanId));
       const ctrl = new AbortController();
       pollAbort.current = ctrl;
       void followJob(ref.jobId, ref.scenarioId, d.id, ctrl);
@@ -325,11 +345,14 @@ export default function App() {
   // Replan: solve the current (edited) scenario, then surface the comparison if
   // it is an edited copy. Staged edits are applied together here.
   const replan = useCallback(async () => {
-    if (!scenario) return;
+    if (!scenario || solveActive) return;
+    setSolveActive(true);
     const wasCopy = scenario.kind === 'copy';
-    const revised = await runSolve(scenario.id, dayId);
-    if (revised && wasCopy) setCompareOpen(true);
-  }, [scenario, dayId, runSolve]);
+    try {
+      const revised = await runSolve(scenario.id, dayId);
+      if (revised && wasCopy) setCompareOpen(true);
+    } finally { setSolveActive(false); }
+  }, [scenario, dayId, runSolve, solveActive]);
 
   const resetToBaseline = useCallback(() => {
     const d = days.find((x) => x.id === dayId);
@@ -373,12 +396,12 @@ export default function App() {
     persistActiveJob(null);
     setJob(null); resetSelection(); setError(null);
     try {
-      const p = await api.plan(planId);
+      const p = await loadPlanWithGeometry(planId);
       const sc = await api.scenario(p.scenarioId);
       const d = days.find((x) => x.id === sc.day);
       // Only swap the baseline when actually changing day. baseline.day and d.id
       // are both day ids (comparing to d.isoDate never matched).
-      if (d && baseline?.day !== d.id) { setBaseline(await api.plan(d.baselinePlanId)); setDayId(d.id); }
+      if (d && baseline?.day !== d.id) { setBaseline(await loadPlanWithGeometry(d.baselinePlanId)); setDayId(d.id); }
       setScenario(sc);
       setPlan(p);
     } catch (e) { setError(describeApiError(e, t)); }
@@ -417,7 +440,7 @@ export default function App() {
   if (!plan || !baseline || !scenario) return <div className="flex h-full items-center justify-center text-sm text-muted-foreground">{t('app.loading')}</div>;
 
   const isReplan = scenario.kind === 'copy';
-  const solving = job?.status === 'running' || job?.status === 'pending';
+  const solving = solveActive || job?.status === 'running' || job?.status === 'pending';
   const changesCount = scenario.removedVehicleIds.length + scenario.pins.length + scenario.forbids.length + scenario.vehicleOverrides.length + scenario.sequences.length;
   const issuesCount = plan.unassigned.length + plan.provenance.validation.violations.filter((v) => !v.soft).length;
   // Guard switching day/scenario when there are unapplied staged edits (they'd

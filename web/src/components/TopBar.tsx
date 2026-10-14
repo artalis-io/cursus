@@ -171,20 +171,24 @@ export function TopBar({
           </Popover>
         </div>
 
-        {solving ? (
-          <>
-            <Button variant="default" size="sm" disabled className="min-w-[128px]">
+        {/* Keep this footprint constant: conditionally inserting Cancel and
+            allowing the timer label to grow used to shift the entire toolbar. */}
+        <div className="flex w-[190px] shrink-0 items-center gap-1.5">
+          {solving ? (
+            <Button variant="default" size="sm" disabled className="w-[152px] shrink-0 overflow-hidden">
               <Loader2 className="h-4 w-4 animate-spin" /> {isReplan ? t('topbar.replanning') : t('topbar.optimizing')} {job ? `${job.elapsedSec.toFixed(0)}s` : ''}
             </Button>
-            <Button variant="graphite" size="sm" className="border border-white/15" onClick={onCancel} title={t('topbar.cancel')}>
-              <X className="h-4 w-4" /> {t('topbar.cancel')}
+          ) : (
+            <Button variant="default" size="sm" onClick={onOptimize} className={`w-[152px] shrink-0 ${dirty ? 'ring-2 ring-warning/60' : ''}`}>
+              {isReplan ? <Repeat className="h-4 w-4" /> : <Play className="h-4 w-4" />} {isReplan ? t('topbar.replan') : t('topbar.optimize')}
             </Button>
-          </>
-        ) : (
-          <Button variant="default" size="sm" onClick={onOptimize} className={`min-w-[128px] ${dirty ? 'ring-2 ring-warning/60' : ''}`}>
-            {isReplan ? <Repeat className="h-4 w-4" /> : <Play className="h-4 w-4" />} {isReplan ? t('topbar.replan') : t('topbar.optimize')}
+          )}
+          <Button variant="graphite" size="icon" aria-label={t('topbar.cancel')} onClick={onCancel} title={t('topbar.cancel')}
+            disabled={!solving} aria-hidden={!solving}
+            className={`h-8 w-8 shrink-0 border border-white/15 ${solving ? '' : 'invisible'}`}>
+            <X className="h-4 w-4" />
           </Button>
-        )}
+        </div>
 
         {/* Export menu */}
         <div className="relative">

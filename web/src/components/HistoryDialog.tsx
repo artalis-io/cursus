@@ -34,7 +34,7 @@ export function HistoryDialog({ open, onOpenChange, dayId, currentPlanId, onReop
                 {plans.map((p) => {
                   const current = p.id === currentPlanId;
                   return (
-                    <div key={p.id} className={`flex items-center gap-3 rounded-md border p-2.5 ${current ? 'border-ring ring-1 ring-ring' : 'border-divider'}`}>
+                    <div key={p.id} data-plan-id={p.id} className={`flex items-center gap-3 rounded-md border p-2.5 ${current ? 'border-ring ring-1 ring-ring' : 'border-divider'}`}>
                       <div className="min-w-0 flex-1">
                         <div className="flex items-center gap-2">
                           <Badge variant={p.source === 'saved' ? 'outline' : 'default'}>{p.source === 'saved' ? t('topbar.baseline') : t('topbar.live')}</Badge>
