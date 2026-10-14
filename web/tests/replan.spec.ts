@@ -33,3 +33,39 @@ test('replan applies a staged removal and opens the comparison', async ({ page }
   await comparison.getByRole('button').first().click().catch(() => {}); // close dialog if needed
   await expect(page.locator('aside').first().getByText('RIC-124')).toHaveCount(0);
 });
+
+/* Regression: a stop edit is persisted asynchronously. Clicking the primary
+ * action in the same turn must wait for that edit and solve the returned copy,
+ * never the stale base scenario. */
+test('immediate Optimize after a stop reorder solves the edited scenario', async ({ page }) => {
+  test.setTimeout(120_000);
+  await loadApp(page);
+  await page.getByRole('button', { name: 'Solve settings' }).click();
+  await page.getByRole('menu').locator('input[type=range]').fill('15');
+  await closePopover(page);
+
+  const picked = await page.evaluate(async () => {
+    const days = await (await fetch('/api/days')).json();
+    const d1 = days.find((d: { id: string }) => d.id === 'day1') ?? days[0];
+    const plan = await (await fetch(`/api/plans/${d1.baselinePlanId}`)).json();
+    const vehicle = plan.vehicles.find((v: { trips: { stops: unknown[] }[] }) => v.trips[0]?.stops.length >= 2);
+    return { ref: vehicle.ref as string };
+  });
+  await selectVehicle(page, picked.ref);
+  const inspector = page.locator('aside').last();
+  await inspector.getByRole('button', { name: /Trip 1/ }).click();
+
+  const editedResponse = page.waitForResponse((response) =>
+    response.request().method() === 'POST' && /\/api\/scenarios\/[^/]+\/edit$/.test(new URL(response.url()).pathname));
+  const solveRequest = page.waitForRequest((request) =>
+    request.method() === 'POST' && /\/api\/scenarios\/[^/]+\/solve$/.test(new URL(request.url()).pathname));
+  await inspector.locator('ol li').first().locator('button[data-move$=":1"]').click();
+  // Deliberately do not wait for the edit response or React rerender.
+  await page.getByRole('button', { name: /^(Optimize|Replan)$/ }).click();
+
+  const edited = await (await editedResponse).json() as { id: string };
+  const solve = await solveRequest;
+  expect(new URL(solve.url()).pathname).toBe(`/api/scenarios/${edited.id}/solve`);
+  await expect(page.getByText('Replanning')).toHaveCount(0, { timeout: 90_000 });
+  await expect(page.getByRole('dialog').getByText(/Plan comparison/)).toBeVisible();
+});

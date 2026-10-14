@@ -101,10 +101,10 @@ export async function workOneDatasetAdmission(store: StatefulStore, objects: Obj
 
 /** Solve directly from admitted immutable artifacts; no node-local registry is
  * authoritative. This is the stateful counterpart of loadDay/buildRequest. */
-interface ConvertedManifest { artifacts?: { request?: ImmutableObject; geocoded?: ImmutableObject };
+export interface ConvertedManifest { artifacts?: { request?: ImmutableObject; geocoded?: ImmutableObject };
   days?: { dayId: string; date?: string; isoDate: string; label: string }[] }
-export async function solveConvertedDataset(objects: ObjectStore, tenantId: string, manifest: ConvertedManifest, scenario: Scenario,
-  budgetSec: number, objective: Objective, signal: AbortSignal): Promise<Plan> {
+export async function loadConvertedDay(objects: ObjectStore, tenantId: string, manifest: ConvertedManifest,
+  scenario: Scenario): Promise<LoadedDay> {
   const requestObject = manifest?.artifacts?.request as ImmutableObject | undefined;
   const geoObject = manifest?.artifacts?.geocoded as ImmutableObject | undefined;
   if (!requestObject || !geoObject) throw new Error('admitted dataset artifacts are incomplete');
@@ -120,6 +120,19 @@ export async function solveConvertedDataset(objects: ObjectStore, tenantId: stri
     .map((r) => String(r.order_no)));
   const taskRef = new Map(request.tasks.map((t) => [t.id, String(t.ref)]));
   request.requests = request.requests.filter((r) => !refs.size || refs.has(taskRef.get(r.delivery_task_id) ?? ''));
+  const scopedReqIds = request.requests.map((r) => r.id);
+  const solution: SurgeSolution = { status: 'OK', routes: [], unassigned: scopedReqIds,
+    stats: { vehicles_used: 0, trips: 0, total_distance: 0, unassigned: scopedReqIds.length } };
+  return { def: { id: dayMeta.dayId, date: dayMeta.date ?? dayMeta.isoDate, isoDate: dayMeta.isoDate, label: dayMeta.label,
+    requestFile: '', solutionFile: '' }, kind: 'uploaded', request, solution,
+    scopeTaskIds: new Set(request.requests.map((r) => r.delivery_task_id)),
+    depot: { name: 'Depot', lon: request.locations[0]!.x, lat: request.locations[0]!.y }, enrichment: enrichmentFromRecords(rows) };
+}
+
+export async function solveConvertedDataset(objects: ObjectStore, tenantId: string, manifest: ConvertedManifest, scenario: Scenario,
+  budgetSec: number, objective: Objective, signal: AbortSignal): Promise<Plan> {
+  const day = await loadConvertedDay(objects, tenantId, manifest, scenario);
+  const request = day.request;
   const available = new Set(request.vehicles.map((v) => v.id));
   if (scenario.removedVehicleIds.length) request.vehicles = request.vehicles.filter((v) => !scenario.removedVehicleIds.includes(v.id));
   applyOverrides(request, scenario, available); applyVehicleOverrides(request, scenario); applySequences(request, scenario, available);
@@ -131,9 +144,6 @@ export async function solveConvertedDataset(objects: ObjectStore, tenantId: stri
       maxBuffer: Math.max(1, config.maxSolveOutputMB) * 1024 * 1024 });
     const solution = JSON.parse(stdout) as SurgeSolution;
     if (!solution.routes?.length) throw new Error('converted dataset solve produced no routes');
-    const day: LoadedDay = { def: { id: dayMeta.dayId, date: dayMeta.isoDate, isoDate: dayMeta.isoDate, label: dayMeta.label,
-      requestFile: '', solutionFile: '' }, kind: 'uploaded', request, solution, scopeTaskIds: new Set(request.requests.map((r) => r.delivery_task_id)),
-      depot: { name: 'Depot', lon: request.locations[0]!.x, lat: request.locations[0]!.y }, enrichment: enrichmentFromRecords(rows) };
     const plan = mapSolutionToPlan({ day, request, solution, enrichment: day.enrichment, vehicleInfo: loadVehicleInfo(), scenarioId: scenario.id,
       scenarioRevision: scenario.revision, planId: `pln_${randomUUID().slice(0, 8)}`, source: 'live', createdAt: new Date().toISOString() });
     await fillPlanGeometry(plan).catch(() => false); return plan;

@@ -176,6 +176,11 @@ export default function App() {
 
   const activeJobId = useRef<string | null>(null);
   const pollAbort = useRef<AbortController | null>(null);
+  const scenarioRef = useRef<Scenario | null>(null);
+  // Manual edits are persisted asynchronously. Replan awaits this queue and
+  // reads scenarioRef so it cannot solve the pre-reorder scenario when clicked
+  // immediately after moving a stop.
+  const editQueue = useRef<Promise<boolean>>(Promise.resolve(true));
   // Transient toast for staged-edit feedback.
   const [toast, setToast] = useState<string | null>(null);
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -313,28 +318,41 @@ export default function App() {
   // not solve; overrides take effect on the next Replan. A toast confirms the
   // staged edit so the tune loop has positive feedback (nothing else changes
   // on the map until Replan).
-  const applyEdit = useCallback(async (edit: ScenarioEdit) => {
-    if (!scenario) return;
-    try {
-      const label = scenario.kind === 'base' ? t('scn.edited', { day: scenario.label }) : undefined;
-      const updated = await api.editScenario(scenario.id, edit, label);
-      setScenario(updated);
-      showToast(editMessage(edit, t, (id) => planRef.current?.vehicles.find((v) => v.id === id)?.ref ?? `#${id}`));
-    } catch (e) { setError(describeApiError(e, t)); }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [scenario, t]);
+  const applyEdit = useCallback((edit: ScenarioEdit): Promise<boolean> => {
+    const queued = editQueue.current.then(async () => {
+      const current = scenarioRef.current;
+      if (!current) return false;
+      try {
+        const label = current.kind === 'base' ? t('scn.edited', { day: current.label }) : undefined;
+        const updated = await api.editScenario(current.id, edit, label);
+        scenarioRef.current = updated;
+        setScenario(updated);
+        showToast(editMessage(edit, t, (id) => planRef.current?.vehicles.find((v) => v.id === id)?.ref ?? `#${id}`));
+        return true;
+      } catch (e) { setError(describeApiError(e, t)); return false; }
+    });
+    editQueue.current = queued;
+    return queued;
+  }, [showToast, t]);
 
   // Apply several staged edits at once (bulk actions); one fork + one revision.
-  const applyEdits = useCallback(async (edits: ScenarioEdit[], toastMsg?: string) => {
-    if (!scenario || edits.length === 0) return;
-    try {
-      const label = scenario.kind === 'base' ? t('scn.edited', { day: scenario.label }) : undefined;
-      const updated = await api.editScenarioBatch(scenario.id, edits, label);
-      setScenario(updated);
-      if (toastMsg) showToast(toastMsg);
-    } catch (e) { setError(describeApiError(e, t)); }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [scenario, t]);
+  const applyEdits = useCallback((edits: ScenarioEdit[], toastMsg?: string): Promise<boolean> => {
+    if (edits.length === 0) return Promise.resolve(true);
+    const queued = editQueue.current.then(async () => {
+      const current = scenarioRef.current;
+      if (!current) return false;
+      try {
+        const label = current.kind === 'base' ? t('scn.edited', { day: current.label }) : undefined;
+        const updated = await api.editScenarioBatch(current.id, edits, label);
+        scenarioRef.current = updated;
+        setScenario(updated);
+        if (toastMsg) showToast(toastMsg);
+        return true;
+      } catch (e) { setError(describeApiError(e, t)); return false; }
+    });
+    editQueue.current = queued;
+    return queued;
+  }, [showToast, t]);
 
   // Bulk-assign: pin many orders to one vehicle in a single staged batch.
   const onBulkAssign = useCallback((orderNos: string[], vehicleId: number) => {
@@ -345,14 +363,17 @@ export default function App() {
   // Replan: solve the current (edited) scenario, then surface the comparison if
   // it is an edited copy. Staged edits are applied together here.
   const replan = useCallback(async () => {
-    if (!scenario || solveActive) return;
+    if (!scenarioRef.current || solveActive) return;
     setSolveActive(true);
-    const wasCopy = scenario.kind === 'copy';
     try {
-      const revised = await runSolve(scenario.id, dayId);
+      if (!await editQueue.current) return;
+      const current = scenarioRef.current;
+      if (!current) return;
+      const wasCopy = current.kind === 'copy';
+      const revised = await runSolve(current.id, dayId);
       if (revised && wasCopy) setCompareOpen(true);
     } finally { setSolveActive(false); }
-  }, [scenario, dayId, runSolve, solveActive]);
+  }, [dayId, runSolve, solveActive]);
 
   const resetToBaseline = useCallback(() => {
     const d = days.find((x) => x.id === dayId);
@@ -434,6 +455,7 @@ export default function App() {
   const seekClock = useCallback((sec: number) => { setPlaying(false); setClockSec(sec); }, []);
   const stopClock = useCallback(() => { setPlaying(false); setClockSec(null); }, []);
   useEffect(() => { if (plan) planRef.current = plan; }, [plan]);
+  useEffect(() => { scenarioRef.current = scenario; }, [scenario]);
   const previewTotals = usePreviewTotals(plan, scenario);
 
   if (error && !plan) return <div className="flex h-full items-center justify-center text-sm text-destructive">{t('app.failed', { e: error })}</div>;
