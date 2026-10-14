@@ -221,6 +221,7 @@ export interface Comparison {
   base: { planId: string; stats: PlanStats; cost: PlanCost | null };
   revised: { planId: string; stats: PlanStats; cost: PlanCost | null };
   deltas: { servedOrders: number; vehiclesUsed: number; trips: number; totalDistanceKm: number; unassigned: number; costTotal: number | null };
+  costComparison: 'comparable' | 'different_tariff' | 'unavailable';
   newlyUnassigned: { orderNo: string; customer: string | null; city: string | null; fromVehicleRef: string }[];
   nowServed: { orderNo: string; customer: string | null; city: string | null; toVehicleRef: string }[];
   movedOrders: { orderNo: string; customer: string | null; fromVehicleRef: string; toVehicleRef: string }[];
