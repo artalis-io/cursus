@@ -7,16 +7,18 @@ import { loadApp, closePopover, expectNoErrors } from './helpers';
 /* End-to-end loops that run real Surge/Nexus work (slow). Short solve budget via
  * the settings slider so each solve finishes quickly. */
 
-async function setShortBudget(page: import('@playwright/test').Page): Promise<void> {
+async function setShortBudget(page: import('@playwright/test').Page, close = true): Promise<void> {
   await page.getByRole('button', { name: 'Solve settings' }).click();
-  await page.locator('input[type=range]').first().fill('15');
-  await closePopover(page);
+  await page.getByRole('menu').locator('input[type=range]').fill('15');
+  if (close) await closePopover(page);
 }
 
 test('Optimize the base day: the live plan is saved, listed in Plans, and reopenable', async ({ page }) => {
   test.setTimeout(120_000);
   await loadApp(page);
-  await setShortBudget(page);
+  // Keep settings open: the same click must both dismiss it and start solving.
+  // The former full-screen backdrop swallowed this first Optimize click.
+  await setShortBudget(page, false);
 
   await page.getByRole('button', { name: 'Optimize', exact: true }).click();
   await expect(page.getByText('Optimizing')).toBeVisible();

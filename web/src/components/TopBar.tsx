@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Play, RotateCcw, Download, Loader2, Repeat, GitCompareArrows, Database, History, Settings2, X, ChevronDown, FileText, FileSpreadsheet, FileJson, SlidersHorizontal, CalendarRange, AlertTriangle, GitBranch, HelpCircle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -19,20 +19,22 @@ function fmtDay(iso: string, lang: string): string {
 /* A tiny popover: a trigger plus an absolutely-positioned panel with a backdrop
  * that closes on outside click. Avoids pulling in a dropdown primitive. */
 function Popover({ open, onClose, align = 'right', children }: { open: boolean; onClose: () => void; align?: 'left' | 'right'; children: React.ReactNode }) {
+  const panel = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (!open) return;
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    // Close after an outside click has reached its intended control. A fixed
+    // backdrop used to swallow the first click on Optimize, forcing a second.
+    const onMouseDown = (e: MouseEvent) => { if (!panel.current?.contains(e.target as Node)) onClose(); };
     document.addEventListener('keydown', onKey);
-    return () => document.removeEventListener('keydown', onKey);
+    document.addEventListener('mousedown', onMouseDown);
+    return () => { document.removeEventListener('keydown', onKey); document.removeEventListener('mousedown', onMouseDown); };
   }, [open, onClose]);
   if (!open) return null;
   return (
-    <>
-      <div className="fixed inset-0 z-40" onClick={onClose} />
-      <div role="menu" className={`absolute top-full z-50 mt-1.5 ${align === 'right' ? 'right-0' : 'left-0'} min-w-[220px] rounded-md border border-divider bg-card p-2 text-foreground shadow-lg`}>
-        {children}
-      </div>
-    </>
+    <div ref={panel} role="menu" className={`absolute top-full z-50 mt-1.5 ${align === 'right' ? 'right-0' : 'left-0'} min-w-[220px] rounded-md border border-divider bg-card p-2 text-foreground shadow-lg`}>
+      {children}
+    </div>
   );
 }
 

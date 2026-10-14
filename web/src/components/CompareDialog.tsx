@@ -60,8 +60,7 @@ export function CompareDialog({ open, onOpenChange, basePlanId, revisedPlanId, s
         <DialogHeader>
           <DialogTitle>{t('compare.title', { label: scenarioLabel })}</DialogTitle>
         </DialogHeader>
-        {err && <p className="text-sm text-destructive">{err}</p>}
-        {!cmp ? <p className="py-8 text-center text-sm text-muted-foreground">{t('compare.comparing')}</p> : (
+        {err ? <p className="py-8 text-center text-sm text-destructive">{err}</p> : !cmp ? <p className="py-8 text-center text-sm text-muted-foreground">{t('compare.comparing')}</p> : (
           <div className="space-y-4">
             {servedDrop && (
               <div className="flex items-start gap-2 rounded-md border border-warning/40 bg-warning/10 p-2.5 text-sm text-warning">

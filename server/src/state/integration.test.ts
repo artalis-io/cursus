@@ -254,6 +254,9 @@ integration('two real HTTP server instances share scenarios, jobs, and fenced pl
     assert.equal(job.json().planId, `http-plan-${jobId}`);
     const plan = await apiA.inject({ method: 'GET', url: `/api/plans/http-plan-${jobId}` });
     assert.equal(plan.json().shared, true);
+    const compared = await apiB.inject({ method: 'GET', url: `/api/compare?base=http-plan-${jobId}&revised=http-plan-${jobId}` });
+    assert.equal(compared.statusCode, 200); assert.equal(compared.json().deltas.servedOrders, 0);
+    assert.equal((await apiB.inject({ method: 'GET', url: `/api/compare?base=http-plan-${jobId}&revised=missing` })).statusCode, 404);
     const handoff = await apiB.inject({ method: 'GET', url: `/api/plans/http-plan-${jobId}/handoff.json` });
     assert.equal(handoff.statusCode, 200);
   } finally { await Promise.all([apiA.close(), apiB.close()]); }
