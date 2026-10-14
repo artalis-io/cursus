@@ -38,6 +38,10 @@ class StatefulDeploymentTests(unittest.TestCase):
         self.assertNotIn("cap_drop:", runtime_anchor)
         self.assertNotIn("security_opt:", runtime_anchor)
 
+    def test_solve_queue_limit_is_wired_into_runtime(self):
+        compose = (ROOT / "compose.stateful.yaml").read_text()
+        self.assertIn('DISPATCH_MAX_SOLVE_QUEUE: ${DISPATCH_MAX_SOLVE_QUEUE:-8}', compose)
+
     def test_replication_is_explicitly_asynchronous(self):
         compose = (ROOT / "compose.stateful.yaml").read_text()
         self.assertIn('synchronous_standby_names=', compose)
