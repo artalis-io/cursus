@@ -98,9 +98,9 @@ test.describe('staged edit stack', () => {
 
     await expect(page.getByText('Optimizing')).toHaveCount(0);
     await expect(page.getByText(/staged change\(s\)/)).toBeVisible();
-    // the reorder is reflected in the list immediately + a hint shows: first the
-    // "Reordered" pending note, then (once the backend recomputes) a "Preview".
-    await expect(page.locator('aside').last().getByText(/Reordered|Preview/)).toBeVisible();
+    // Do not accept the temporary "Reordered" state: production once lacked
+    // the stateful evaluate endpoint and this broad assertion hid the 404.
+    await expect(page.locator('aside').last().getByText('Preview of this order (recomputed). Apply it with Replan.')).toBeVisible();
     const firstStop = page.locator('aside').last().locator('ol li').first();
     await expect(firstStop).toContainText(/^1\./); // renumbered to the new position
     await page.getByRole('button', { name: /Changes/ }).click();
@@ -127,7 +127,7 @@ test.describe('staged edit stack', () => {
     // the reorder stages (no auto-solve) and shows in the Changes dialog
     await expect(page.getByText('Optimizing')).toHaveCount(0);
     await expect(page.getByText(/staged change\(s\)/)).toBeVisible();
-    await expect(inspector.getByText(/Reordered|Preview/)).toBeVisible();
+    await expect(inspector.getByText('Preview of this order (recomputed). Apply it with Replan.')).toBeVisible();
     await page.getByRole('button', { name: /Changes/ }).click();
     await expect(page.getByRole('dialog').getByText('Stop order')).toBeVisible();
     expectNoErrors(page);

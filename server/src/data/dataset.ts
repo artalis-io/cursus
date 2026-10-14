@@ -140,8 +140,13 @@ const normKey = (s: string): string => s.replace(/[^a-z0-9]/gi, '').toUpperCase(
 
 /** request-vehicle ref -> VehicleInfo (class/plate/subcontractor), best-effort join. */
 export function loadVehicleInfo(): Map<string, VehicleInfo> {
-  const recs = records(readJson<unknown>('input/vehicles.json'));
   const m = new Map<string, VehicleInfo>();
+  // Uploaded datasets are self-contained and may be served without the
+  // optional legacy vehicle-enrichment file. Evaluation still works from the
+  // admitted Surge request; it simply omits class/subcontractor enrichment.
+  let recs: Record<string, unknown>[];
+  try { recs = records(readJson<unknown>('input/vehicles.json')); }
+  catch { return m; }
   for (const r of recs) {
     const info: VehicleInfo = {
       vehicleClass: asStr(r.vehicle_class),

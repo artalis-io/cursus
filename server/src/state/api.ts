@@ -23,6 +23,9 @@ import { CATALOG, suggestMapping, type Entity } from '../data/catalog.js';
 import { extFromName, runGeocode, runIngestPreview, sampleUpload } from '../data/onboard.js';
 import { weekSummary } from '../plan/week.js';
 import { comparePlans } from '../plan/compare.js';
+import { evaluateTrip } from '../plan/evaluate.js';
+import { loadDay, loadVehicleInfo } from '../data/dataset.js';
+import { loadConvertedDay, type ConvertedManifest } from './conversion.js';
 
 export interface StatefulApiOptions { store: StatefulStore; tenantId: string; tenantName: string; auth?: StatefulAuthService; publicOrigin?: string; objects?: ObjectStore; maxUploadBytes?: number }
 
@@ -136,6 +139,38 @@ export async function createStatefulApi(options: StatefulApiOptions): Promise<Fa
     await fillPlanGeometry(plan).catch(() => false);
     return plan;
   });
+  app.post<{ Params: { id: string }; Body: { vehicleId?: number; tripIndex?: number; startSec?: number; reloadSecAfter?: number; orderNos?: unknown } }>(
+    '/api/plans/:id/evaluate', async (req, reply) => {
+      const plan = await options.store.getPlan(options.tenantId, req.params.id);
+      if (!plan) return reply.code(404).send({ error: 'plan not found' });
+      const b = req.body ?? {};
+      if (typeof b.vehicleId !== 'number') return reply.code(400).send({ error: 'vehicleId required' });
+      if (!Array.isArray(b.orderNos) || b.orderNos.length === 0 || b.orderNos.length > 500 || !b.orderNos.every((o) => typeof o === 'string'))
+        return reply.code(400).send({ error: 'orderNos must be a non-empty string[] (<=500)' });
+      const vehicle = plan.vehicles.find((v) => v.id === b.vehicleId);
+      if (!vehicle) return reply.code(404).send({ error: 'vehicle not in plan' });
+      const srcTrip = vehicle.trips.find((tr) => tr.index === (b.tripIndex ?? 0)) ?? vehicle.trips[0];
+      const have = new Set((srcTrip?.stops ?? []).map((s) => s.orderNo));
+      const want = b.orderNos as string[];
+      if (!srcTrip || want.length !== have.size || !want.every((o) => have.has(o)))
+        return reply.code(400).send({ error: 'orderNos must be a permutation of the trip stops' });
+      const scenario = await scenarios.get(plan.scenarioId);
+      if (!scenario) return reply.code(404).send({ error: 'scenario not found for plan' });
+      let day;
+      try { day = loadDay(scenario.day); }
+      catch {
+        if (!options.objects) return reply.code(404).send({ error: 'dataset not available for plan' });
+        const rows = await options.store.listDatasets(options.tenantId, true);
+        const row = rows.find((candidate) => ((candidate.manifest as ConvertedManifest | undefined)?.days ?? []).some((d) => d.dayId === scenario.day));
+        if (!row) return reply.code(404).send({ error: 'dataset not available for plan' });
+        day = await loadConvertedDay(options.objects, options.tenantId, row.manifest as ConvertedManifest, scenario);
+      }
+      return { trip: evaluateTrip({ day, request: day.request, vehicleId: b.vehicleId, tripIndex: srcTrip.index,
+        startSec: typeof b.startSec === 'number' ? b.startSec : srcTrip.startSec, tripCountOnVehicle: vehicle.trips.length,
+        reloadSecAfter: typeof b.reloadSecAfter === 'number' ? b.reloadSecAfter : srcTrip.reloadSecAfter,
+        orderNos: want, vehicleInfo: loadVehicleInfo() }) };
+    },
+  );
   app.get<{ Querystring: { day?: string } }>('/api/plans', async (req) => statefulPlanSummaries(
     await scenarios.list(), await options.store.listPlans(options.tenantId), req.query.day,
   ));

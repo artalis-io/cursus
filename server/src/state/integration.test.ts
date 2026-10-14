@@ -259,6 +259,56 @@ integration('two real HTTP server instances share scenarios, jobs, and fenced pl
     assert.equal((await apiB.inject({ method: 'GET', url: `/api/compare?base=http-plan-${jobId}&revised=missing` })).statusCode, 404);
     const handoff = await apiB.inject({ method: 'GET', url: `/api/plans/http-plan-${jobId}/handoff.json` });
     assert.equal(handoff.statusCode, 200);
+
+    // Regression: the production stateful API must recompute a reordered trip
+    // from admitted immutable artifacts. Previously this route existed only in
+    // legacy mode, while the UI test accepted its temporary pending label.
+    const evalDay = `evaluate-${randomUUID()}`;
+    const evalScenario = `scenario-${randomUUID()}`;
+    const evalDataset = `dataset-${randomUUID()}`;
+    const evalPlan = `plan-${randomUUID()}`;
+    const evalRequest = {
+      config: {}, dimension_count: 2, demand_sign_convention: 1,
+      locations: [{ x: 19, y: 47 }, { x: 19.1, y: 47.1 }, { x: 19.2, y: 47.2 }], depots: [],
+      vehicles: [{ id: 7, ref: 'TEST-7', capacity: [10000, 20], start_depot_id: 0, end_depot_id: 0 }],
+      tasks: [
+        { id: 1, type: 'delivery', location_id: 1, tw_early: 0, tw_late: 86400, service_seconds: 60, demand: [100, 1], ref: 'ORDER-A' },
+        { id: 2, type: 'delivery', location_id: 2, tw_early: 0, tw_late: 86400, service_seconds: 60, demand: [100, 1], ref: 'ORDER-B' },
+      ],
+      requests: [{ id: 1, delivery_task_id: 1 }, { id: 2, delivery_task_id: 2 }],
+      travel: { location_count: 3,
+        distances: [0, 1000, 3000, 1000, 0, 1000, 3000, 1000, 0],
+        durations: [0, 60, 180, 60, 0, 60, 180, 60, 0] },
+    };
+    const evalGeo = { records: [
+      { order_no: 'ORDER-A', delivery_date: '2026-05-06' },
+      { order_no: 'ORDER-B', delivery_date: '2026-05-06' },
+    ] };
+    const requestObject = await objects.putImmutable(tenant, Buffer.from(JSON.stringify(evalRequest)), 'application/json');
+    const geoObject = await objects.putImmutable(tenant, Buffer.from(JSON.stringify(evalGeo)), 'application/json');
+    await a.stageObject(tenant, requestObject); await a.stageObject(tenant, geoObject);
+    await a.createDatasetUpload(tenant, evalDataset, { source: requestObject });
+    await a.enqueueJob(tenant, 'dataset-admit', `evaluate-admit/${randomUUID()}`, { datasetId: evalDataset });
+    const admission = await a.claimJob('dataset-admit', 'evaluate-converter', 30); assert.ok(admission);
+    const manifest = { artifacts: { request: requestObject, geocoded: geoObject },
+      days: [{ dayId: evalDay, date: '2026-05-06', isoDate: '2026-05-06', label: 'Evaluate fixture' }] };
+    await a.completeDatasetAdmission(admission!, evalDataset, manifest, [requestObject, geoObject]);
+    await a.createScenario(tenant, evalScenario, { id: evalScenario, day: evalDay, kind: 'copy', parentId: null, revision: 1,
+      label: 'Evaluate fixture', removedVehicleIds: [], pins: [], forbids: [], vehicleOverrides: [], sequences: [], createdAt: new Date().toISOString() });
+    await a.enqueueJob(tenant, 'solve', `evaluate-plan/${randomUUID()}`, { scenarioId: evalScenario });
+    const evalLease = await a.claimJob('solve', 'evaluate-solver', 30); assert.ok(evalLease);
+    await a.completeSolve(evalLease!, evalPlan, evalScenario, 1, {
+      id: evalPlan, scenarioId: evalScenario, scenarioRevision: 1, day: '2026-05-06', createdAt: new Date().toISOString(),
+      objective: 'vehicles', source: 'live', stats: { vehiclesUsed: 1, servedOrders: 2, totalOrders: 2, totalDistanceKm: 3 },
+      vehicles: [{ id: 7, ref: 'TEST-7', trips: [{ index: 0, startSec: 0, reloadSecAfter: 0,
+        stops: [{ orderNo: 'ORDER-A' }, { orderNo: 'ORDER-B' }] }] }], unassigned: [],
+    });
+    const evaluated = await apiB.inject({ method: 'POST', url: `/api/plans/${evalPlan}/evaluate`, payload: {
+      vehicleId: 7, tripIndex: 0, startSec: 0, reloadSecAfter: 0, orderNos: ['ORDER-B', 'ORDER-A'],
+    } });
+    assert.equal(evaluated.statusCode, 200);
+    assert.deepEqual(evaluated.json().trip.stops.map((stop: { orderNo: string }) => stop.orderNo), ['ORDER-B', 'ORDER-A']);
+    assert.equal(evaluated.json().trip.distanceKm, 5);
   } finally { await Promise.all([apiA.close(), apiB.close()]); }
 });
 
