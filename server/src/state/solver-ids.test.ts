@@ -27,3 +27,13 @@ test('native IDs survive day filtering, fleet exclusion, pins, and locked sequen
   assert.deepEqual(restored.unassigned, [40]);
   assert.deepEqual(request, original, 'translation must not mutate authoritative IDs');
 });
+
+test('edited stop sequences seed native construction using compact IDs', () => {
+  const request = { vehicles: [{ id: 7 }], tasks: [{ id: 4, ref: 'A' }, { id: 8, ref: 'B' }],
+    requests: [{ id: 12, delivery_task_id: 4 }, { id: 40, delivery_task_id: 8 }] } as unknown as SurgeRequest;
+  const native = nativeSolveRequest(request, [{ vehicleId: 7, orderNos: ['B', 'A'], locked: true }]);
+  assert.deepEqual((native.request as unknown as Record<string, unknown>).initial_routes,
+    [{ vehicle_id: 0, request_ids: [1, 0] }]);
+  assert.equal(native.request.requests[0]!.delivery_task_id, 0);
+  assert.equal(native.request.requests[1]!.delivery_task_id, 1);
+});

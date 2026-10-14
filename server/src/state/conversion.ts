@@ -140,7 +140,7 @@ export async function solveConvertedDataset(objects: ObjectStore, tenantId: stri
   request.config = { ...request.config, max_time_seconds: budgetSec, seed: 42, lexicographic_objective: objective !== 'distance' };
   const workspace = await mkdtemp(join(tmpdir(), 'cursus-converted-solve-'));
   try {
-    const native = nativeSolveRequest(request);
+    const native = nativeSolveRequest(request, scenario.sequences);
     const path = join(workspace, 'request.json'); await writeFile(path, JSON.stringify(native.request), { mode: 0o600 });
     const { stdout } = await run(config.surgeBin, [path], { signal, timeout: (budgetSec + config.solveWatchdogGraceSec) * 1000,
       maxBuffer: Math.max(1, config.maxSolveOutputMB) * 1024 * 1024 });
