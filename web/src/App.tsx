@@ -39,6 +39,22 @@ function readActiveJob(): ActiveJobRef | null {
   try { const s = localStorage.getItem(ACTIVE_JOB_KEY); return s ? (JSON.parse(s) as ActiveJobRef) : null; } catch { return null; }
 }
 
+function hasCompleteRouteGeometry(plan: Plan): boolean {
+  return plan.vehicles.every((vehicle) => vehicle.trips.every((trip) =>
+    trip.stops.length === 0 || (trip.geometry?.coordinates.length ?? 0) >= 2));
+}
+
+/** Velo geometry is derived and may be temporarily incomplete under load.
+ * Refetch a partial plan a few times; the backend only retries missing trips. */
+async function loadPlanWithGeometry(id: string): Promise<Plan> {
+  let plan = await api.plan(id);
+  for (let attempt = 1; attempt < 3 && !hasCompleteRouteGeometry(plan); attempt++) {
+    await new Promise((resolve) => setTimeout(resolve, attempt * 750));
+    plan = await api.plan(id);
+  }
+  return plan;
+}
+
 /* Preview the plan-wide distance/cost of staged (not-yet-replanned) reorders, so
  * the top KPI strip can show where the numbers are heading before Replan. Only
  * reorders are previewable: the stops are unchanged so the backend can recompute
@@ -197,7 +213,7 @@ export default function App() {
     setPlaying(false); setClockSec(null);
     resetSelection();
     setDayId(d.id);
-    const base = await api.plan(d.baselinePlanId);
+    const base = await loadPlanWithGeometry(d.baselinePlanId);
     setBaseline(base);
     setPlan(base);
     setScenario({ id: d.baseScenarioId, day: d.id, kind: 'base', parentId: null, revision: 0, label: d.label, removedVehicleIds: [], pins: [], forbids: [], vehicleOverrides: [], sequences: [], createdAt: '' });
@@ -218,7 +234,7 @@ export default function App() {
       if (activeJobId.current !== jobId) return null; // superseded
       persistActiveJob(null);
       if (final.status === 'completed' && final.planId) {
-        const revised = await api.plan(final.planId);
+        const revised = await loadPlanWithGeometry(final.planId);
         setPlan(revised);
         resetSelection();
         return revised;
@@ -273,15 +289,15 @@ export default function App() {
       const d = ds.find((x) => x.id === sc.day) ?? ds.find((x) => x.id === ref.dayId);
       if (!d) { persistActiveJob(null); return false; }
       setDayId(d.id);
-      setBaseline(await api.plan(d.baselinePlanId));
+      setBaseline(await loadPlanWithGeometry(d.baselinePlanId));
       setScenario(sc);
       if (j.status === 'completed' && j.planId) {
         persistActiveJob(null);
-        setPlan(await api.plan(j.planId));
+        setPlan(await loadPlanWithGeometry(j.planId));
         return true;
       }
       // still running: show its scenario's last plan context and resume polling
-      setPlan(await api.plan(d.baselinePlanId));
+      setPlan(await loadPlanWithGeometry(d.baselinePlanId));
       const ctrl = new AbortController();
       pollAbort.current = ctrl;
       void followJob(ref.jobId, ref.scenarioId, d.id, ctrl);
@@ -373,12 +389,12 @@ export default function App() {
     persistActiveJob(null);
     setJob(null); resetSelection(); setError(null);
     try {
-      const p = await api.plan(planId);
+      const p = await loadPlanWithGeometry(planId);
       const sc = await api.scenario(p.scenarioId);
       const d = days.find((x) => x.id === sc.day);
       // Only swap the baseline when actually changing day. baseline.day and d.id
       // are both day ids (comparing to d.isoDate never matched).
-      if (d && baseline?.day !== d.id) { setBaseline(await api.plan(d.baselinePlanId)); setDayId(d.id); }
+      if (d && baseline?.day !== d.id) { setBaseline(await loadPlanWithGeometry(d.baselinePlanId)); setDayId(d.id); }
       setScenario(sc);
       setPlan(p);
     } catch (e) { setError(describeApiError(e, t)); }
