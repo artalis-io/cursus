@@ -19,11 +19,28 @@ test('Optimize the base day: the live plan is saved, listed in Plans, and reopen
   // Keep settings open: the same click must both dismiss it and start solving.
   // The former full-screen backdrop swallowed this first Optimize click.
   await setShortBudget(page, false);
+  const exportBefore = await page.getByRole('button', { name: 'Export' }).boundingBox();
+  await page.evaluate(() => {
+    const labels: string[] = [];
+    const sample = () => {
+      const text = [...document.querySelectorAll('header button')].map((b) => b.textContent?.trim() ?? '')
+        .find((s) => /^(Optimize|Optimizing)/.test(s));
+      if (text && labels.at(-1) !== text) labels.push(text);
+    };
+    sample(); new MutationObserver(sample).observe(document.querySelector('header')!, { subtree: true, childList: true, characterData: true });
+    (window as unknown as { __solveLabels: string[] }).__solveLabels = labels;
+  });
 
   await page.getByRole('button', { name: 'Optimize', exact: true }).click();
   await expect(page.getByText('Optimizing')).toBeVisible();
   await expect(page.getByRole('button', { name: /Optimizing [1-9]\d*s/ })).toBeVisible({ timeout: 5_000 });
+  const exportDuring = await page.getByRole('button', { name: 'Export' }).boundingBox();
+  expect(exportBefore?.x).toBe(exportDuring?.x);
   await expect(page.getByText('Optimizing')).toHaveCount(0, { timeout: 90_000 });
+  const solveLabels = await page.evaluate(() => (window as unknown as { __solveLabels: string[] }).__solveLabels);
+  const activeAt = solveLabels.findIndex((label) => label.startsWith('Optimizing'));
+  expect(activeAt).toBeGreaterThanOrEqual(0);
+  expect(solveLabels.slice(activeAt, -1).every((label) => label.startsWith('Optimizing'))).toBe(true);
   // the fresh live plan reports a solve time
   await expect(page.getByText('Solve time')).toBeVisible();
 

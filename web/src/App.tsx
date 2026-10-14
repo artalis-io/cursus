@@ -145,6 +145,10 @@ export default function App() {
   const canGoBack = nav.idx > 0;
   const canGoForward = nav.idx < nav.stack.length - 1;
   const [job, setJob] = useState<JobView | null>(null);
+  // Covers the whole click -> enqueue -> poll -> publish lifecycle. `job` is
+  // replaced between those phases, so deriving UI state from it alone can
+  // briefly render the idle Optimize control between two active states.
+  const [solveActive, setSolveActive] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [compareOpen, setCompareOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
@@ -341,11 +345,14 @@ export default function App() {
   // Replan: solve the current (edited) scenario, then surface the comparison if
   // it is an edited copy. Staged edits are applied together here.
   const replan = useCallback(async () => {
-    if (!scenario) return;
+    if (!scenario || solveActive) return;
+    setSolveActive(true);
     const wasCopy = scenario.kind === 'copy';
-    const revised = await runSolve(scenario.id, dayId);
-    if (revised && wasCopy) setCompareOpen(true);
-  }, [scenario, dayId, runSolve]);
+    try {
+      const revised = await runSolve(scenario.id, dayId);
+      if (revised && wasCopy) setCompareOpen(true);
+    } finally { setSolveActive(false); }
+  }, [scenario, dayId, runSolve, solveActive]);
 
   const resetToBaseline = useCallback(() => {
     const d = days.find((x) => x.id === dayId);
@@ -433,7 +440,7 @@ export default function App() {
   if (!plan || !baseline || !scenario) return <div className="flex h-full items-center justify-center text-sm text-muted-foreground">{t('app.loading')}</div>;
 
   const isReplan = scenario.kind === 'copy';
-  const solving = job?.status === 'running' || job?.status === 'pending';
+  const solving = solveActive || job?.status === 'running' || job?.status === 'pending';
   const changesCount = scenario.removedVehicleIds.length + scenario.pins.length + scenario.forbids.length + scenario.vehicleOverrides.length + scenario.sequences.length;
   const issuesCount = plan.unassigned.length + plan.provenance.validation.violations.filter((v) => !v.soft).length;
   // Guard switching day/scenario when there are unapplied staged edits (they'd
