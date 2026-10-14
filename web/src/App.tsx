@@ -164,6 +164,15 @@ export default function App() {
     if (toastTimer.current) clearTimeout(toastTimer.current);
     toastTimer.current = setTimeout(() => setToast(null), 2800);
   }, []);
+  // Keep elapsed time visibly moving between API polls (and while the enqueue
+  // request is in flight). The server remains authoritative; this is a local
+  // display clock and poll responses can only move it forwards.
+  useEffect(() => {
+    if (job?.status !== 'pending' && job?.status !== 'running') return;
+    const timer = setInterval(() => setJob((current) => current && (current.status === 'pending' || current.status === 'running')
+      ? { ...current, elapsedSec: current.elapsedSec + 1 } : current), 1000);
+    return () => clearInterval(timer);
+  }, [job?.id, job?.status]);
   // Latest non-null plan, for edit-toast vehicle-ref lookups without dep churn.
   const planRef = useRef<Plan | null>(null);
 
@@ -203,7 +212,8 @@ export default function App() {
     try {
       const final = await pollJob(jobId, (j) => {
         if (activeJobId.current !== jobId) return;
-        setJob({ id: j.id, status: j.status, elapsedSec: j.elapsedSec, scenarioId, error: j.error });
+        setJob((current) => ({ id: j.id, status: j.status,
+          elapsedSec: Math.max(current?.elapsedSec ?? 0, j.elapsedSec), scenarioId, error: j.error }));
       }, { signal: ctrl.signal });
       if (activeJobId.current !== jobId) return null; // superseded
       persistActiveJob(null);
@@ -229,12 +239,14 @@ export default function App() {
     const ctrl = new AbortController();
     pollAbort.current = ctrl;
     setError(null);
+    setJob({ id: '', status: 'pending', elapsedSec: 0, scenarioId, error: null });
     try {
       const { jobId } = await api.solve(scenarioId, budgetSec, objective, fullBudget);
       return await followJob(jobId, scenarioId, dayIdForJob, ctrl);
     } catch (e) {
       if ((e as Error).name === 'AbortError') return null;
       setError(describeApiError(e, t));
+      setJob(null);
       return null;
     }
   }, [budgetSec, objective, fullBudget, followJob]);
@@ -242,7 +254,7 @@ export default function App() {
   // Cancel the active solve (server-side) and drop back to the current plan.
   const cancelSolve = useCallback(async () => {
     const id = activeJobId.current;
-    if (!id) return;
+    if (!id) { pollAbort.current?.abort(); setJob(null); return; }
     activeJobId.current = null;
     pollAbort.current?.abort();
     persistActiveJob(null);

@@ -1,5 +1,5 @@
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from 'fastify';
-import type { StatefulStore } from './postgres.js';
+import { JobQueueFullError, type StatefulStore } from './postgres.js';
 import { ScenarioRepository } from './scenarios.js';
 import { validateScenarioEdit, type ScenarioEdit } from '../store.js';
 import { cookieValue } from '../auth.js';
@@ -114,9 +114,15 @@ export async function createStatefulApi(options: StatefulApiOptions): Promise<Fa
   });
   app.post<{ Params: { id: string }; Body: { budgetSec?: number; objective?: string } }>('/api/scenarios/:id/solve', async (req, reply) => {
     const scenario = await scenarios.get(req.params.id); if (!scenario) return reply.code(404).send({ error: 'scenario not found' });
-    const id = await options.store.enqueueJob(options.tenantId, 'solve', `solve/${scenario.id}/${scenario.revision}/${randomKey()}`, {
-      scenarioId: scenario.id, scenarioRevision: scenario.revision, budgetSec: req.body?.budgetSec, objective: req.body?.objective ?? 'vehicles', scenario,
-    });
+    let id: string;
+    try {
+      id = await options.store.enqueueJob(options.tenantId, 'solve', `solve/${scenario.id}/${scenario.revision}/${randomKey()}`, {
+        scenarioId: scenario.id, scenarioRevision: scenario.revision, budgetSec: req.body?.budgetSec, objective: req.body?.objective ?? 'vehicles', scenario,
+      }, config.maxSolveQueue);
+    } catch (error) {
+      if (error instanceof JobQueueFullError) return reply.code(429).send({ error: 'optimization queue is full; retry later' });
+      throw error;
+    }
     return reply.code(202).send({ jobId: id, status: 'pending', scenarioId: scenario.id, scenarioRevision: scenario.revision });
   });
   app.get<{ Params: { id: string } }>('/api/jobs/:id', async (req, reply) => {
@@ -369,13 +375,15 @@ export function statefulJobResponse(job: Record<string, unknown>) {
   const status = state === 'succeeded' ? 'completed' : state;
   const createdAt = new Date(String(job.createdAt));
   const updatedAt = new Date(String(job.updatedAt));
+  const active = state === 'queued' || state === 'running';
+  const elapsedEnd = active ? Date.now() : updatedAt.valueOf();
   return {
     ...job,
     status,
     scenarioId: payload.scenarioId ?? null,
     scenarioRevision: payload.scenarioRevision ?? null,
-    elapsedSec: Number.isFinite(createdAt.valueOf()) && Number.isFinite(updatedAt.valueOf())
-      ? Math.max(0, (updatedAt.valueOf() - createdAt.valueOf()) / 1000) : 0,
+    elapsedSec: Number.isFinite(createdAt.valueOf()) && Number.isFinite(elapsedEnd)
+      ? Math.max(0, (elapsedEnd - createdAt.valueOf()) / 1000) : 0,
     planId: result.planId ?? null,
     termination: result.termination ?? null,
   };

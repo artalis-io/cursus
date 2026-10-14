@@ -62,6 +62,12 @@ test('job response maps durable state and result to the SPA contract', () => {
   assert.equal(job.elapsedSec, 3);
 });
 
+test('active job elapsed time advances independently of heartbeat timestamps', () => {
+  const createdAt = new Date(Date.now() - 5_000).toISOString();
+  const job = statefulJobResponse({ id: 'job-live', state: 'running', payload: {}, result: {}, createdAt, updatedAt: createdAt });
+  assert.ok(job.elapsedSec >= 4.5, `expected live elapsed time, got ${job.elapsedSec}`);
+});
+
 test('stateful dataset and provenance adapters preserve the SPA contract', () => {
   const source = { key: 'tenants/t/sha256/abc', sha256: 'abc', size: 42, mediaType: 'text/csv' };
   const row = { id: 'ds_1', createdAt: '2026-05-01T00:00:00Z', manifest: { label: 'Gyermelyi', source,
