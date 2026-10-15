@@ -120,7 +120,10 @@ documented in [`docs/stateful-deployment.md`](docs/stateful-deployment.md).
 The pre-deployment PostgreSQL/R2 primitives and local concurrency tests are in
 [`docs/stateful-infrastructure.md`](docs/stateful-infrastructure.md).
 That document also records the merged stateful runtime adapters and native
-Surge fencing tests. The separately approved production provision, migration,
+Surge fencing tests. Tenant-isolation findings, workspace identity, authorization
+boundaries and the proposed tenant switcher are in
+[`docs/tenant-isolation-and-switching.md`](docs/tenant-isolation-and-switching.md).
+The separately approved production provision, migration,
 write-freeze, origin-draining cutover, and rollback procedure is documented in
 [`docs/production-cutover.md`](docs/production-cutover.md). PostgreSQL recovery
 remains manual and fail-closed; application routing HA is not a claim of

@@ -149,7 +149,13 @@ test('real authentication, shared sessions, origin checks, and tenant isolation'
 
 test('account bar shows image provenance, fits desktop and mobile, and revokes the shared session on sign out', async ({ page }) => {
   await login(page);
-  const me = await get<{ email: string; role: string; build: { version: string; revision: string } }>(page.request, '/api/auth/me');
+  const me = await get<{ email: string; role: string; tenantId: string; tenantName: string; build: { version: string; revision: string } }>(page.request, '/api/auth/me');
+  expect(me.tenantName).toBe('Acceptance workspace');
+  expect((await get<typeof me>(page.request, `${peer}/api/auth/me`)).tenantName).toBe(me.tenantName);
+  const workspace = page.getByRole('group', { name: 'Current workspace', exact: true });
+  await expect(workspace.getByText(me.tenantName, { exact: true })).toBeVisible();
+  await expect(workspace.getByRole('button')).toHaveCount(0);
+  await expect(workspace.getByRole('combobox')).toHaveCount(0);
   expect((await page.request.get('/api/auth/me')).headers()['cache-control']).toBe('private, no-store');
   expect(me.build.revision).toBe(process.env.CURSUS_ACCEPTANCE_REVISION);
   expect(me.build.revision).toMatch(/^[a-f0-9]{40}$/i);
@@ -166,6 +172,12 @@ test('account bar shows image provenance, fits desktop and mobile, and revokes t
     await page.setViewportSize({ width, height: width === 1440 ? 900 : 667 });
     await expect(bar).toBeInViewport();
     await expect(bar.getByRole('button', { name: 'Sign out', exact: true })).toBeInViewport();
+    await expect(workspace).toBeInViewport();
+    expect(await workspace.evaluate(el => {
+      const rect = el.getBoundingClientRect();
+      return rect.left >= 0 && rect.right <= innerWidth;
+    })).toBe(true);
+    await expect(workspace.getByText(me.tenantName, { exact: true })).toHaveAttribute('title', me.tenantName);
     expect(await bar.evaluate(el => {
       const footer = el.getBoundingClientRect();
       const workspace = document.querySelector('[data-testid="workspace-content"]')!.getBoundingClientRect();
@@ -178,8 +190,34 @@ test('account bar shows image provenance, fits desktop and mobile, and revokes t
   expect(await bar.getByText(me.email, { exact: true }).evaluate(el => el.scrollWidth > el.clientWidth)).toBe(true);
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.getByRole('group', { name: 'Language', exact: true }).getByRole('button', { name: 'HU', exact: true }).click();
+  await expect(page.getByRole('group', { name: 'Aktuális munkaterület', exact: true })).toContainText(me.tenantName);
   await expect(page.getByRole('contentinfo', { name: 'Fiók és verzió' }).getByRole('button', { name: 'Kijelentkezés', exact: true })).toBeVisible();
   await page.getByRole('group', { name: 'Nyelv', exact: true }).getByRole('button', { name: 'EN', exact: true }).click();
+  // Display-only edge cases: retain the real authenticated response and change
+  // only its label. No login, tenant authorization or data API is mocked here.
+  const longName = 'A very long workspace name <not markup> & partner company';
+  await page.route('**/api/auth/me', async route => {
+    const response = await route.fetch();
+    await route.fulfill({ response, json: { ...await response.json(), tenantName: longName } });
+  });
+  await page.reload();
+  await expect(workspace.getByText(longName, { exact: true })).toBeVisible();
+  await page.setViewportSize({ width: 320, height: 667 });
+  await expect(workspace).toBeInViewport();
+  expect(await workspace.getByText(longName, { exact: true }).evaluate(el => el.scrollWidth > el.clientWidth)).toBe(true);
+  await page.unroute('**/api/auth/me');
+  await page.route('**/api/auth/me', async route => {
+    const response = await route.fetch();
+    await route.fulfill({ response, json: { ...await response.json(), tenantName: null } });
+  });
+  await page.reload();
+  await expect(page.getByText('Served / Total')).toBeVisible();
+  await expect(workspace).toHaveCount(0);
+  await page.unroute('**/api/auth/me');
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.reload();
+  await expect(workspace.getByText(me.tenantName, { exact: true })).toBeVisible();
+  expect((await get<typeof me>(page.request, '/api/auth/me')).tenantId).toBe(me.tenantId);
   // A transient failure must not pretend to have signed the user out.
   await page.route('**/api/auth/logout', route => route.fulfill({ status: 503, contentType: 'application/json', body: '{}' }), { times: 1 });
   await bar.getByRole('button', { name: 'Sign out', exact: true }).click();
@@ -189,6 +227,7 @@ test('account bar shows image provenance, fits desktop and mobile, and revokes t
   await bar.getByRole('button', { name: 'Sign out', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'Continue to Cursus' })).toBeVisible();
   await expect(bar).toHaveCount(0);
+  await expect(workspace).toHaveCount(0);
   for (const origin of ['', peer]) {
     expect((await page.request.get(`${origin}/api/auth/me`)).status()).toBe(401);
     expect((await page.request.get(`${origin}/api/days`)).status()).toBe(401);

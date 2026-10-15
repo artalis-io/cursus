@@ -4,6 +4,7 @@ import { useT } from '@/i18n';
 export interface AccountUser {
   email: string;
   tenantId: string;
+  tenantName?: string | null;
   role: 'admin';
   build?: { version: string; revision: string | null };
 }

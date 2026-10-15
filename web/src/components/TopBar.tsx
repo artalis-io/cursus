@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useContext, useEffect, useRef, useState } from 'react';
 import { Play, RotateCcw, Download, Loader2, Repeat, GitCompareArrows, Database, History, Settings2, X, ChevronDown, FileText, FileSpreadsheet, FileJson, SlidersHorizontal, CalendarRange, AlertTriangle, GitBranch, HelpCircle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -7,6 +7,7 @@ import { api } from '@/lib/api';
 import { useI18n, useT } from '@/i18n';
 import type { DaySummary, Objective, Plan, Scenario } from '@/types';
 import type { JobView } from '@/App';
+import { WorkspaceNameContext } from '@/workspace';
 
 /* Localize the planning-day label from its ISO date (e.g. "kedd, 2026. május 6."
  * in Hungarian) rather than using the backend's fixed English label. */
@@ -53,6 +54,7 @@ export function TopBar({
 }) {
   const { lang, setLang } = useI18n();
   const t = useT();
+  const workspaceName = useContext(WorkspaceNameContext);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [exportOpen, setExportOpen] = useState(false);
   const isReplan = scenario.kind === 'copy';
@@ -66,9 +68,12 @@ export function TopBar({
 
   return (
     <header className="flex h-14 shrink-0 items-center gap-4 bg-graphite px-4 text-graphite-foreground">
-      <div className="flex items-baseline gap-2">
+      <div className="flex shrink-0 items-baseline gap-2">
         <span className="text-lg font-bold tracking-tight">Cursus</span>
-        <span className="text-sm font-medium text-graphite-muted">{t('brand.sub')}</span>
+        {workspaceName ? <div role="group" aria-label={t('workspace.current')} className="flex min-w-0 items-baseline gap-2">
+          <span aria-hidden="true" className="text-sm text-graphite-muted">/</span>
+          <span title={workspaceName} className="max-w-[120px] truncate text-sm font-medium text-graphite-foreground/80 sm:max-w-[180px]">{workspaceName}</span>
+        </div> : <span className="text-sm font-medium text-graphite-muted">{t('brand.sub')}</span>}
       </div>
 
       <div className="mx-1 h-6 w-px bg-white/10" />

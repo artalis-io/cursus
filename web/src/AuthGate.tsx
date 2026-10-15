@@ -2,6 +2,7 @@ import { useEffect, useState, type ReactNode } from 'react';
 import { ArrowRight, CheckCircle2, LoaderCircle, LockKeyhole, Mail, Route } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { AccountBar, type AccountUser } from '@/components/AccountBar';
+import { WorkspaceNameContext } from '@/workspace';
 
 export function AuthGate({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<AccountUser | null | undefined>(undefined);
@@ -30,7 +31,9 @@ export function AuthGate({ children }: { children: ReactNode }) {
   }
 
   if (user) return <div className="flex h-full min-h-0 flex-col overflow-hidden">
-    <div data-testid="workspace-content" className="min-h-0 min-w-0 flex-1 overflow-hidden">{children}</div>
+    <WorkspaceNameContext.Provider value={user.tenantName?.trim() || null}>
+      <div data-testid="workspace-content" className="min-h-0 min-w-0 flex-1 overflow-hidden">{children}</div>
+    </WorkspaceNameContext.Provider>
     <AccountBar user={user} signingOut={signingOut} error={logoutError} onSignOut={() => void logout()} />
   </div>;
 

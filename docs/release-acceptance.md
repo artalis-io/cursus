@@ -73,6 +73,10 @@ truncates existing tables.
   reserves space below the workspace at desktop and narrow mobile widths.
   Sign out revokes the session across both replicas; a simulated failed logout
   keeps the workspace open with a retryable error, rather than pretending success.
+  The header shows the backend-provided workspace name as a read-only label,
+  including translated labeling, bounded mobile layout and refresh/logout behavior.
+  Long and missing display-name edge cases are simulated by changing only that
+  field in an otherwise real authenticated response; no switching is enabled.
 
 The eight browser tests run without retries. Any failure, flaky result or skipped
 test blocks acceptance. CI builds the production image on Linux AMD64 and runs
