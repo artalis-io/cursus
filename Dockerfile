@@ -44,6 +44,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates
     && groupadd --gid 10001 cursus \
     && useradd --uid 10001 --gid 10001 --no-create-home --home-dir /nonexistent cursus
 WORKDIR /app
+RUN node -e 'require("node:fs").writeFileSync("/app/build-info.json", JSON.stringify({revision:process.env.CURSUS_REVISION}))'
 COPY --from=server-build --chown=cursus:cursus /src/server/dist ./server/dist
 COPY --from=server-build --chown=cursus:cursus /src/server/migrations ./server/migrations
 COPY --from=server-build --chown=cursus:cursus /src/server/node_modules ./server/node_modules

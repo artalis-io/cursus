@@ -127,7 +127,7 @@ def acceptance_evidence(path: Path | None, image_id: str, *, fresh: bool = True)
         passed = (report['schema_version'] == 1 and report['suite'] == 'stateful-production-image'
                   and report['status'] == 'passed' and report['image_id'] == image_id
                   and report['cleanup_completed'] is True
-                  and report['checkout_dirty'] is False and stats['expected'] >= 7
+                  and report['checkout_dirty'] is False and stats['expected'] >= 8
                   and stats['unexpected'] == stats['flaky'] == stats['skipped'] == 0
                   and report['runtime']['migrations'] == [1]
                   and all(len(report['runtime']['native'][name]) == 64 for name in ['surge', 'matrix', 'nexus'])

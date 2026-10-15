@@ -15,6 +15,7 @@ import { magicLinkConfirmation, registerMagicLinkFormParser } from '../magic-lin
 import type { Plan } from '../types.js';
 import type { Scenario } from '../store.js';
 import { config } from '../config.js';
+import { buildInfo } from '../build-info.js';
 import { fillPlanGeometry } from '../geometry/velo.js';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -77,8 +78,10 @@ export async function createStatefulApi(options: StatefulApiOptions): Promise<Fa
     reply.header('Set-Cookie', options.auth!.cookie(session)); return reply.redirect('/');
   });
   app.get('/api/auth/me', async (req, reply) => {
-    if (!options.auth) return { email: 'local@cursus', tenantId: options.tenantId, role: 'admin' };
-    return (await options.auth.authenticate(cookieValue(req.headers.cookie, 'cursus_session'))) ?? reply.code(401).send({ error: 'authentication required' });
+    reply.header('Cache-Control', 'private, no-store');
+    if (!options.auth) return { email: 'local@cursus', tenantId: options.tenantId, role: 'admin', build: buildInfo };
+    const principal = await options.auth.authenticate(cookieValue(req.headers.cookie, 'cursus_session'));
+    return principal ? { ...principal, build: buildInfo } : reply.code(401).send({ error: 'authentication required' });
   });
   app.post('/api/auth/logout', async (req, reply) => {
     if (options.auth && req.headers.origin !== options.publicOrigin) return reply.code(403).send({ error: 'invalid request origin' });

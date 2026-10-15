@@ -133,13 +133,14 @@ def main():
                 if actual != inspected['Id']: raise ValueError('candidate image identity changed')
             browser_report = report_path.with_suffix('.playwright.json')
             environment.update(VIEWER_URL=f'http://127.0.0.1:{a}', CURSUS_ACCEPTANCE_PEER=f'http://127.0.0.1:{b}',
+                               CURSUS_ACCEPTANCE_REVISION=labels.get('org.opencontainers.image.revision', ''),
                                CURSUS_ACCEPTANCE_COMPOSE=json.dumps(compose),
                                CURSUS_ACCEPTANCE_BROWSER_REPORT=str(browser_report),
                                CURSUS_ACCEPTANCE_OUTPUT_DIR=str(report_path.with_suffix('.artifacts')))
             run(['npm', '--prefix', 'web', 'run', 'test:acceptance'], env=environment)
             stats = json.loads(browser_report.read_text())['stats']
-            if stats['unexpected'] or stats['flaky'] or stats['skipped'] or stats['expected'] < 7:
-                raise ValueError('release acceptance requires all seven or more tests passing without skips or retries')
+            if stats['unexpected'] or stats['flaky'] or stats['skipped'] or stats['expected'] < 8:
+                raise ValueError('release acceptance requires all eight or more tests passing without skips or retries')
             report['browser'] = stats
             if args.gyermelyi_config:
                 # Keep private artifacts out of browser traces and CI uploads.

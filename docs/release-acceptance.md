@@ -68,8 +68,13 @@ truncates existing tables.
 - Application restart retains sessions, plans and exports while the peer stays ready.
 - History, week overview, checksum layout and upload mapping render from real
   stateful responses; unvalidated uploads remain invisible to solvers.
+- The account bar displays the authenticated email, local initials and role,
+  alongside the version and source revision baked into the running image. It
+  reserves space below the workspace at desktop and narrow mobile widths.
+  Sign out revokes the session across both replicas; a simulated failed logout
+  keeps the workspace open with a retryable error, rather than pretending success.
 
-The seven browser tests run without retries. Any failure, flaky result or skipped
+The eight browser tests run without retries. Any failure, flaky result or skipped
 test blocks acceptance. CI builds the production image on Linux AMD64 and runs
 this suite alongside the existing unit, concurrency and fencing tests. The
 aggregate **release** check requires every job to succeed. Repository branch

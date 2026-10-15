@@ -1,38 +1,38 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import { ArrowRight, CheckCircle2, LoaderCircle, LockKeyhole, Mail, Route } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-
-interface User { email: string; tenantId: string; role: 'admin' }
+import { AccountBar, type AccountUser } from '@/components/AccountBar';
 
 export function AuthGate({ children }: { children: ReactNode }) {
-  const [user, setUser] = useState<User | null | undefined>(undefined);
+  const [user, setUser] = useState<AccountUser | null | undefined>(undefined);
   const [email, setEmail] = useState('');
   const [sent, setSent] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [signingOut, setSigningOut] = useState(false);
+  const [logoutError, setLogoutError] = useState(false);
 
   useEffect(() => {
-    fetch('/api/auth/me').then(async (r) => setUser(r.ok ? await r.json() as User : null)).catch(() => setUser(null));
+    fetch('/api/auth/me').then(async (r) => setUser(r.ok ? await r.json() as AccountUser : null)).catch(() => setUser(null));
   }, []);
 
   if (user === undefined) return <div className="flex min-h-screen items-center justify-center bg-background text-muted-foreground">
     <LoaderCircle className="mr-2 h-4 w-4 animate-spin text-primary" /> Loading Cursus…
   </div>;
   async function logout() {
-    await fetch('/api/auth/logout', { method: 'POST' });
-    setUser(null);
-    setEmail('');
-    setSent(false);
+    setSigningOut(true); setLogoutError(false);
+    try {
+      const response = await fetch('/api/auth/logout', { method: 'POST' });
+      if (!response.ok) throw new Error('Sign out failed');
+      setUser(null); setEmail(''); setSent(false);
+    } catch { setLogoutError(true); }
+    finally { setSigningOut(false); }
   }
 
-  if (user) return <>
-    {children}
-    <button
-      className="fixed bottom-4 right-4 z-50 rounded border border-border bg-card px-3 py-2 text-xs text-muted-foreground shadow hover:text-foreground"
-      onClick={logout}
-      title={`Signed in as ${user.email}`}
-    >Sign out</button>
-  </>;
+  if (user) return <div className="flex h-full min-h-0 flex-col overflow-hidden">
+    <div data-testid="workspace-content" className="min-h-0 min-w-0 flex-1 overflow-hidden">{children}</div>
+    <AccountBar user={user} signingOut={signingOut} error={logoutError} onSignOut={() => void logout()} />
+  </div>;
 
   async function submit(e: React.FormEvent) {
     e.preventDefault(); setBusy(true); setError(null);

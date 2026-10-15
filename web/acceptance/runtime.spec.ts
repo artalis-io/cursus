@@ -19,6 +19,7 @@ async function get<T>(request: APIRequestContext, path: string): Promise<T> {
 async function login(page: Page): Promise<string> {
   await page.addInitScript(() => { try { localStorage.setItem('otto.helpSeen', '1'); } catch { /* no storage on error documents */ } });
   await page.goto('/');
+  await expect(page.getByRole('contentinfo', { name: 'Account and build' })).toHaveCount(0);
   await expect(page.getByRole('heading', { name: 'Continue to Cursus' })).toBeVisible();
   await page.getByRole('textbox', { name: 'Work email' }).fill('admin@acceptance.example.test');
   await page.getByRole('button', { name: /Email me a sign-in link/ }).click();
@@ -144,6 +145,56 @@ test('real authentication, shared sessions, origin checks, and tenant isolation'
   const blocked = await page.request.post('/api/scenarios', { headers: { origin: 'https://untrusted.example.test' }, data: { day: 'acceptance-day' } });
   expect(blocked.status()).toBe(403);
   assertPlan(await baseline(page));
+});
+
+test('account bar shows image provenance, fits desktop and mobile, and revokes the shared session on sign out', async ({ page }) => {
+  await login(page);
+  const me = await get<{ email: string; role: string; build: { version: string; revision: string } }>(page.request, '/api/auth/me');
+  expect((await page.request.get('/api/auth/me')).headers()['cache-control']).toBe('private, no-store');
+  expect(me.build.revision).toBe(process.env.CURSUS_ACCEPTANCE_REVISION);
+  expect(me.build.revision).toMatch(/^[a-f0-9]{40}$/i);
+  expect((await get<typeof me>(page.request, `${peer}/api/auth/me`)).build).toEqual(me.build);
+  const bar = page.getByRole('contentinfo', { name: 'Account and build' });
+  await expect(bar.getByText(me.email, { exact: true })).toBeVisible();
+  await expect(bar.getByText('AD', { exact: true })).toBeVisible();
+  await expect(bar.getByText('Admin', { exact: true })).toBeVisible();
+  await expect(bar.getByLabel('Application build')).toHaveAttribute('title', `${me.build.version} · ${me.build.revision}`);
+  await expect(bar.getByText(`v${me.build.version}`, { exact: true })).toBeVisible();
+  await expect(bar.getByText(me.build.revision.slice(0, 7), { exact: true })).toBeVisible();
+  await page.screenshot({ path: test.info().outputPath('account-desktop.png') });
+  for (const width of [1440, 375, 320]) {
+    await page.setViewportSize({ width, height: width === 1440 ? 900 : 667 });
+    await expect(bar).toBeInViewport();
+    await expect(bar.getByRole('button', { name: 'Sign out', exact: true })).toBeInViewport();
+    expect(await bar.evaluate(el => {
+      const footer = el.getBoundingClientRect();
+      const workspace = document.querySelector('[data-testid="workspace-content"]')!.getBoundingClientRect();
+      return el.scrollWidth <= el.clientWidth && footer.left >= 0 && footer.right <= innerWidth
+        && footer.bottom <= innerHeight && workspace.bottom <= footer.top;
+    })).toBe(true);
+    if (width === 375) await page.screenshot({ path: test.info().outputPath('account-mobile.png') });
+  }
+  await expect(bar.getByText(me.email, { exact: true })).toHaveAttribute('title', me.email);
+  expect(await bar.getByText(me.email, { exact: true }).evaluate(el => el.scrollWidth > el.clientWidth)).toBe(true);
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.getByRole('group', { name: 'Language', exact: true }).getByRole('button', { name: 'HU', exact: true }).click();
+  await expect(page.getByRole('contentinfo', { name: 'Fiók és verzió' }).getByRole('button', { name: 'Kijelentkezés', exact: true })).toBeVisible();
+  await page.getByRole('group', { name: 'Nyelv', exact: true }).getByRole('button', { name: 'EN', exact: true }).click();
+  // A transient failure must not pretend to have signed the user out.
+  await page.route('**/api/auth/logout', route => route.fulfill({ status: 503, contentType: 'application/json', body: '{}' }), { times: 1 });
+  await bar.getByRole('button', { name: 'Sign out', exact: true }).click();
+  await expect(bar.getByRole('alert')).toContainText('Could not sign out');
+  expect((await page.request.get(`${peer}/api/auth/me`)).status()).toBe(200);
+  // The retry is real: shared PostgreSQL session revocation, no API mock.
+  await bar.getByRole('button', { name: 'Sign out', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Continue to Cursus' })).toBeVisible();
+  await expect(bar).toHaveCount(0);
+  for (const origin of ['', peer]) {
+    expect((await page.request.get(`${origin}/api/auth/me`)).status()).toBe(401);
+    expect((await page.request.get(`${origin}/api/days`)).status()).toBe(401);
+  }
+  await page.reload();
+  await expect(page.getByRole('heading', { name: 'Continue to Cursus' })).toBeVisible();
 });
 
 test('reorder requires recomputed preview and a correct native replan with peer export', async ({ page }) => {
