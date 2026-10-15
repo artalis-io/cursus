@@ -38,6 +38,11 @@ figures; it is on-demand and degrades gracefully when the LLM endpoint is down.
 
 ## Layout
 
+Before releasing the stateful runtime, run the [production-image acceptance
+suite and release gate](docs/release-acceptance.md). It tests two authenticated
+replicas sharing PostgreSQL and S3-compatible storage, with native Surge solves;
+an optional external Gyermelyi check exercises the conversion pipeline.
+
 | Path | What |
 |------|------|
 | `server` | Node/TS app backend: scenarios, plans, solve jobs (via `surge_solve`), road geometry (via Velo), provenance, Carta tile proxy, static SPA serving. |

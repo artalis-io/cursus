@@ -1,5 +1,6 @@
 import importlib.util
 import json
+import datetime as dt
 import tempfile
 import unittest
 from pathlib import Path
@@ -12,6 +13,14 @@ deploy = importlib.util.module_from_spec(spec); spec.loader.exec_module(deploy)
 
 class StatefulDeploymentTests(unittest.TestCase):
     def config(self): return json.loads((ROOT / "deploy/stateful.json").read_text())
+
+    def acceptance(self):
+        return {'schema_version': 1, 'suite': 'stateful-production-image', 'status': 'passed',
+                'image_id': 'sha256:candidate', 'checkout_dirty': False, 'cleanup_completed': True,
+                'finished_at': dt.datetime.now(dt.timezone.utc).isoformat(),
+                'image_revision': 'a' * 40, 'otto_revision': 'b' * 40, 'harness_sha256': deploy.current_harness_digest(),
+                'browser': {'expected': 7, 'unexpected': 0, 'flaky': 0, 'skipped': 0},
+                'runtime': {'migrations': [1], 'native': {name: 'd' * 64 for name in ['surge', 'matrix', 'nexus']}}}
 
     def test_checked_in_inventory_and_compose_are_safe(self):
         cfg = deploy.load(ROOT / "deploy/stateful.json")
@@ -73,14 +82,47 @@ class StatefulDeploymentTests(unittest.TestCase):
     @patch.object(deploy, "ssh")
     def test_rollout_is_secondary_first_and_requires_schema_label(self, ssh):
         ssh.side_effect = [
-            type("R", (), {"stdout": "1|1|sha256:secondary\n"})(), type("R", (), {"stdout": ""})(),
+            type("R", (), {"stdout": "1|1|sha256:candidate\n"})(),
+            type("R", (), {"stdout": "1|1|sha256:candidate\n"})(), type("R", (), {"stdout": ""})(),
             type("R", (), {"stdout": '{"status":"ready"}'})(),
-            type("R", (), {"stdout": "1|1|sha256:primary\n"})(), type("R", (), {"stdout": ""})(),
+            type("R", (), {"stdout": ""})(),
             type("R", (), {"stdout": '{"status":"ready"}'})(),
         ]
-        result = deploy.update_application(self.config(), "cursus-app:test", True, "rollout")
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'acceptance.json'; path.write_text(json.dumps(self.acceptance()))
+            result = deploy.update_application(self.config(), "cursus-app:test", True, "rollout", path)
         self.assertEqual([n["role"] for n in result["nodes"]], ["standby", "primary"])
         self.assertEqual(ssh.call_args_list[0].args[0]["name"], "spark-3eb0")
+
+    def test_release_gate_rejects_missing_failed_dirty_skipped_and_old_evidence(self):
+        with self.assertRaisesRegex(deploy.DeploymentError, '--acceptance-report'):
+            deploy.acceptance_evidence(None, 'sha256:candidate')
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'report.json'
+            for field, value in [('status', 'failed'), ('checkout_dirty', True), ('image_id', 'sha256:different'),
+                                 ('harness_sha256', 'c' * 64),
+                                 ('finished_at', '2020-01-01T00:00:00+00:00')]:
+                report = self.acceptance(); report[field] = value; path.write_text(json.dumps(report))
+                with self.subTest(field=field), self.assertRaises(deploy.DeploymentError):
+                    deploy.acceptance_evidence(path, 'sha256:candidate')
+            for field in ['skipped', 'flaky', 'unexpected']:
+                report = self.acceptance(); report['browser'][field] = 1; path.write_text(json.dumps(report))
+                with self.subTest(field=field), self.assertRaises(deploy.DeploymentError):
+                    deploy.acceptance_evidence(path, 'sha256:candidate')
+            report = self.acceptance(); report['finished_at'] = '2020-01-01T00:00:00+00:00'
+            path.write_text(json.dumps(report))
+            self.assertEqual(deploy.acceptance_evidence(path, 'sha256:candidate', fresh=False)['status'], 'passed')
+
+    @patch.object(deploy, 'ssh')
+    def test_peer_image_mismatch_prevents_all_deployment_mutations(self, ssh):
+        ssh.side_effect = [type('R', (), {'stdout': '1|1|sha256:candidate'})(),
+                           type('R', (), {'stdout': '1|1|sha256:wrong-peer'})()]
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'report.json'; path.write_text(json.dumps(self.acceptance()))
+            with self.assertRaises(deploy.DeploymentError):
+                deploy.update_application(self.config(), 'cursus-app:test', True, 'rollout', path)
+        self.assertEqual(ssh.call_count, 2)
+        self.assertTrue(all(call.args[1][:3] == ['docker', 'image', 'inspect'] for call in ssh.call_args_list))
 
     @patch.object(deploy, "run")
     def test_fence_requires_matching_nonce_authority_and_evidence(self, run):

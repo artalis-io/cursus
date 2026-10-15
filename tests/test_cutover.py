@@ -39,6 +39,14 @@ class CutoverTests(unittest.TestCase):
         with self.assertRaisesRegex(cutover.CutoverError, "approve-cutover"):
             cutover.activate(cfg, False)
 
+    def test_cutover_rejects_missing_acceptance_before_cloudflare_access(self):
+        with patch.object(cutover, 'read_evidence', return_value={'nodes': [{'image_id': 'sha256:candidate'}]}), \
+             patch.object(cutover, 'candidate_status', return_value={'ready': True, 'image_id': 'sha256:candidate'}), \
+             patch.object(cutover, 'load_ha') as cloudflare:
+            with self.assertRaisesRegex(cutover.CutoverError, '--acceptance-report'):
+                cutover.activate(self.config(), True)
+            cloudflare.assert_not_called()
+
     def test_migration_requires_prior_gate_freeze_and_adapter(self):
         cfg = self.config()
         with patch.object(cutover, "read_evidence", return_value={"success": True}):

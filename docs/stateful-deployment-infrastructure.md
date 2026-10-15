@@ -159,14 +159,17 @@ After the same labeled image has been loaded on both nodes, the guarded command
 updates the secondary first, requires readiness, and then updates the primary:
 
 ```bash
-./deploy/stateful.py rollout --image cursus-app:REVISION --approve
-./deploy/stateful.py rollback --image cursus-app:PREVIOUS_REVISION --approve
+./deploy/stateful.py rollout --image cursus-app:REVISION --acceptance-report /secure/path/REVISION.json --approve
+./deploy/stateful.py rollback --image cursus-app:PREVIOUS_REVISION --acceptance-report /secure/path/PREVIOUS_REVISION.json --approve
 ```
 
 Both operations are restricted by the checked-in staging inventory, require an
 explicit approval flag, use `--pull never`, and reject images whose declared
 schema compatibility does not include migration version 1. A rollback is not a
 database down-migration.
+
+Both commands require passing [production-image acceptance](release-acceptance.md)
+for the exact image ID on both nodes before either node is changed.
 
 Before deployment, snapshot `deploy/ha.py plan`, both port-8080 listeners and
 the Hello World process/container state. After staging, repeat those reads and

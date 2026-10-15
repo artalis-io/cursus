@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import datetime as dt
 import hashlib
+import importlib.util
 import json
 import os
 import shlex
@@ -110,12 +111,42 @@ def command_validate(cfg: dict[str, Any]) -> dict[str, Any]:
     return {"valid": True, "compose_sha256": hashlib.sha256(compose.read_bytes()).hexdigest(), "nodes": cfg["nodes"]}
 
 
-def update_application(cfg: dict[str, Any], image: str, approved: bool, action: str) -> dict[str, Any]:
+def current_harness_digest() -> str:
+    spec = importlib.util.spec_from_file_location('cursus_acceptance_digest', ROOT / 'deploy/acceptance.py')
+    module = importlib.util.module_from_spec(spec); spec.loader.exec_module(module)
+    return module.harness_digest()
+
+
+def acceptance_evidence(path: Path | None, image_id: str, *, fresh: bool = True) -> dict[str, Any]:
+    if path is None: raise DeploymentError('release requires --acceptance-report from deploy/acceptance.py')
+    try:
+        report = json.loads(path.read_text())
+        stats = report['browser']
+        finished = dt.datetime.fromisoformat(report['finished_at'])
+        age = (dt.datetime.now(dt.timezone.utc) - finished).total_seconds()
+        passed = (report['schema_version'] == 1 and report['suite'] == 'stateful-production-image'
+                  and report['status'] == 'passed' and report['image_id'] == image_id
+                  and report['cleanup_completed'] is True
+                  and report['checkout_dirty'] is False and stats['expected'] >= 7
+                  and stats['unexpected'] == stats['flaky'] == stats['skipped'] == 0
+                  and report['runtime']['migrations'] == [1]
+                  and all(len(report['runtime']['native'][name]) == 64 for name in ['surge', 'matrix', 'nexus'])
+                  and len(report['image_revision']) == 40 and len(report['otto_revision']) == 40
+                  and report['harness_sha256'] == current_harness_digest() and age >= 0 and (not fresh or age <= 86400))
+        if not passed: raise ValueError('mismatched, dirty, incomplete, failed, or expired acceptance evidence')
+        return report
+    except (OSError, ValueError, TypeError, KeyError) as exc:
+        raise DeploymentError(f'invalid acceptance report: {exc}') from exc
+
+
+def update_application(cfg: dict[str, Any], image: str, approved: bool, action: str,
+                       acceptance_report: Path | None = None) -> dict[str, Any]:
     """Update only the isolated staging application, secondary first."""
     if not approved: raise DeploymentError(f"{action} requires --approve")
     if not image or any(char.isspace() for char in image): raise DeploymentError("a single explicit image reference is required")
     ordered = sorted(cfg["nodes"], key=lambda node: node["role"] != "standby")
     results = []
+    checked = []
     for node in ordered:
         # Refuse an image that is absent or incompatible before touching Compose.
         inspect = ssh(node, ["docker", "image", "inspect", image, "--format",
@@ -124,17 +155,22 @@ def update_application(cfg: dict[str, Any], image: str, approved: bool, action: 
         fields = inspect.stdout.strip().split("|", 2)
         if len(fields) != 3 or fields[0] != "1" or fields[1] != "1":
             raise DeploymentError(f"{node['name']}: image does not declare schema compatibility 1..1")
+        acceptance_evidence(acceptance_report, fields[2], fresh=action != 'rollback')
+        checked.append((node, fields[2]))
+    # Check the image and its acceptance evidence on BOTH nodes before any write.
+    for node, image_id in checked:
         remote = (
             f"cd {shlex.quote(node['deployment_dir'])} && "
-            f"CURSUS_APP_IMAGE={shlex.quote(image)} docker compose --env-file {shlex.quote(node['env_file'])} "
+            f"CURSUS_APP_IMAGE={shlex.quote(image_id)} docker compose --env-file {shlex.quote(node['env_file'])} "
             "-f compose.stateful.yaml up -d --no-deps --pull never cursus"
         )
         ssh(node, ["sh", "-c", remote], timeout=180)
         ready = ssh(node, ["curl", "--silent", "--show-error", "--fail", "--max-time", "10",
                            f"http://127.0.0.1:{node['app_port']}/health/ready"], timeout=20)
         results.append({"node": node["name"], "role": node["role"], "image": image,
-                        "image_id": fields[2], "ready": json.loads(ready.stdout)})
-    return {"schema_version": 1, "action": action, "image": image, "nodes": results}
+                        "image_id": image_id, "ready": json.loads(ready.stdout)})
+    return {"schema_version": 1, "action": action, "image": image, "nodes": results,
+            "acceptance_report_sha256": hashlib.sha256(acceptance_report.read_bytes()).hexdigest()}
 
 
 def fence(command: str, old: dict[str, Any], nonce: str) -> dict[str, Any]:
@@ -185,6 +221,7 @@ def main() -> int:
         operation = sub.add_parser(name)
         operation.add_argument("--image", required=True)
         operation.add_argument("--approve", action="store_true")
+        operation.add_argument("--acceptance-report", required=True, type=Path)
     promote_parser = sub.add_parser("promote"); promote_parser.add_argument("--approve", action="store_true")
     promote_parser.add_argument("--fence-command"); promote_parser.add_argument("--report", required=True)
     args = parser.parse_args(); cfg = load(args.config)
@@ -197,7 +234,7 @@ def main() -> int:
                   "validation": command_validate(cfg), "nodes": [node_status(n) for n in cfg["nodes"]]}
         Path(args.output).write_text(json.dumps(result, indent=2, sort_keys=True) + "\n")
     elif args.command in ("rollout", "rollback"):
-        result = update_application(cfg, args.image, args.approve, args.command)
+        result = update_application(cfg, args.image, args.approve, args.command, args.acceptance_report)
     else: result = promote(cfg, args.approve, args.fence_command or os.environ.get("CURSUS_FENCE_COMMAND"), Path(args.report))
     print(json.dumps(result, indent=2, sort_keys=True)); return 0
 

@@ -186,7 +186,7 @@ and checksums, database lag, image IDs, local candidate readiness, and
 `python3 deploy/ha.py plan`.
 
 ```bash
-python3 deploy/cutover.py activate --approve-cutover
+python3 deploy/cutover.py activate --approve-cutover --acceptance-report /secure/path/release-acceptance.json
 ```
 
 The controller processes the secondary first and then the primary:

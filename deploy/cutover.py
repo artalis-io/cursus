@@ -316,7 +316,7 @@ def wait_origin_healthy(ha: Any, client: Any, ha_cfg: dict[str, Any], node_name:
     raise CutoverError(f"{node_name} did not become healthy in every Cloudflare monitor location")
 
 
-def activate(cfg: dict[str, Any], approved: bool) -> dict[str, Any]:
+def activate(cfg: dict[str, Any], approved: bool, acceptance_report: Path | None = None) -> dict[str, Any]:
     if not approved: raise CutoverError("cutover requires --approve-cutover")
     provisioned, migrated = read_evidence(cfg, "provision"), read_evidence(cfg, "migration")
     statuses = [candidate_status(node) for node in cfg["nodes"]]
@@ -324,6 +324,10 @@ def activate(cfg: dict[str, Any], approved: bool) -> dict[str, Any]:
         raise CutoverError("candidate readiness/image prerequisite failed")
     if provisioned["nodes"][0]["image_id"] != statuses[0]["image_id"]:
         raise CutoverError("candidate image changed after provisioning evidence")
+    spec = importlib.util.spec_from_file_location('cursus_release_gate', ROOT / 'deploy/stateful.py')
+    gate = importlib.util.module_from_spec(spec); spec.loader.exec_module(gate)
+    try: gate.acceptance_evidence(acceptance_report, statuses[0]['image_id'])
+    except gate.DeploymentError as exc: raise CutoverError(str(exc)) from exc
     ha, ha_cfg = load_ha(cfg)
     client = ha.Cloudflare(ha.token())
     if ha.build_plan(ha_cfg, ha.fetch_state(client, ha_cfg)):
@@ -352,6 +356,7 @@ def activate(cfg: dict[str, Any], approved: bool) -> dict[str, Any]:
     run(["curl", "--silent", "--show-error", "--fail", "--output", "/dev/null", "--max-time", "15",
          f"https://{cfg['hostname']}/"])
     evidence = {"schema_version": 1, "stage": "cutover", "success": True,
+                "acceptance_report_sha256": digest(acceptance_report),
                 "created_at": now(), "nodes": results, "image_id": statuses[0]["image_id"],
                 "migration_created_at": migrated["created_at"], "public_readiness": public.stdout.strip()[:500]}
     write_report(cfg, "cutover", evidence)
@@ -372,6 +377,7 @@ def main(argv: list[str] | None = None) -> int:
     migration_parser.add_argument("--adapter")
     cutover_parser = sub.add_parser("activate")
     cutover_parser.add_argument("--approve-cutover", action="store_true")
+    cutover_parser.add_argument("--acceptance-report", required=True, type=Path)
     args = parser.parse_args(argv)
     try:
         cfg = load(args.config)
@@ -379,7 +385,7 @@ def main(argv: list[str] | None = None) -> int:
         elif args.command == "preflight": result = preflight(cfg)
         elif args.command == "provision": result = provision(cfg, args.approve_provision, args.recovery_adapter)
         elif args.command == "migrate": result = migrate(cfg, args.approve_migration, args.freeze_evidence, args.adapter)
-        else: result = activate(cfg, args.approve_cutover)
+        else: result = activate(cfg, args.approve_cutover, args.acceptance_report)
         print(json.dumps(result, indent=2, sort_keys=True)); return 0
     except (CutoverError, subprocess.TimeoutExpired, json.JSONDecodeError) as exc:
         print(f"error: {exc}", file=sys.stderr); return 2
