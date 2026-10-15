@@ -30,6 +30,12 @@ build arguments. The report binds its result to the immutable image ID, source
 labels, architecture, native executable checksums, migration versions and test
 harness checksum. Both replicas must run that exact image. ARM64 and AMD64
 images need separate reports; source equivalence does not imply digest equality.
+CPU compatibility also matters within an architecture: the current OTTO
+toolchain uses `-march=native` for Velo. A matrix executable built on DGX Spark
+can execute unsupported instructions on an M1 despite both reporting ARM64.
+Run full candidate-image acceptance on a compatible deployment CPU, or certify
+a separately built baseline-portable image. Browser-only success cannot certify
+the matrix executable. A failed private workflow always keeps the report failed.
 
 The runner creates a random Compose project, four dynamically selected loopback
 ports, disposable PostgreSQL and S3-compatible storage, test-only credentials,
