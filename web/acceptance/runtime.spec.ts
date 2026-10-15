@@ -16,7 +16,7 @@ async function get<T>(request: APIRequestContext, path: string): Promise<T> {
   expect(response.status(), path).toBe(200);
   return response.json() as Promise<T>;
 }
-async function login(page: Page): Promise<void> {
+async function login(page: Page): Promise<string> {
   await page.addInitScript(() => { try { localStorage.setItem('otto.helpSeen', '1'); } catch { /* no storage on error documents */ } });
   await page.goto('/');
   await expect(page.getByRole('heading', { name: 'Continue to Cursus' })).toBeVisible();
@@ -27,8 +27,13 @@ async function login(page: Page): Promise<void> {
   // authentication or sending a message. GET and form POST follow production.
   const { link } = JSON.parse(dc('run', '--rm', '-T', 'fixture', 'link').trim().split('\n').at(-1)!) as { link: string };
   await page.goto(link);
+  await expect(page.getByRole('banner', { name: 'Cursus' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Sign in to Cursus' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Continue to Cursus', exact: true })).toHaveCSS('background-color', 'rgb(45, 123, 85)');
+  expect((await page.request.get('/api/auth/me')).status()).toBe(401);
   await page.getByRole('button', { name: 'Continue to Cursus', exact: true }).click();
   await expect(page.getByText('Served / Total')).toBeVisible();
+  return link;
 }
 async function baseline(page: Page): Promise<Plan> {
   const days = await get<DaySummary[]>(page.request, '/api/days');
@@ -111,7 +116,28 @@ test('real authentication, shared sessions, origin checks, and tenant isolation'
     expect((await page.request.get(`${origin}/api/days`)).status()).toBe(401);
     expect((await page.request.get(`${origin}/health/ready`)).status()).toBe(200);
   }
-  await login(page);
+  const usedLink = await login(page);
+  // Reopening an already-used emailed link must never create another session.
+  const mobile = await page.context().browser()!.newContext({ viewport: { width: 375, height: 667 } });
+  try {
+    const confirmation = await mobile.newPage();
+    await confirmation.goto(usedLink);
+    await expect(confirmation.getByRole('heading', { name: 'Sign in to Cursus' })).toBeVisible();
+    expect(await confirmation.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+    await confirmation.keyboard.press('Tab');
+    await expect(confirmation.getByRole('button', { name: 'Continue to Cursus', exact: true })).toBeFocused();
+    await confirmation.keyboard.press('Enter');
+    await expect(confirmation.getByRole('alert')).toContainText('Link unavailable');
+    expect((await confirmation.request.get('/api/auth/me')).status()).toBe(401);
+    await confirmation.getByRole('textbox', { name: 'Work email' }).fill('admin@acceptance.example.test');
+    await confirmation.getByRole('button', { name: /Email me a sign-in link/ }).click();
+    await expect(confirmation.getByRole('status')).toContainText('Check your inbox');
+    const { link } = JSON.parse(dc('run', '--rm', '-T', 'fixture', 'expire-link').trim().split('\n').at(-1)!) as { link: string };
+    await confirmation.goto(link);
+    await confirmation.getByRole('button', { name: 'Continue to Cursus', exact: true }).click();
+    await expect(confirmation.getByRole('alert')).toContainText('Link unavailable');
+    expect((await confirmation.request.get('/api/auth/me')).status()).toBe(401);
+  } finally { await mobile.close(); }
   expect((await get<{ tenantId: string }>(page.request, `${peer}/api/auth/me`)).tenantId).toBe('acceptance');
   for (const path of ['/api/plans/foreign-plan', '/api/plans/foreign-plan/handoff.json', '/api/scenarios/foreign-scenario'])
     expect((await page.request.get(`${peer}${path}`)).status()).toBe(404);
