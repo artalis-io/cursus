@@ -34,6 +34,8 @@ x-app: &app
     # Geography is explicitly outside this synthetic fixture's acceptance scope.
     VELO_ORIGIN: http://127.0.0.1:1
     CARTA_ORIGIN: http://127.0.0.1:1
+    SAGE_ORIGIN: http://sage-fixture:8084
+    SAGE_MODEL: acceptance-model
     RESEND_API_KEY_FILE: ""
   healthcheck:
     test: [CMD, node, -e, "fetch('http://127.0.0.1:8091/health/ready').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
@@ -43,11 +45,25 @@ x-app: &app
   stop_grace_period: 40s
 
 services:
+  # Protocol fixture only: real HTTP through the production Sage client, never
+  # private data or a claim of testing a real language model's output quality.
+  sage-fixture:
+    <<: *app
+    entrypoint: [node, /acceptance/sage.mjs]
+    healthcheck:
+      test: [CMD, node, -e, "fetch('http://127.0.0.1:8084/v1/models').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
   app-a:
     <<: *app
+    depends_on:
+      sage-fixture: { condition: service_healthy }
     ports: ["127.0.0.1:${CURSUS_ACCEPTANCE_PORT_A:?set by runner}:8091"]
   app-b:
     <<: *app
+    depends_on:
+      sage-fixture: { condition: service_healthy }
     environment:
       <<: *environment
       CURSUS_WORKER_ID: acceptance-b

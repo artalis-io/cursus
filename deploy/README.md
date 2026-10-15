@@ -142,3 +142,35 @@ fixture is stored here.
 
 No speculative resource limits are imposed. Use `docker stats --no-stream` and
 job elapsed time in the API to establish workload-specific sizing.
+
+## Optional AI summaries (stateful runtime)
+
+The plan inspector and plan comparison offer on-demand English/Hungarian Sage
+summaries. Set `SAGE_ORIGIN` and `SAGE_MODEL` in each node's external environment;
+`compose.stateful.yaml` passes them to the application. The endpoint must serve
+`GET /v1/models` and `POST /v1/chat/completions` without requiring an API key
+(the current Sage interface), and must be trusted to receive tenant plan figures
+and vehicle references. Raw datasets, addresses, auth identities,
+credentials and arbitrary browser prompts are not included. Do not point this
+at an unapproved public provider. Restrict network access to inference at its
+owner's boundary; Cursus does not provision or expose an inference service.
+
+`127.0.0.1` refers to the application container, not the Spark host. Use an
+explicit reachable service/private address. A service bound only to host
+loopback needs a separately approved connectivity arrangement; host networking
+is not required or enabled by this change. Neither Spark answered on the former
+host-loopback port 8084 during the read-only restoration checks. Live inference
+validation remains required; a passing protocol fixture is not an LLM test.
+
+Authenticated `GET /api/sage/status` reports reachability. Narration uses the
+same tenant-scoped PostgreSQL plan reads as plan retrieval, and writes no
+scenario, plan or job state. Each application process permits one active
+completion, rejects excess requests with HTTP 429 and `Retry-After: 2`, caps
+output at 400 tokens, and times out after 25 seconds. Across two replicas this
+allows two completions; shared inference must enforce its own overall capacity.
+Provider errors/invalid or empty output return HTTP 503 without provider details.
+The user can retry; inference failure does not affect application readiness or
+optimization. Summaries reset when the selected plan/pair or language changes.
+Treat prose as advisory: the plan/comparison metrics remain authoritative.
+
+No chat or AI-driven scenario mutations are implemented by these endpoints.

@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Sparkles, Loader2, RefreshCw } from 'lucide-react';
-import { api } from '@/lib/api';
+import { api, ApiError } from '@/lib/api';
 import { useI18n, useT } from '@/i18n';
 
 /* Sage (LLM) narration of a plan or a comparison, in the current UI language.
@@ -9,24 +9,31 @@ import { useI18n, useT } from '@/i18n';
  * request fails and we show an "unavailable" note. On demand only. */
 export function NarrationPanel({ planId, compare }: { planId?: string; compare?: { base: string; revised: string } }) {
   const { lang } = useI18n();
+  // A summary belongs to exactly one plan pair and language. Remounting also
+  // prevents a late response from a previous selection replacing current text.
+  return <NarrationContent key={`${planId ?? ''}:${compare?.base ?? ''}:${compare?.revised ?? ''}:${lang}`} planId={planId} compare={compare} lang={lang} />;
+}
+function NarrationContent({ planId, compare, lang }: { planId?: string; compare?: { base: string; revised: string }; lang: 'en' | 'hu' }) {
   const t = useT();
   const [text, setText] = useState<string | null>(null);
   const [state, setState] = useState<'idle' | 'loading' | 'error'>('idle');
+  const [busy, setBusy] = useState(false);
 
   async function run() {
-    setState('loading'); setText(null);
+    setState('loading'); setText(null); setBusy(false);
     try {
       const r = compare
         ? await api.narrateCompare(compare.base, compare.revised, lang)
         : await api.narratePlan(planId!, lang);
       setText(r.text); setState('idle');
-    } catch {
+    } catch (error) {
+      setBusy(error instanceof ApiError && error.status === 429);
       setState('error');
     }
   }
 
   return (
-    <div className="rounded-md border border-divider bg-muted/30 p-2.5">
+    <section aria-label={t('narr.title')} className="rounded-md border border-divider bg-muted/30 p-2.5">
       <div className="mb-1.5 flex items-center justify-between gap-2">
         <span className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
           <Sparkles className="h-3.5 w-3.5" /> {t('narr.title')}
@@ -39,9 +46,9 @@ export function NarrationPanel({ planId, compare }: { planId?: string; compare?:
                    : <><Sparkles className="h-3 w-3" /> {t('narr.generate')}</>}
         </button>
       </div>
-      {state === 'error' && <p className="text-[11px] text-warning">{t('narr.unavailable')}</p>}
-      {text && <p className="whitespace-pre-line text-xs leading-relaxed text-foreground/90">{text}</p>}
+      {state === 'error' && <p role="status" className="text-[11px] text-warning">{t(busy ? 'narr.busy' : 'narr.unavailable')}</p>}
+      {text && <p role="status" className="whitespace-pre-line text-xs leading-relaxed text-foreground/90">{text}</p>}
       <p className="mt-1 text-[10px] text-muted-foreground">{t('narr.caption')}</p>
-    </div>
+    </section>
   );
 }

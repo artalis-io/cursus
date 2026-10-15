@@ -24,11 +24,12 @@ import { CATALOG, suggestMapping, type Entity } from '../data/catalog.js';
 import { extFromName, runGeocode, runIngestPreview, sampleUpload } from '../data/onboard.js';
 import { weekSummary } from '../plan/week.js';
 import { comparePlans } from '../plan/compare.js';
+import { narratePlan, narrateComparison, sageReachable, SageBusyError, type SageClient, type Lang } from '../sage.js';
 import { evaluateTrip } from '../plan/evaluate.js';
 import { loadDay, loadVehicleInfo } from '../data/dataset.js';
 import { loadConvertedDay, type ConvertedManifest } from './conversion.js';
 
-export interface StatefulApiOptions { store: StatefulStore; tenantId: string; tenantName: string; auth?: StatefulAuthService; publicOrigin?: string; objects?: ObjectStore; maxUploadBytes?: number }
+export interface StatefulApiOptions { store: StatefulStore; tenantId: string; tenantName: string; auth?: StatefulAuthService; publicOrigin?: string; objects?: ObjectStore; maxUploadBytes?: number; sage?: SageClient }
 
 /** Stateful HTTP surface used by the runtime integration tests and, after
  * cutover, by the production entry point. Every repository is tenant-bound. */
@@ -189,6 +190,36 @@ export async function createStatefulApi(options: StatefulApiOptions): Promise<Fa
   app.get('/api/week', async () => statefulWeekSummary(
     await scenarios.list(), await options.store.listPlans(options.tenantId),
   ));
+  // Optional narration reads the same tenant-bound authoritative plans as the
+  // ordinary APIs. No dataset files, auth identities, or arbitrary user prompt
+  // are sent to the model, and no plan/scenario writes occur here.
+  app.get('/api/sage/status', async (_req, reply) => {
+    reply.header('Cache-Control', 'private, no-store');
+    return { reachable: await sageReachable(options.sage), model: options.sage?.model ?? config.sageModel };
+  });
+  const narrationSchema = { body: { type: 'object', additionalProperties: false,
+    properties: { lang: { type: 'string', enum: ['en', 'hu'] } } } };
+  const summary = async (reply: FastifyReply, run: () => Promise<string>) => {
+    reply.header('Cache-Control', 'private, no-store');
+    try { return { text: await run() }; }
+    catch (error) {
+      if (error instanceof SageBusyError) return reply.header('Retry-After', '2').code(429).send({ error: 'summary service busy; retry shortly', unavailable: true });
+      return reply.code(503).send({ error: 'summary service unavailable; retry later', unavailable: true });
+    }
+  };
+  app.post<{ Params: { id: string }; Body: { lang?: Lang } }>('/api/plans/:id/narrate', { schema: narrationSchema }, async (req, reply) => {
+    const plan = await options.store.getPlan(options.tenantId, req.params.id);
+    if (!plan) return reply.code(404).send({ error: 'plan not found' });
+    return summary(reply, () => narratePlan(plan, req.body?.lang ?? 'en', options.sage));
+  });
+  app.post<{ Querystring: { base?: string; revised?: string }; Body: { lang?: Lang } }>('/api/compare/narrate', { schema: narrationSchema }, async (req, reply) => {
+    const [base, revised] = await Promise.all([
+      req.query.base ? options.store.getPlan(options.tenantId, req.query.base) : undefined,
+      req.query.revised ? options.store.getPlan(options.tenantId, req.query.revised) : undefined,
+    ]);
+    if (!base || !revised) return reply.code(404).send({ error: 'base and revised plan ids required' });
+    return summary(reply, () => narrateComparison(comparePlans(base, revised), req.body?.lang ?? 'en', options.sage));
+  });
   const planExport = (kind: 'csv' | 'routes' | 'html' | 'handoff') => async (req: { params: { id: string } }, reply: FastifyReply) => {
     const plan = await options.store.getPlan(options.tenantId, req.params.id); if (!plan) return reply.code(404).send({ error: 'plan not found' });
     if (kind === 'csv') { reply.type('text/csv; charset=utf-8'); return reply.send(planToCsv(plan)); }
