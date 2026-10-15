@@ -248,6 +248,7 @@ export default function App() {
         resetSelection();
         return revised;
       }
+      if (final.status === 'failed') setError(final.error ?? 'Optimization failed.');
       return null;
     } catch (e) {
       if ((e as Error).name === 'AbortError') return null;
@@ -497,6 +498,7 @@ export default function App() {
         />
         <KpiStrip plan={plan} baseline={baseline} compare={isReplan} job={job}
           previewDistanceKm={previewTotals?.distanceKm} previewCostTotal={previewTotals?.costTotal} />
+        {error && <div role="alert" className="border-b border-destructive/30 bg-destructive/10 px-4 py-2 text-sm text-destructive">{error}</div>}
 
         {dirty && changesCount > 0 && !solving && (
           <button type="button" onClick={() => setChangesOpen(true)}

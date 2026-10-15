@@ -17,6 +17,7 @@ import { promisify } from 'node:util';
 import { randomUUID } from 'node:crypto';
 import type { ImmutableObject, ObjectStore } from './objects.js';
 import { StaleFenceError, type Lease, type StatefulStore } from './postgres.js';
+import { nativeSolveRequest } from './solver-ids.js';
 
 const OUTPUT_SCHEMA_VERSION = 1;
 const run = promisify(execFile);
@@ -133,16 +134,17 @@ export async function solveConvertedDataset(objects: ObjectStore, tenantId: stri
   budgetSec: number, objective: Objective, signal: AbortSignal): Promise<Plan> {
   const day = await loadConvertedDay(objects, tenantId, manifest, scenario);
   const request = day.request;
-  const available = new Set(request.vehicles.map((v) => v.id));
   if (scenario.removedVehicleIds.length) request.vehicles = request.vehicles.filter((v) => !scenario.removedVehicleIds.includes(v.id));
+  const available = new Set(request.vehicles.map((v) => v.id));
   applyOverrides(request, scenario, available); applyVehicleOverrides(request, scenario); applySequences(request, scenario, available);
   request.config = { ...request.config, max_time_seconds: budgetSec, seed: 42, lexicographic_objective: objective !== 'distance' };
   const workspace = await mkdtemp(join(tmpdir(), 'cursus-converted-solve-'));
   try {
-    const path = join(workspace, 'request.json'); await writeFile(path, JSON.stringify(request), { mode: 0o600 });
+    const native = nativeSolveRequest(request, scenario.sequences);
+    const path = join(workspace, 'request.json'); await writeFile(path, JSON.stringify(native.request), { mode: 0o600 });
     const { stdout } = await run(config.surgeBin, [path], { signal, timeout: (budgetSec + config.solveWatchdogGraceSec) * 1000,
       maxBuffer: Math.max(1, config.maxSolveOutputMB) * 1024 * 1024 });
-    const solution = JSON.parse(stdout) as SurgeSolution;
+    const solution = native.restore(JSON.parse(stdout) as SurgeSolution);
     if (!solution.routes?.length) throw new Error('converted dataset solve produced no routes');
     const plan = mapSolutionToPlan({ day, request, solution, enrichment: day.enrichment, vehicleInfo: loadVehicleInfo(), scenarioId: scenario.id,
       scenarioRevision: scenario.revision, planId: `pln_${randomUUID().slice(0, 8)}`, source: 'live', createdAt: new Date().toISOString() });
