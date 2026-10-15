@@ -166,6 +166,16 @@ explicit quality check for that workload; it is not a universal feasibility rule
 
 ## Limits and next increments
 
+AI summaries are exercised through the production-image stateful routes and a
+deterministic, test-only OpenAI-compatible HTTP fixture. Browser checks cover
+plan generation/regeneration, English/Hungarian, context resets, provider errors
+and empty output, cross-replica reads, and foreign-plan denial. Native solve
+tests also generate comparison summaries from the actual resulting plan pair.
+Backend tests cover request origins, validation, timeout, capacity rejection and
+slot recovery. This verifies integration, **not** real model availability,
+factual accuracy, or model quality. No customer data is sent to inference by
+these tests. A production model requires a separately verified trusted endpoint.
+
 The default suite verifies application state, authentication and real solver
 execution. It deliberately does **not** certify Carta tiles, Velo HTTP geometry,
 country-scale performance, real Resend delivery, database failover, backup/PITR

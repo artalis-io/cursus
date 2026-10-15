@@ -100,6 +100,10 @@ async function finishSolve(page: Page, start: () => Promise<unknown>): Promise<P
     `/api/compare?base=${(await baseline(page)).id}&revised=${plan.id}`);
   expect(comparison.deltas.servedOrders).toBe(0);
   expect(Number.isFinite(comparison.deltas.costTotal)).toBe(true);
+  const summary = page.getByRole('dialog').getByRole('region', { name: 'AI summary', exact: true });
+  await summary.getByRole('button', { name: 'Generate', exact: true }).click();
+  await expect(summary.getByRole('status')).toContainText('Comparison facts:');
+  await expect(summary.getByRole('status')).toContainText(`Revised: ${plan.stats.servedOrders}/${plan.stats.totalOrders} served`);
   return plan;
 }
 
@@ -107,6 +111,54 @@ test.beforeEach(async ({ page }) => {
   const errors: string[] = [];
   page.on('pageerror', error => errors.push(error.message));
   (page as Page & { runtimeErrors: string[] }).runtimeErrors = errors;
+});
+
+test('AI summaries use real stateful plans across replicas, recover from inference failure, and reset on context change', async ({ page }) => {
+  await login(page);
+  const plan = await baseline(page);
+  const panel = page.getByRole('region', { name: 'AI summary', exact: true });
+  await panel.getByRole('button', { name: 'Generate', exact: true }).click();
+  await expect(panel.getByRole('status')).toContainText(`Orders served: ${plan.stats.servedOrders} of ${plan.stats.totalOrders}`);
+  await panel.getByRole('button', { name: 'Regenerate', exact: true }).click();
+  await expect(panel.getByRole('status')).toContainText('Plan facts:');
+  const origin = new URL(page.url()).origin;
+  const remote = await page.request.post(`${peer}/api/plans/${plan.id}/narrate`, { headers: { origin }, data: { lang: 'en' } });
+  expect(remote.status()).toBe(200);
+  expect((await remote.json()).text).toContain(`Orders served: ${plan.stats.servedOrders} of ${plan.stats.totalOrders}`);
+  for (const path of ['/api/plans/foreign-plan/narrate', `/api/compare/narrate?base=${plan.id}&revised=foreign-plan`, `/api/compare/narrate?base=foreign-plan&revised=${plan.id}`])
+    expect((await page.request.post(`${peer}${path}`, { headers: { origin }, data: { lang: 'en' } })).status()).toBe(404);
+  const anonymous = await page.context().browser()!.newContext();
+  try {
+    expect((await anonymous.request.post(`${origin}/api/plans/${plan.id}/narrate`, { data: { lang: 'en' } })).status()).toBe(401);
+    expect((await anonymous.request.get(`${origin}/api/sage/status`)).status()).toBe(401);
+  } finally { await anonymous.close(); }
+  await page.getByRole('group', { name: 'Language', exact: true }).getByRole('button', { name: 'HU', exact: true }).click();
+  const hu = page.getByRole('region', { name: 'MI összefoglaló', exact: true });
+  await expect(hu.getByRole('status')).toHaveCount(0);
+  await hu.getByRole('button', { name: 'Generálás', exact: true }).click();
+  await expect(hu.getByRole('status')).toContainText('Tervadatok:');
+  await page.getByRole('group', { name: 'Nyelv', exact: true }).getByRole('button', { name: 'EN', exact: true }).click();
+  const control = (mode: string) => dc('exec', '-T', 'sage-fixture', 'node', '-e', `fetch('http://127.0.0.1:8084/control',{method:'POST',body:JSON.stringify({mode:${JSON.stringify(mode)}})}).then(r=>{if(!r.ok)process.exit(1)})`);
+  try {
+    for (const mode of ['error', 'empty']) {
+      control(mode);
+      await panel.getByRole('button', { name: 'Generate', exact: true }).click();
+      await expect(panel.getByRole('status')).toContainText('Sage narration unavailable');
+    }
+  } finally { control('ok'); }
+  await panel.getByRole('button', { name: 'Generate', exact: true }).click();
+  await expect(panel.getByRole('status')).toContainText('Plan facts:');
+  control('delayed');
+  const late = page.waitForResponse(response => new URL(response.url()).pathname === `/api/plans/${plan.id}/narrate`);
+  await panel.getByRole('button', { name: 'Regenerate', exact: true }).click();
+  await page.locator('header').getByRole('combobox').click();
+  await page.getByRole('option', { name: /Thursday/ }).click();
+  await expect(page.locator('header').getByRole('combobox')).toContainText('Thursday');
+  await late;
+  control('ok');
+  await expect(panel.getByRole('status')).toHaveCount(0);
+  await panel.getByRole('button', { name: 'Generate', exact: true }).click();
+  await expect(panel.getByRole('status')).toContainText('Orders served: 2 of 2');
 });
 test.afterEach(async ({ page }) => {
   expect((page as Page & { runtimeErrors: string[] }).runtimeErrors).toEqual([]);

@@ -248,6 +248,9 @@ services:
       VELO_GRAPH: /data/osm/cursus/${OSM_ASSET_NAME:-default}/current/map.vlg
       VELO_ORIGIN: http://velo:8082
       CARTA_ORIGIN: http://carta:8081
+      # Optional existing inference service, reachable FROM the container.
+      SAGE_ORIGIN: ${SAGE_ORIGIN:-http://127.0.0.1:8084}
+      SAGE_MODEL: ${SAGE_MODEL:-sgdflash}
       GEOCODE_CACHE_DIR: /state/geocode-cache
       GEOCODE_PBF: /data/osm/${OSM_PBF_FILE:-hungary-latest.osm.pbf}
       DISPATCH_GEOCODE_OFFLINE: "1"
