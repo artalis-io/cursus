@@ -47,6 +47,11 @@ export class StatefulStore {
     await this.pool.query('INSERT INTO tenants(id,name) VALUES($1,$2) ON CONFLICT(id) DO UPDATE SET name=excluded.name', [id, name]);
   }
 
+  async getTenantName(tenantId: string): Promise<string | null> {
+    const { rows } = await this.pool.query<{ name: string }>('SELECT name FROM tenants WHERE id=$1', [tenantId]);
+    return rows[0]?.name ?? null;
+  }
+
   async createScenario(tenantId: string, id: string, body: unknown): Promise<void> {
     const revision = typeof body === 'object' && body && 'revision' in body ? Number((body as { revision: unknown }).revision) : 0;
     await this.pool.query('INSERT INTO scenarios(tenant_id,id,revision,body) VALUES($1,$2,$3,$4)', [tenantId, id, revision, body]);

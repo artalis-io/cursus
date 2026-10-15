@@ -79,9 +79,10 @@ export async function createStatefulApi(options: StatefulApiOptions): Promise<Fa
   });
   app.get('/api/auth/me', async (req, reply) => {
     reply.header('Cache-Control', 'private, no-store');
-    if (!options.auth) return { email: 'local@cursus', tenantId: options.tenantId, role: 'admin', build: buildInfo };
+    if (!options.auth) return { email: 'local@cursus', tenantId: options.tenantId, tenantName: options.tenantName, role: 'admin', build: buildInfo };
     const principal = await options.auth.authenticate(cookieValue(req.headers.cookie, 'cursus_session'));
-    return principal ? { ...principal, build: buildInfo } : reply.code(401).send({ error: 'authentication required' });
+    if (!principal) return reply.code(401).send({ error: 'authentication required' });
+    return { ...principal, tenantName: await options.store.getTenantName(principal.tenantId), build: buildInfo };
   });
   app.post('/api/auth/logout', async (req, reply) => {
     if (options.auth && req.headers.origin !== options.publicOrigin) return reply.code(403).send({ error: 'invalid request origin' });

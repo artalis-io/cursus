@@ -123,6 +123,8 @@ integration('unrecorded immutable objects are discoverable for retained orphan c
 });
 
 integration('two scenario repositories share tenant-scoped authoritative state', async () => {
+  assert.equal(await a.getTenantName(tenant), 'Integration tenant');
+  assert.equal(await a.getTenantName('missing-tenant'), null);
   const repoA = new ScenarioRepository(a, tenant), repoB = new ScenarioRepository(b, tenant);
   const base = await repoA.ensureBase('shared-day', 'Shared');
   const edited = await repoA.edit(base.id, [{ op: 'removeVehicle', vehicleId: 42 }]);
