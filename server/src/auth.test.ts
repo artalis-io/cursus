@@ -4,6 +4,19 @@ import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { AuthService } from './auth.js';
+import { magicLinkConfirmation } from './magic-link.js';
+
+test('magic-link confirmation is branded, self-contained and keeps credentials in an explicit POST', () => {
+  const html = magicLinkConfirmation('\"><script>alert(1)</script>&token=other');
+  assert.match(html, /<header aria-label="Cursus">/);
+  assert.match(html, /aria-labelledby="confirmation-title"/);
+  assert.match(html, /<style>/);
+  assert.match(html, /name="referrer" content="no-referrer"/);
+  assert.match(html, /method="post" action="\/api\/auth\/verify\?token=%22%3E%3Cscript%3Ealert\(1\)%3C%2Fscript%3E%26token%3Dother"/);
+  assert.match(html, /enctype="application\/x-www-form-urlencoded"/);
+  assert.doesNotMatch(html, /<script|<link|https?:\/\//i);
+  assert.equal((html.match(/<form /g) ?? []).length, 1);
+});
 
 test('allowlisted one-time magic link creates and revokes an admin session', async () => {
   const root = mkdtempSync(join(tmpdir(), 'cursus-auth-'));

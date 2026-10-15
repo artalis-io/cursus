@@ -84,10 +84,15 @@ try {
   const action = process.argv[2];
   let result;
   if (action === 'seed') result = await seed();
-  else if (action === 'link') {
+  else if (action === 'link' || action === 'expire-link') {
     const { rows } = await store.pool.query("select payload from email_outbox where tenant_id='acceptance' order by created_at desc limit 1");
     const link = rows[0]?.payload.html.match(/href="([^"]+)"/)?.[1];
     assert.ok(link, 'login must queue a real transactional outbox intent');
+    if (action === 'expire-link') {
+      const hash = createHash('sha256').update(new URL(link).searchParams.get('token')).digest('hex');
+      const expired = await store.pool.query("UPDATE magic_links SET expires_at=now()-interval '1 second' WHERE tenant_id='acceptance' AND token_hash=$1 AND consumed_at IS NULL", [hash]);
+      assert.equal(expired.rowCount, 1, 'expire only the freshly requested isolated test link');
+    }
     result = { link };
   } else if (action === 'evidence') {
     const migrations = (await store.pool.query('select version from schema_migrations order by version')).rows.map(r => r.version);
@@ -96,6 +101,6 @@ try {
     result = { migrations, outbox: mail, native: {} };
     for (const [name, path] of Object.entries({ surge: config.surgeBin, matrix: config.matrixBuildBin, nexus: `${config.nexusDir}/nx_pipeline` }))
       result.native[name] = createHash('sha256').update(await readFile(path)).digest('hex');
-  } else throw Error('expected seed, link, or evidence');
+  } else throw Error('expected seed, link, expire-link, or evidence');
   console.log(JSON.stringify(result));
 } finally { await store.close(); }
