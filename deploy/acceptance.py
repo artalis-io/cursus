@@ -145,8 +145,15 @@ def main():
                 # Keep private artifacts out of browser traces and CI uploads.
                 # Workers stop before the isolated lease/takeover exercise.
                 dc('stop', 'app-a', 'app-b')
-                private = run(private_compose + ['run', '--rm', '-T', '--entrypoint', 'node', 'fixture',
-                                                '/acceptance/private-workflow.mjs'], env=environment, capture=True, timeout=1800)
+                try:
+                    private = run(private_compose + ['run', '--rm', '-T', '--entrypoint', 'node', 'fixture',
+                                                    '/acceptance/private-workflow.mjs'], env=environment, capture=True, timeout=1800)
+                except subprocess.CalledProcessError as failure:
+                    # The private helper emits only stage/count summaries; do
+                    # not retain its raw subprocess error text or input paths.
+                    try: report['private_workflow'] = json.loads(failure.stdout.strip().splitlines()[-1])
+                    except (ValueError, AttributeError, IndexError): report['private_workflow'] = {'status': 'failed', 'stage': 'unknown'}
+                    raise ValueError('external customer acceptance failed; see private_workflow in the report') from None
                 report['private_workflow'] = json.loads(private.stdout.strip().splitlines()[-1])
             else:
                 report['private_workflow'] = {'status': 'not_requested'}

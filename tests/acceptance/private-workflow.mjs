@@ -12,6 +12,7 @@ const store = new StatefulStore((await readFile(config.databaseUrlFile, 'utf8'))
 const peer = new StatefulStore((await readFile(config.databaseUrlFile, 'utf8')).trim());
 let apiA, apiB;
 let stage = 'preflight';
+let quality;
 try {
   assert.equal(config.r2Endpoint, 'http://s3-test:8333');
   assert.equal(config.r2Bucket, 'cursus-acceptance');
@@ -49,6 +50,7 @@ try {
   stage = 'native-solve';
   const plan = await solveConvertedDataset(objects, tenant, converted.manifest, scenario, settings.solveSeconds ?? 30, 'vehicles', AbortSignal.timeout(120000));
   stage = 'result-quality';
+  quality = { served: plan.stats.servedOrders, total: plan.stats.totalOrders, valid: plan.provenance.validation.valid };
   assert.equal(plan.provenance.validation.valid, true);
   assert.ok(plan.stats.servedOrders / plan.stats.totalOrders >= settings.minimumServedFraction);
   assert.equal(plan.stats.totalOrders, plan.stats.servedOrders + plan.unassigned.length);
@@ -70,5 +72,6 @@ try {
     artifactManifestSha256: createHash('sha256').update(JSON.stringify(converted.artifacts.map(a => a.sha256))).digest('hex') }));
 } catch {
   console.error(`External dataset acceptance failed at ${stage}; private errors and records are suppressed.`);
+  console.log(JSON.stringify({ status: 'failed', stage, ...(quality ? { quality } : {}) }));
   process.exitCode = 1;
 } finally { await apiA?.close(); await apiB?.close(); await store.close(); await peer.close(); }
