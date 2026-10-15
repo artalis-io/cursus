@@ -1,0 +1,62 @@
+# Overlay on compose.integration.yaml. Runs the unmodified production image.
+# No production credentials, private data, geographic assets, or host port 8080.
+x-app: &app
+  image: ${CURSUS_ACCEPTANCE_IMAGE:?acceptance runner supplies a local image}
+  pull_policy: never
+  user: "10001:10001"
+  read_only: true
+  cap_drop: [ALL]
+  security_opt: [no-new-privileges:true]
+  tmpfs: ["/tmp:size=2g,mode=1777", "/state:size=128m,uid=10001,gid=10001"]
+  volumes:
+    - ${CURSUS_ACCEPTANCE_SCRATCH:?set by runner}:/acceptance-config:ro
+    - ./tests/acceptance:/acceptance:ro
+  environment: &environment
+    CURSUS_RUNTIME_MODE: stateful
+    CURSUS_DATABASE_URL_FILE: /acceptance-config/database-url
+    CURSUS_R2_ENDPOINT: http://s3-test:8333
+    CURSUS_R2_BUCKET: cursus-acceptance
+    CURSUS_R2_ACCESS_KEY_ID_FILE: /acceptance-config/access-key
+    CURSUS_R2_SECRET_ACCESS_KEY_FILE: /acceptance-config/secret-key
+    CURSUS_AUTH_REQUIRED: "1"
+    CURSUS_AUTH_ALLOWED_EMAILS_FILE: /acceptance-config/allowlist
+    CURSUS_TENANT_ID: acceptance
+    CURSUS_TENANT_NAME: Acceptance workspace
+    CURSUS_PUBLIC_ORIGIN: ${CURSUS_ACCEPTANCE_ORIGIN:?set by runner}
+    CURSUS_WORKER_POLL_MS: "200"
+    CURSUS_WORKER_LEASE_SEC: "10"
+    DISPATCH_HOST: 0.0.0.0
+    DISPATCH_PORT: "8091"
+    DISPATCH_DATA_DIR: /state/application
+    DATASET_ROOT: /acceptance-config/no-legacy-dataset
+    DISPATCH_SOLVE_SECONDS: "15"
+    VELO_GRAPH: /acceptance-config/unused-map.vlg
+    # Geography is explicitly outside this synthetic fixture's acceptance scope.
+    VELO_ORIGIN: http://127.0.0.1:1
+    CARTA_ORIGIN: http://127.0.0.1:1
+    RESEND_API_KEY_FILE: ""
+  healthcheck:
+    test: [CMD, node, -e, "fetch('http://127.0.0.1:8091/health/ready').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+    interval: 2s
+    timeout: 5s
+    retries: 30
+  stop_grace_period: 40s
+
+services:
+  app-a:
+    <<: *app
+    ports: ["127.0.0.1:${CURSUS_ACCEPTANCE_PORT_A:?set by runner}:8091"]
+  app-b:
+    <<: *app
+    environment:
+      <<: *environment
+      CURSUS_WORKER_ID: acceptance-b
+    ports: ["127.0.0.1:${CURSUS_ACCEPTANCE_PORT_B:?set by runner}:8091"]
+  fixture:
+    <<: *app
+    entrypoint: [node, /acceptance/fixture.mjs]
+    healthcheck: { disable: true }
+    profiles: [fixture]
+
+networks:
+  default: {}
