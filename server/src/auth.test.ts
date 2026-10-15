@@ -5,6 +5,25 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { AuthService } from './auth.js';
 import { magicLinkConfirmation } from './magic-link.js';
+import { readBuildInfo } from './build-info.js';
+
+test('build metadata reports only a full image revision, with an honest missing-metadata fallback', () => {
+  const root = mkdtempSync(join(tmpdir(), 'cursus-build-'));
+  const manifest = join(root, 'build-info.json');
+  try {
+    assert.equal(readBuildInfo(manifest).revision, null);
+    const revision = 'a'.repeat(40);
+    writeFileSync(manifest, JSON.stringify({ revision }));
+    assert.equal(readBuildInfo(manifest).revision, revision);
+    assert.match(readBuildInfo(manifest).version, /^\d+\.\d+\.\d+/);
+    for (const value of ['unknown', 'abc1234', '<script>', null, 42]) {
+      writeFileSync(manifest, JSON.stringify({ revision: value }));
+      assert.equal(readBuildInfo(manifest).revision, null);
+    }
+    writeFileSync(manifest, 'invalid json');
+    assert.equal(readBuildInfo(manifest).revision, null);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
 
 test('magic-link confirmation is branded, self-contained and keeps credentials in an explicit POST', () => {
   const html = magicLinkConfirmation('\"><script>alert(1)</script>&token=other');

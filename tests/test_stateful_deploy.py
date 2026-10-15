@@ -19,7 +19,7 @@ class StatefulDeploymentTests(unittest.TestCase):
                 'image_id': 'sha256:candidate', 'checkout_dirty': False, 'cleanup_completed': True,
                 'finished_at': dt.datetime.now(dt.timezone.utc).isoformat(),
                 'image_revision': 'a' * 40, 'otto_revision': 'b' * 40, 'harness_sha256': deploy.current_harness_digest(),
-                'browser': {'expected': 7, 'unexpected': 0, 'flaky': 0, 'skipped': 0},
+                'browser': {'expected': 8, 'unexpected': 0, 'flaky': 0, 'skipped': 0},
                 'runtime': {'migrations': [1], 'native': {name: 'd' * 64 for name in ['surge', 'matrix', 'nexus']}}}
 
     def test_checked_in_inventory_and_compose_are_safe(self):
@@ -101,6 +101,7 @@ class StatefulDeploymentTests(unittest.TestCase):
             path = Path(directory) / 'report.json'
             for field, value in [('status', 'failed'), ('checkout_dirty', True), ('image_id', 'sha256:different'),
                                  ('harness_sha256', 'c' * 64),
+                                 ('browser', {'expected': 7, 'unexpected': 0, 'flaky': 0, 'skipped': 0}),
                                  ('finished_at', '2020-01-01T00:00:00+00:00')]:
                 report = self.acceptance(); report[field] = value; path.write_text(json.dumps(report))
                 with self.subTest(field=field), self.assertRaises(deploy.DeploymentError):

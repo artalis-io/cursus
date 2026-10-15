@@ -10,6 +10,9 @@ export type Lang = 'en' | 'hu';
 type Dict = Record<string, string>;
 
 const en: Dict = {
+  'account.label': 'Account and build', 'account.admin': 'Admin', 'account.build': 'Application build',
+  'account.unknownBuild': 'Unknown build', 'account.signOut': 'Sign out', 'account.signingOut': 'Signing out…',
+  'account.signOutError': 'Could not sign out. Please try again.',
   'brand.sub': 'Dispatch',
   'lang.en': 'EN', 'lang.hu': 'HU', 'lang.switch': 'Language',
 
@@ -223,6 +226,9 @@ const en: Dict = {
 };
 
 const hu: Dict = {
+  'account.label': 'Fiók és verzió', 'account.admin': 'Adminisztrátor', 'account.build': 'Alkalmazásverzió',
+  'account.unknownBuild': 'Ismeretlen verzió', 'account.signOut': 'Kijelentkezés', 'account.signingOut': 'Kijelentkezés…',
+  'account.signOutError': 'Nem sikerült kijelentkezni. Próbáld újra.',
   'brand.sub': 'Diszpécser',
   'lang.en': 'EN', 'lang.hu': 'HU', 'lang.switch': 'Nyelv',
 

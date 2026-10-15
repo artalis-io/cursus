@@ -31,6 +31,7 @@ import { RateLimiter } from './ratelimit.js';
 import { CATALOG, suggestMapping, type Entity } from './data/catalog.js';
 import { newUploadPath, uploadPath, sampleUpload, runIngestPreview, runGeocode, extFromName, type Mapping } from './data/onboard.js';
 import type { Plan } from './types.js';
+import { buildInfo } from './build-info.js';
 
 const ENTITIES: Entity[] = ['orders', 'vehicles', 'routes'];
 
@@ -174,10 +175,11 @@ app.post<{ Querystring: { token?: string } }>('/api/auth/verify', async (req, re
   return reply.redirect('/');
 });
 app.get('/api/auth/me', async (req, reply) => {
-  if (!auth) return { email: 'local@cursus', tenantId: 'local', role: 'admin' };
+  reply.header('Cache-Control', 'private, no-store');
+  if (!auth) return { email: 'local@cursus', tenantId: 'local', role: 'admin', build: buildInfo };
   const principal = auth.authenticate(cookieValue(req.headers.cookie, 'cursus_session'));
   if (!principal) return reply.code(401).send({ error: 'authentication required' });
-  return principal;
+  return { ...principal, build: buildInfo };
 });
 app.post('/api/auth/logout', async (req, reply) => {
   if (auth && req.headers.origin !== config.authPublicOrigin) return reply.code(403).send({ error: 'invalid request origin' });
