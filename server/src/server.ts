@@ -26,7 +26,7 @@ import { importSummary, rawSample, canonicalSample } from './data/import.js';
 import { sageReachable, narratePlan, narrateComparison, type Lang } from './sage.js';
 import { loadTariff } from './cost.js';
 import { planToCsv, planToRouteSheetHtml, planToRoutesCsv, planToHandoffJson } from './export.js';
-import { magicLinkConfirmation, registerMagicLinkFormParser } from './magic-link.js';
+import { magicLinkConfirmation, magicLinkLanguage, registerMagicLinkFormParser } from './magic-link.js';
 import { registerWorkspaceBranding } from './workspace-branding.js';
 import { RateLimiter } from './ratelimit.js';
 import { CATALOG, suggestMapping, type Entity } from './data/catalog.js';
@@ -165,10 +165,10 @@ app.post<{ Body: { email?: string } }>('/api/auth/magic-link', async (req, reply
   }
   return reply.code(202).send({ accepted: true });
 });
-app.get<{ Querystring: { token?: string } }>('/api/auth/verify', async (req, reply) => {
+app.get<{ Querystring: { token?: string; lang?: string } }>('/api/auth/verify', async (req, reply) => {
   if (!auth || !req.query.token) return reply.redirect('/?auth=invalid');
   return reply.header('Cache-Control', 'no-store').type('text/html; charset=utf-8')
-    .send(magicLinkConfirmation(req.query.token, config.authTenantName));
+    .send(magicLinkConfirmation(req.query.token, config.authTenantName, magicLinkLanguage(req.query.lang, req.headers['accept-language'])));
 });
 app.post<{ Querystring: { token?: string } }>('/api/auth/verify', async (req, reply) => {
   const session = auth && req.query.token ? auth.consumeMagicLink(req.query.token) : null;

@@ -4,7 +4,7 @@ import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { AuthService } from './auth.js';
-import { magicLinkConfirmation } from './magic-link.js';
+import { magicLinkConfirmation, magicLinkLanguage } from './magic-link.js';
 import { readBuildInfo } from './build-info.js';
 import { workspaceBranding, gyermelyiIcon } from './workspace-branding.js';
 import { createStatefulApi } from './state/api.js';
@@ -40,6 +40,18 @@ test('Gyermelyi confirmation embeds local artwork without sending the token to t
   assert.match(html, /name="referrer" content="no-referrer"/);
   assert.match(html, /method="post" action="\/api\/auth\/verify\?token=test-token"/);
   assert.doesNotMatch(magicLinkConfirmation('test-token', 'Other workspace'), /Gyermelyi|data:image/);
+});
+
+test('Hungarian confirmation keeps token encoding and POST-only consumption unchanged', () => {
+  assert.equal(magicLinkLanguage(undefined, 'hu-HU,hu;q=0.9,en;q=0.8'), 'hu');
+  assert.equal(magicLinkLanguage('en', 'hu-HU'), 'en');
+  assert.equal(magicLinkLanguage('<script>', 'en-US'), 'en');
+  const html = magicLinkConfirmation('a&other=unsafe', 'Gyermelyi', 'hu');
+  assert.match(html, /<html lang="hu">/);
+  assert.match(html, /Gyermelyi munkatér/);
+  assert.match(html, /Tovább a Cursusba/);
+  assert.match(html, /method="post" action="\/api\/auth\/verify\?token=a%26other%3Dunsafe"/);
+  assert.doesNotMatch(html, /<script|https?:\/\//i);
 });
 
 test('build metadata reports only a full image revision, with an honest missing-metadata fallback', () => {

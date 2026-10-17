@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useState, type ReactNode } from 'react';
+import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from 'react';
 import { ApiError } from '@/lib/api';
 
 /* Lightweight i18n: a language context + t() with {name} interpolation. English
@@ -469,7 +469,7 @@ const Ctx = createContext<{ lang: Lang; setLang: (l: Lang) => void; t: TFn }>({
 export function LangProvider({ children }: { children: ReactNode }) {
   const [lang, setLangState] = useState<Lang>(() => {
     try { const s = localStorage.getItem('otto.lang'); if (s === 'hu' || s === 'en') return s; } catch { /* ignore */ }
-    return 'en';
+    return /^hu\b/i.test(navigator.language) ? 'hu' : 'en';
   });
   const setLang = useCallback((l: Lang) => {
     try { localStorage.setItem('otto.lang', l); } catch { /* ignore */ }
@@ -481,6 +481,7 @@ export function LangProvider({ children }: { children: ReactNode }) {
     if (params) for (const [k, v] of Object.entries(params)) s = s.replace(new RegExp(`\\{${k}\\}`, 'g'), String(v));
     return s;
   }, [lang]);
+  useEffect(() => { document.documentElement.lang = lang; }, [lang]);
   return <Ctx.Provider value={{ lang, setLang, t }}>{children}</Ctx.Provider>;
 }
 
