@@ -68,7 +68,9 @@ export function magicLinkConfirmation(token: string, tenantName = '', lang: 'en'
       .eyebrow { margin: 0; color: var(--primary); font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .18em; }
       .customer { display: flex; align-items: center; gap: 14px; margin-bottom: 20px; font-weight: 600; }
       .customer img { display: block; object-fit: contain; flex-shrink: 0; }
-      .languages { display: flex; gap: 10px; margin-left: 12px; }
+      .languages { position: absolute; top: 14px; right: 32px; display: flex; gap: 10px; }
+      .shell { position: relative; }
+      .secure { margin-right: 100px; }
       .languages a { color: hsl(44 30% 92%); padding: 4px; text-underline-offset: 4px; }
       .languages a[aria-current] { color: white; font-weight: 700; }
       h1 { margin: 8px 0; font-size: 24px; font-weight: 600; letter-spacing: -.025em; }
@@ -78,7 +80,7 @@ export function magicLinkConfirmation(token: string, tenantName = '', lang: 'en'
       :focus-visible { outline: 2px solid var(--primary); outline-offset: 4px; }
       .help { margin-top: 24px; padding-top: 16px; border-top: 1px solid var(--divider); font-size: 12px; }
       .back { display: inline-block; margin-top: 12px; color: var(--primary); text-underline-offset: 3px; font-size: 12px; }
-      @media (max-width: 480px) { header { padding: 0 20px; } .subtitle, .secure { display: none; } .languages { margin-left: auto; } main { padding: 32px 16px; } .intro, .actions { padding: 24px; } }
+      @media (max-width: 480px) { header { padding: 0 20px; } .subtitle, .secure { display: none; } .languages { right: 20px; } main { padding: 32px 16px; } .intro, .actions { padding: 24px; } }
     </style>
   </head>
   <body>
@@ -87,7 +89,6 @@ export function magicLinkConfirmation(token: string, tenantName = '', lang: 'en'
         <span class="brand-mark" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="6" cy="18" r="3"/><circle cx="18" cy="6" r="3"/><path d="M6 15V6a3 3 0 0 1 3-3h1M18 9v9a3 3 0 0 1-3 3h-1"/></svg></span>
         <span class="brand">Cursus</span><span class="subtitle">${copy.dispatch}</span>
         <span class="secure">${copy.secure}</span>
-        <nav class="languages" aria-label="${copy.language}"><a href="${action}&amp;lang=en"${hu ? '' : ' aria-current="page"'}>EN</a><a href="${action}&amp;lang=hu"${hu ? ' aria-current="page"' : ''}>HU</a></nav>
       </header>
       <main>
         <section aria-labelledby="confirmation-title">
@@ -107,6 +108,7 @@ export function magicLinkConfirmation(token: string, tenantName = '', lang: 'en'
           </div>
         </section>
       </main>
+      <nav class="languages" aria-label="${copy.language}"><a href="${action}&amp;lang=en"${hu ? '' : ' aria-current="page"'}>EN</a><a href="${action}&amp;lang=hu"${hu ? ' aria-current="page"' : ''}>HU</a></nav>
     </div>
   </body>
 </html>`;
