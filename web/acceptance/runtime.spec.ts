@@ -108,6 +108,20 @@ test.beforeEach(async ({ page }) => {
   page.on('pageerror', error => errors.push(error.message));
   (page as Page & { runtimeErrors: string[] }).runtimeErrors = errors;
 });
+
+test('Hungarian public sign-in and confirmation preserve anonymous API protection', async ({ page }) => {
+  await page.goto('/');
+  await page.getByRole('button', { name: 'HU', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Tovább a Cursusba' })).toBeVisible();
+  await expect(page.getByRole('textbox', { name: 'Munkahelyi e-mail-cím' })).toBeEditable();
+  await expect(page.locator('html')).toHaveAttribute('lang', 'hu');
+  expect((await page.request.get('/api/days')).status()).toBe(401);
+  await page.goto('/api/auth/verify?token=not-a-live-token&lang=hu');
+  await expect(page.getByRole('heading', { name: 'Belépés a Cursusba' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Tovább a Cursusba', exact: true })).toBeVisible();
+  expect(await page.locator('form').getAttribute('method')).toBe('post');
+  expect((await page.request.get('/api/auth/me')).status()).toBe(401);
+});
 test.afterEach(async ({ page }) => {
   expect((page as Page & { runtimeErrors: string[] }).runtimeErrors).toEqual([]);
 });

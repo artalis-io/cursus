@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useState, type ReactNode } from 'react';
+import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from 'react';
 import { ApiError } from '@/lib/api';
 
 /* Lightweight i18n: a language context + t() with {name} interpolation. English
@@ -10,6 +10,14 @@ export type Lang = 'en' | 'hu';
 type Dict = Record<string, string>;
 
 const en: Dict = {
+  'auth.loading': 'Loading Cursus…', 'auth.dispatch': 'Dispatch planning', 'auth.secure': 'Secure workspace',
+  'auth.workspace': 'Gyermelyi workspace', 'auth.authorized': 'Authorized access', 'auth.title': 'Continue to Cursus',
+  'auth.description': 'Sign in with an approved email address to open the dispatch workspace.',
+  'auth.unavailable': 'Link unavailable.', 'auth.invalid': 'That sign-in link is invalid or expired. Request a new one below.',
+  'auth.inbox': 'Check your inbox', 'auth.sent': 'If this address is approved, a sign-in link has been sent. It expires in ten minutes and works once.',
+  'auth.other': 'Use another email', 'auth.email': 'Work email', 'auth.sending': 'Sending link…', 'auth.send': 'Email me a sign-in link',
+  'auth.help': 'Passwordless access. Links expire after ten minutes and can only be used once.',
+  'auth.error': 'Unable to request a sign-in link.',
   'workspace.current': 'Current workspace',
   'account.label': 'Account and build', 'account.admin': 'Admin', 'account.build': 'Application build',
   'account.unknownBuild': 'Unknown build', 'account.signOut': 'Sign out', 'account.signingOut': 'Signing out…',
@@ -227,6 +235,14 @@ const en: Dict = {
 };
 
 const hu: Dict = {
+  'auth.loading': 'A Cursus betöltése…', 'auth.dispatch': 'Fuvarszervezés', 'auth.secure': 'Biztonságos munkatér',
+  'auth.workspace': 'Gyermelyi munkatér', 'auth.authorized': 'Engedélyezett hozzáférés', 'auth.title': 'Tovább a Cursusba',
+  'auth.description': 'A fuvarszervezési munkatér megnyitásához jelentkezzen be egy engedélyezett e-mail-címmel.',
+  'auth.unavailable': 'A hivatkozás nem használható.', 'auth.invalid': 'A belépési hivatkozás érvénytelen vagy lejárt. Kérjen újat az alábbi űrlapon.',
+  'auth.inbox': 'Ellenőrizze a postaládáját', 'auth.sent': 'Ha az e-mail-cím engedélyezett, elküldtük a belépési hivatkozást. Tíz percig érvényes, és egyszer használható.',
+  'auth.other': 'Másik e-mail-cím használata', 'auth.email': 'Munkahelyi e-mail-cím', 'auth.sending': 'Hivatkozás küldése…', 'auth.send': 'Belépési hivatkozást kérek',
+  'auth.help': 'Jelszó nélküli hozzáférés. A hivatkozás tíz percig érvényes, és csak egyszer használható.',
+  'auth.error': 'Nem sikerült belépési hivatkozást kérni.',
   'workspace.current': 'Aktuális munkaterület',
   'account.label': 'Fiók és verzió', 'account.admin': 'Adminisztrátor', 'account.build': 'Alkalmazásverzió',
   'account.unknownBuild': 'Ismeretlen verzió', 'account.signOut': 'Kijelentkezés', 'account.signingOut': 'Kijelentkezés…',
@@ -453,7 +469,7 @@ const Ctx = createContext<{ lang: Lang; setLang: (l: Lang) => void; t: TFn }>({
 export function LangProvider({ children }: { children: ReactNode }) {
   const [lang, setLangState] = useState<Lang>(() => {
     try { const s = localStorage.getItem('otto.lang'); if (s === 'hu' || s === 'en') return s; } catch { /* ignore */ }
-    return 'en';
+    return /^hu\b/i.test(navigator.language) ? 'hu' : 'en';
   });
   const setLang = useCallback((l: Lang) => {
     try { localStorage.setItem('otto.lang', l); } catch { /* ignore */ }
@@ -465,6 +481,7 @@ export function LangProvider({ children }: { children: ReactNode }) {
     if (params) for (const [k, v] of Object.entries(params)) s = s.replace(new RegExp(`\\{${k}\\}`, 'g'), String(v));
     return s;
   }, [lang]);
+  useEffect(() => { document.documentElement.lang = lang; }, [lang]);
   return <Ctx.Provider value={{ lang, setLang, t }}>{children}</Ctx.Provider>;
 }
 
