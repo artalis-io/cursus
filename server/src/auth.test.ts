@@ -6,6 +6,41 @@ import { tmpdir } from 'node:os';
 import { AuthService } from './auth.js';
 import { magicLinkConfirmation } from './magic-link.js';
 import { readBuildInfo } from './build-info.js';
+import { workspaceBranding, gyermelyiIcon } from './workspace-branding.js';
+import { createStatefulApi } from './state/api.js';
+import type { StatefulStore } from './state/postgres.js';
+import type { StatefulAuthService } from './state/auth.js';
+
+test('public workspace branding is explicitly deployment-scoped, not user-selected', async () => {
+  for (const name of ['Gyermelyi', ' GYERMELYI ', 'Other customer', 'Gyermelyi demo', '<img src=x>']) {
+    const branded = name.trim().toLowerCase() === 'gyermelyi';
+    const store = { ensureTenant: async () => {} } as unknown as StatefulStore;
+    const auth = { initialize: async () => {}, authenticate: async () => null } as unknown as StatefulAuthService;
+    const app = await createStatefulApi({ store, auth, tenantId: 'private-id', tenantName: name });
+    try {
+      const response = await app.inject({ url: '/api/auth/workspace?tenant=Gyermelyi' });
+      assert.equal(response.statusCode, 200);
+      assert.equal(response.headers['cache-control'], 'no-store');
+      assert.deepEqual(response.json(), { branding: workspaceBranding(name) });
+      assert.equal(response.body.includes('private-id'), false);
+      const icon = await app.inject({ url: '/api/auth/workspace/icon' });
+      assert.equal(icon.statusCode, branded ? 200 : 404);
+      if (branded) { assert.equal(icon.headers['content-type'], 'image/png'); assert.deepEqual(icon.rawPayload, gyermelyiIcon()); }
+      assert.equal((await app.inject({ url: '/api/days' })).statusCode, 401);
+      assert.equal((await app.inject({ url: '/api/auth/me' })).statusCode, 401);
+    } finally { await app.close(); }
+  }
+});
+
+test('Gyermelyi confirmation embeds local artwork without sending the token to third parties', () => {
+  const html = magicLinkConfirmation('test-token', 'Gyermelyi');
+  assert.match(html, /Gyermelyi workspace/);
+  assert.match(html, /src="data:image\/png;base64,/);
+  assert.doesNotMatch(html, /https?:\/\/|<script|<link/i);
+  assert.match(html, /name="referrer" content="no-referrer"/);
+  assert.match(html, /method="post" action="\/api\/auth\/verify\?token=test-token"/);
+  assert.doesNotMatch(magicLinkConfirmation('test-token', 'Other workspace'), /Gyermelyi|data:image/);
+});
 
 test('build metadata reports only a full image revision, with an honest missing-metadata fallback', () => {
   const root = mkdtempSync(join(tmpdir(), 'cursus-build-'));

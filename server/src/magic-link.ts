@@ -1,4 +1,5 @@
 import type { FastifyInstance } from 'fastify';
+import { gyermelyiIcon, workspaceBranding } from './workspace-branding.js';
 
 /** Accept only the browser form encoding used by the confirmation page. */
 export function registerMagicLinkFormParser(app: FastifyInstance): void {
@@ -15,8 +16,10 @@ export function registerMagicLinkFormParser(app: FastifyInstance): void {
  * a GET would let a scanner steal the one-time credential before the user can
  * use it. Only the form's deliberate POST is allowed to consume the token.
  */
-export function magicLinkConfirmation(token: string): string {
+export function magicLinkConfirmation(token: string, tenantName = ''): string {
   const action = `/api/auth/verify?token=${encodeURIComponent(token)}`;
+  const branding = workspaceBranding(tenantName);
+  const customer = branding ? `<div class="customer"><img src="data:image/png;base64,${gyermelyiIcon().toString('base64')}" alt="Gyermelyi" width="56" height="56"><span>Gyermelyi workspace</span></div>` : '';
   return `<!doctype html>
 <html lang="en">
   <head>
@@ -46,6 +49,8 @@ export function magicLinkConfirmation(token: string): string {
       .intro { border-bottom: 1px solid var(--divider); }
       .lock { display: grid; place-items: center; width: 40px; height: 40px; margin-bottom: 20px; border: 1px solid hsl(151 46% 33% / .25); border-radius: 6px; background: hsl(151 46% 33% / .1); color: var(--primary); }
       .eyebrow { margin: 0; color: var(--primary); font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .18em; }
+      .customer { display: flex; align-items: center; gap: 14px; margin-bottom: 20px; font-weight: 600; }
+      .customer img { display: block; object-fit: contain; flex-shrink: 0; }
       h1 { margin: 8px 0; font-size: 24px; font-weight: 600; letter-spacing: -.025em; }
       p { margin: 0; color: var(--muted); line-height: 1.7; }
       button { display: flex; align-items: center; justify-content: center; gap: 10px; width: 100%; min-height: 44px; padding: 10px 16px; border: 0; border-radius: 6px; background: var(--primary); color: hsl(44 40% 97%); font: inherit; font-weight: 500; cursor: pointer; }
@@ -66,7 +71,8 @@ export function magicLinkConfirmation(token: string): string {
       <main>
         <section aria-labelledby="confirmation-title">
           <div class="intro">
-            <div class="lock" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4M12 15v3"/></svg></div>
+            ${customer}
+            ${branding ? '' : '<div class="lock" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4M12 15v3"/></svg></div>'}
             <p class="eyebrow">Authorized access</p>
             <h1 id="confirmation-title">Sign in to Cursus</h1>
             <p>Your dispatch workspace is one step away. Confirm below to securely complete your sign-in.</p>

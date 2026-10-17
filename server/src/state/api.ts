@@ -12,6 +12,7 @@ import { planToCsv, planToRouteSheetHtml, planToRoutesCsv, planToHandoffJson } f
 import type { ConversionPayload } from './conversion.js';
 import type { Mapping } from '../data/onboard.js';
 import { magicLinkConfirmation, registerMagicLinkFormParser } from '../magic-link.js';
+import { registerWorkspaceBranding } from '../workspace-branding.js';
 import type { Plan } from '../types.js';
 import type { Scenario } from '../store.js';
 import { config } from '../config.js';
@@ -35,6 +36,7 @@ export interface StatefulApiOptions { store: StatefulStore; tenantId: string; te
 export async function createStatefulApi(options: StatefulApiOptions): Promise<FastifyInstance> {
   const app = Fastify({ logger: false });
   registerMagicLinkFormParser(app);
+  registerWorkspaceBranding(app, options.tenantName);
   await options.store.ensureTenant(options.tenantId, options.tenantName);
   await options.auth?.initialize();
   const scenarios = new ScenarioRepository(options.store, options.tenantId);
@@ -70,7 +72,7 @@ export async function createStatefulApi(options: StatefulApiOptions): Promise<Fa
   app.get<{ Querystring: { token?: string } }>('/api/auth/verify', async (req, reply) => {
     if (!options.auth || !req.query.token) return reply.redirect('/?auth=invalid');
     return reply.header('Cache-Control', 'no-store').type('text/html; charset=utf-8')
-      .send(magicLinkConfirmation(req.query.token));
+      .send(magicLinkConfirmation(req.query.token, options.tenantName));
   });
   app.post<{ Querystring: { token?: string } }>('/api/auth/verify', async (req, reply) => {
     const session = options.auth && req.query.token ? await options.auth.consumeMagicLink(req.query.token) : null;

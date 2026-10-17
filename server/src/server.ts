@@ -27,6 +27,7 @@ import { sageReachable, narratePlan, narrateComparison, type Lang } from './sage
 import { loadTariff } from './cost.js';
 import { planToCsv, planToRouteSheetHtml, planToRoutesCsv, planToHandoffJson } from './export.js';
 import { magicLinkConfirmation, registerMagicLinkFormParser } from './magic-link.js';
+import { registerWorkspaceBranding } from './workspace-branding.js';
 import { RateLimiter } from './ratelimit.js';
 import { CATALOG, suggestMapping, type Entity } from './data/catalog.js';
 import { newUploadPath, uploadPath, sampleUpload, runIngestPreview, runGeocode, extFromName, type Mapping } from './data/onboard.js';
@@ -37,6 +38,7 @@ const ENTITIES: Entity[] = ['orders', 'vehicles', 'routes'];
 
 const app = Fastify({ logger: { level: 'info' }, bodyLimit: 4 * 1024 * 1024 });
 registerMagicLinkFormParser(app);
+registerWorkspaceBranding(app, config.authTenantName);
 const auth = config.authRequired ? new AuthService({
   databasePath: config.authDatabase,
   allowedEmailsFile: config.authAllowedEmailsFile,
@@ -166,7 +168,7 @@ app.post<{ Body: { email?: string } }>('/api/auth/magic-link', async (req, reply
 app.get<{ Querystring: { token?: string } }>('/api/auth/verify', async (req, reply) => {
   if (!auth || !req.query.token) return reply.redirect('/?auth=invalid');
   return reply.header('Cache-Control', 'no-store').type('text/html; charset=utf-8')
-    .send(magicLinkConfirmation(req.query.token));
+    .send(magicLinkConfirmation(req.query.token, config.authTenantName));
 });
 app.post<{ Querystring: { token?: string } }>('/api/auth/verify', async (req, reply) => {
   const session = auth && req.query.token ? auth.consumeMagicLink(req.query.token) : null;
