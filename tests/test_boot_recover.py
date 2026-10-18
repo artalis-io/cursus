@@ -40,7 +40,9 @@ class BootRecoveryTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             module.validate({'CURSUS_POSTGRES_BIND_IP': '0.0.0.0'}, 'primary', {'0.0.0.0'})
 
-    def exercise(self, missing=False, drift=False, check_only=False, paused=False):
+    def exercise(self, missing=False, drift=False, check_only=False, paused=False,
+                 pause_on_lock=False, mount_drift=False, cluster_drift=False,
+                 config_drift=False, project_drift=False):
         commands = []
         with tempfile.TemporaryDirectory() as temp:
             env = pathlib.Path(temp) / '.env.production'
@@ -53,20 +55,31 @@ class BootRecoveryTests(unittest.TestCase):
                     return json.dumps([{'addr_info': [{'local': '10.77.0.1'}]}])
                 if argv[:2] == ['docker', 'inspect']:
                     ports = None if missing else [{'HostIp': '10.77.0.1', 'HostPort': '55433'}]
-                    return json.dumps([{'Image': 'sha256:old', 'State': {'Running': True}, 'Config': {'Labels': {'com.docker.compose.project': 'demo'}}, 'NetworkSettings': {'Ports': {'5432/tcp': ports}}}])
+                    return json.dumps([{'Image': 'sha256:old', 'State': {'Running': True},
+                        'Mounts': [{'Type': 'bind', 'Source': '/original-db' if mount_drift else '/existing-db', 'Destination': '/var/lib/postgresql/data', 'RW': True}],
+                        'Config': {'Labels': {'com.docker.compose.project': 'demo', 'com.docker.compose.config-hash': 'old-hash' if config_drift else 'matching'}}, 'NetworkSettings': {'Ports': {'5432/tcp': ports}}}])
                 if argv[:2] == ['docker', 'run']:
                     self.assertIn('readonly', argv[argv.index('--mount') + 1])
                     self.assertIn('--network', argv)
-                    return 'primary\n'
+                    return 'primary\n' + ('999' if cluster_drift else '123') + '\n'
                 if argv[:3] == ['docker', 'image', 'inspect']:
                     return json.dumps([{'Id': 'sha256:new' if drift else 'sha256:old'}])
                 if 'config' in argv:
                     self.assertIn('database-primary', argv)
-                    return json.dumps({'services': {s: {'image': 'pinned:local'} for s in ['postgres', 'velo', 'carta', 'cursus']}})
+                    if '--hash' in argv:
+                        return '\n'.join(s+' matching' for s in ['postgres', 'velo', 'carta', 'cursus'])
+                    return json.dumps({'services': {s: {'image': 'pinned:local', 'volumes': [{'type': 'bind', 'source': '/existing-db', 'target': '/var/lib/postgresql/data'}]} for s in ['postgres', 'velo', 'carta', 'cursus']}})
                 return ''
-            argv = ['boot-recover', '--env-file', str(env), '--role', 'primary'] + (['--check-only'] if check_only else [])
-            with patch('sys.argv', argv), patch.object(module, 'run', side_effect=command):
-                if drift:
+            identity = {'project': 'demo', 'service': 'postgres', 'pgdata': '/existing-db', 'system_identifier': '123'}
+            argv = ['boot-recover', '--env-file', str(env), '--role', 'primary', '--expected-project',
+                    'other-project' if project_drift else 'demo', '--expected-identity', json.dumps(identity)] + (['--check-only'] if check_only else [])
+            real_flock = module.fcntl.flock
+            def acquire(lock, flags):
+                if pause_on_lock:
+                    (env.parent / '.boot-recover-paused').touch()
+                return real_flock(lock, flags)
+            with patch('sys.argv', argv), patch.object(module, 'run', side_effect=command), patch.object(module.fcntl, 'flock', side_effect=acquire):
+                if drift or mount_drift or cluster_drift or config_drift or project_drift:
                     with self.assertRaises(ValueError):
                         module.main()
                 else:
@@ -93,3 +106,19 @@ class BootRecoveryTests(unittest.TestCase):
 
     def test_pause_prevents_all_runtime_commands(self):
         self.assertEqual([], self.exercise(paused=True))
+
+    def test_pause_race_is_rechecked_under_lock(self):
+        self.assertEqual([], self.exercise(pause_on_lock=True))
+
+    def test_different_initialized_mount_never_recreates_database(self):
+        calls = self.exercise(missing=True, mount_drift=True)
+        self.assertFalse(any('up' in c or c[:2] == ['docker', 'run'] for c in calls))
+
+    def test_changed_cluster_at_same_path_never_starts_services(self):
+        self.assertFalse(any('up' in c for c in self.exercise(missing=True, cluster_drift=True)))
+
+    def test_compose_configuration_drift_never_starts_services(self):
+        self.assertFalse(any('up' in c for c in self.exercise(missing=True, config_drift=True)))
+
+    def test_project_drift_never_inspects_another_project(self):
+        self.assertEqual([], self.exercise(project_drift=True))

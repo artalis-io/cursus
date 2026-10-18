@@ -30,6 +30,8 @@ class RecoveryJobsTests(unittest.TestCase):
         self.patch_execute = patch.object(jobs, 'execute', side_effect=self.execute).start()
         self.addCleanup(patch.stopall)
         self.prereq = patch.object(jobs, 'prerequisites').start()
+        self.identity = {'project': 'demo', 'service': 'postgres', 'pgdata': '/db', 'system_identifier': '123'}
+        self.prereq.return_value = self.identity
 
     def execute(self, argv, **kwargs):
         self.calls.append((argv, kwargs))
@@ -134,7 +136,8 @@ class RecoveryJobsTests(unittest.TestCase):
         self.action('install')
         self.calls.clear()
         self.assertEqual({'reconciled': True}, self.action('run'))
-        self.assertEqual(['/usr/bin/python3', str(self.p['helper']), '--env-file', str(self.env), '--role', 'primary'], self.calls[-1][0])
+        self.assertEqual(['/usr/bin/python3', str(self.p['helper']), '--env-file', str(self.env), '--role', 'primary',
+                          '--expected-project', 'demo', '--expected-identity', json.dumps(self.identity)], self.calls[-1][0])
 
     def test_mutation_requires_approval_before_ssh(self):
         with self.assertRaises(jobs.RecoveryError):
@@ -182,6 +185,7 @@ class RecoveryJobsTests(unittest.TestCase):
         with self.assertRaises(jobs.RecoveryError):
             self.action('install', expected={'helper': 'wrong', 'manager': 'wrong'})
         self.assertEqual(before, self.cron)
+        self.prereq.assert_not_called()
 
     def test_role_mismatch_refuses_running_existing_installation(self):
         self.action('install')
