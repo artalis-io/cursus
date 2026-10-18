@@ -1,5 +1,11 @@
 # Portable Cursus deployment
 
+For the stateful two-Spark deployment, reboot recovery is managed by the existing
+production tooling: `python3 deploy/cutover.py recovery status`. Approved
+provisioning installs the schedule; existing installations can adopt it with
+`python3 deploy/cutover.py recovery install --approve`. See
+[reboot recovery](../docs/reboot-recovery.md) for maintenance, removal and limits.
+
 This Compose deployment builds Cursus and every OTTO component locally. It is
 designed for native Linux ARM64 (including DGX Spark) and Linux AMD64; normal
 operation does not use a GPU or emulation. The only registry downloads are the

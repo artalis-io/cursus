@@ -205,9 +205,10 @@ def provision(cfg: dict[str, Any], approved: bool, recovery_adapter: str | None)
     recovery = invoke_adapter(recovery_adapter, "recovery")
     if not recovery.get("backup_id") or recovery.get("restore_verified") is not True:
         raise CutoverError("recovery adapter did not prove a recoverable backup and isolated restore")
+    scheduled_recovery = recovery_jobs(cfg, 'install', approved=True)
     evidence = {"schema_version": 1, "stage": "provision", "success": True,
                 "created_at": now(), "nodes": statuses, "recovery": recovery,
-                "public_traffic_changed": False}
+                "public_traffic_changed": False, "scheduled_recovery": scheduled_recovery}
     write_report(cfg, "provision", evidence)
     return evidence
 
@@ -337,6 +338,7 @@ def activate(cfg: dict[str, Any], approved: bool, acceptance_report: Path | None
     # the other ready origin remains in service throughout.
     for node in sorted(cfg["nodes"], key=lambda item: item["role"] != "standby"):
         ha_node = next(item for item in ha_cfg["nodes"] if item["ssh_alias"] == node["ssh_alias"])
+        recovery_jobs(cfg, 'pause', approved=True, node=node['name'])
         ha.set_origin_enabled(client, ha_cfg, ha_node["name"], False, True)
         activated = False
         try:
@@ -344,6 +346,7 @@ def activate(cfg: dict[str, Any], approved: bool, acceptance_report: Path | None
             activated = True
             ha.set_origin_enabled(client, ha_cfg, ha_node["name"], True, True)
             wait_origin_healthy(ha, client, ha_cfg, ha_node["name"])
+            recovery_jobs(cfg, 'resume', approved=True, node=node['name'])
         except Exception:
             try:
                 ha.set_origin_enabled(client, ha_cfg, ha_node["name"], False, True)
@@ -363,6 +366,15 @@ def activate(cfg: dict[str, Any], approved: bool, acceptance_report: Path | None
     return evidence
 
 
+def recovery_jobs(cfg, action, approved=False, node='all'):
+    spec = importlib.util.spec_from_file_location('cursus_recovery_jobs', ROOT / 'deploy/recovery.py')
+    module = importlib.util.module_from_spec(spec); spec.loader.exec_module(module)
+    try:
+        return module.manage(cfg, action, approved, node)
+    except module.RecoveryError as error:
+        raise CutoverError(str(error)) from error
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", default=str(DEFAULT_CONFIG))
@@ -378,6 +390,10 @@ def main(argv: list[str] | None = None) -> int:
     cutover_parser = sub.add_parser("activate")
     cutover_parser.add_argument("--approve-cutover", action="store_true")
     cutover_parser.add_argument("--acceptance-report", required=True, type=Path)
+    recovery_parser = sub.add_parser('recovery', help='manage reboot-recovery jobs in the existing production inventory')
+    recovery_parser.add_argument('action', choices=['install', 'status', 'pause', 'resume', 'uninstall'])
+    recovery_parser.add_argument('--approve', action='store_true')
+    recovery_parser.add_argument('--node', default='all', help='inventory node name, or all')
     args = parser.parse_args(argv)
     try:
         cfg = load(args.config)
@@ -385,8 +401,13 @@ def main(argv: list[str] | None = None) -> int:
         elif args.command == "preflight": result = preflight(cfg)
         elif args.command == "provision": result = provision(cfg, args.approve_provision, args.recovery_adapter)
         elif args.command == "migrate": result = migrate(cfg, args.approve_migration, args.freeze_evidence, args.adapter)
+        elif args.command == 'recovery': result = recovery_jobs(cfg, args.action, args.approve, args.node)
         else: result = activate(cfg, args.approve_cutover, args.acceptance_report)
-        print(json.dumps(result, indent=2, sort_keys=True)); return 0
+        print(json.dumps(result, indent=2, sort_keys=True))
+        if args.command == 'recovery' and args.action == 'status' and not all(
+                n['installed'] and n['checksums_valid'] and n['version_current'] for n in result['nodes']):
+            return 2
+        return 0
     except (CutoverError, subprocess.TimeoutExpired, json.JSONDecodeError) as exc:
         print(f"error: {exc}", file=sys.stderr); return 2
 
