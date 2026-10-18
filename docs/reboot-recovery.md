@@ -24,6 +24,12 @@ configured path, rendered Compose mount and pinned PostgreSQL system identifier;
 another initialized directory or cluster is not an acceptable substitute. It
 also requires current/rendered Compose configuration hashes to match for all
 four services. Recovery must not apply a pending deployment/configuration change.
+The environment and Compose model are captured into a private, mode-0700
+temporary directory; files are mode 0600, never logged or committed. The rendered
+model preserves Compose's existing literal-dollar escaping and must round-trip
+unchanged. All validation, hashes and writes use this same frozen configuration,
+not later edits to live files. Automatic database recreation also requires an
+immutable image reference. Normal starts retain `--no-recreate`.
 Otherwise healthy matching services are not
 recreated. Docker/Compose prerequisites remain Herding Sparks' responsibility.
 
@@ -101,6 +107,34 @@ No reboot recovery can protect against failed disks, a missing private network,
 corrupt data, or loss of the controller's own host scheduler. This is bounded,
 fail-closed reconciliation, not automatic database HA or a claim that catastrophic
 reboot recovery has been proven.
+
+## Interrupted operations and timeouts
+
+Each helper run has a 150-second total command deadline; the manager bounds its
+helper invocation at 180 seconds. A single command is additionally limited to
+120 seconds. Local helper processes and their ordinary descendants share an
+owned process group. Timeouts and exceptional exits kill/reap that group before
+the manager returns, including descendants that detached their output streams.
+Deliberately daemonized processes and work already accepted by the Docker daemon
+are not cancellable by killing a client.
+
+Before any mutating Compose command, recovery durably creates
+`.boot-recover-uncertain`. It removes the marker only on successful completion.
+Timeout, failure or crash leaves it in place. Subsequent cron runs refuse writes;
+status exits nonzero and reports `uncertain_operation`. Pause still sets the
+maintenance flag but reports an error rather than asserting that maintenance is
+safe while a Docker operation remains unresolved. Resume/installation also fail
+their prerequisite checks until an operator resolves it.
+
+To resolve: keep recovery paused, inspect Docker events and all affected container
+states/mounts/image identities, readiness, PostgreSQL roles and replication, and
+confirm no prior reconciliation is still running. Only after that explicit
+operator review remove the exact `.boot-recover-uncertain` marker in that node's
+deployment directory, then run `recovery resume` and verify status/readiness.
+Never clear it automatically merely because a timeout elapsed. A full host reboot
+during a write may therefore require manual review instead of blind automatic
+retry. This deliberate fail-closed boundary trades recovery convenience for
+database and maintenance safety.
 
 Streaming replication uses a physical slot with bounded retained WAL (16 GiB
 maximum, plus 512 MiB `wal_keep_size`). Monitor slot `wal_status` and lag: a long

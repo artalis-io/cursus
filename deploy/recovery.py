@@ -6,6 +6,7 @@ import fcntl
 import hashlib
 import json
 import os
+import signal
 from pathlib import Path
 import shlex
 import shutil
@@ -21,10 +22,43 @@ class RecoveryError(RuntimeError):
     pass
 
 
+def bounded_run(argv, *, input=None, timeout=180, env=None):
+    """Bound a local operation and reap its ordinary (non-daemonized) children.
+
+    Nested helper commands inherit the top-level helper's process group, so
+    timing out that helper also kills a still-running Compose subprocess.
+    Docker daemon requests are not cancellable this way; the helper persists
+    an uncertainty marker before writes and leaves it on any interruption.
+    """
+    environment = dict(os.environ if env is None else env)
+    owns_group = environment.get('CURSUS_RECOVERY_NESTED') != '1'
+    environment['CURSUS_RECOVERY_NESTED'] = '1'
+    process = subprocess.Popen(argv, stdin=subprocess.PIPE if input is not None else subprocess.DEVNULL,
+                               stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                               start_new_session=owns_group, env=environment)
+    try:
+        stdout, stderr = process.communicate(input=input, timeout=timeout)
+        return subprocess.CompletedProcess(argv, process.returncode, stdout, stderr)
+    finally:
+        # Always reap the owned group, including descendants left by an exited
+        # immediate child. Do not kill our own group in a nested invocation.
+        if owns_group:
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+        elif process.poll() is None:
+            process.kill()
+        process.wait()
+        for pipe in (process.stdin, process.stdout, process.stderr):
+            if pipe is not None:
+                pipe.close()
+
+
 def execute(argv, *, input=None, allow_missing_crontab=False, timeout=180):
     # cron commonly supplies only /usr/bin:/bin; Linux `ip` lives in /usr/sbin.
     environment = {**os.environ, 'PATH': os.environ.get('PATH', '') + ':/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin'}
-    result = subprocess.run(argv, input=input, text=True, capture_output=True, timeout=timeout, env=environment)
+    result = bounded_run(argv, input=input, timeout=timeout, env=environment)
     if result.returncode:
         if allow_missing_crontab and result.returncode == 1 and 'no crontab for' in result.stderr.lower():
             return ''
@@ -37,6 +71,14 @@ def sha(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+def sync_directory(path):
+    descriptor = os.open(path, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+
+
 def atomic(path, content, mode=0o600):
     descriptor, name = tempfile.mkstemp(prefix='.recovery-write-', dir=path.parent)
     try:
@@ -46,6 +88,8 @@ def atomic(path, content, mode=0o600):
             os.fsync(stream.fileno())
         os.chmod(name, mode)
         os.replace(name, path)
+        # fsync(file) alone does not persist the directory entry after power loss.
+        sync_directory(path.parent)
     finally:
         if os.path.exists(name):
             os.unlink(name)
@@ -69,7 +113,7 @@ def paths(env_path):
     directory = env_path.parent
     return {'env': env_path, 'root': directory, 'helper': directory / 'deploy/boot-recover.py',
             'manager': directory / 'deploy/recovery.py', 'manifest': directory / '.boot-recover.json',
-            'paused': directory / '.boot-recover-paused'}
+            'paused': directory / '.boot-recover-paused', 'uncertain': directory / '.boot-recover-uncertain'}
 
 
 def cron_line(p, role, project):
@@ -118,6 +162,7 @@ def status(p, role, project, text, expected=None):
     return {'project': project, 'role': role, 'installed': owned == [cron_line(p, role, project)],
             'entries': len(owned), 'checksums_valid': pinned, 'version_current': current,
             'paused': p['paused'].exists(), 'manifest_schema': manifest.get('schema_version'),
+            'uncertain_operation': p['uncertain'].exists(),
             'database_identity': manifest.get('database_identity'),
             'helper_sha256': manifest.get('helper_sha256'), 'manager_sha256': manifest.get('manager_sha256')}
 
@@ -169,6 +214,8 @@ def local(action, env_path, role, project, *, helper_source=None, expected=None)
     if action == 'run':
         if p['paused'].exists():
             return {'paused': True}
+        if p['uncertain'].exists():
+            raise RecoveryError('unresolved Docker operation; operator review required')
         manifest = read_manifest(p)
         if (manifest.get('project') != project or manifest.get('role') != role or
                 manifest.get('env_file') != str(p['env']) or manifest.get('schema_version') != 1 or
@@ -189,8 +236,12 @@ def local(action, env_path, role, project, *, helper_source=None, expected=None)
         text = execute(['crontab', '-l'], allow_missing_crontab=True)
         if action == 'pause':
             atomic(p['paused'], b'operator maintenance\n')
+            if p['uncertain'].exists():
+                raise RecoveryError('paused, but Docker operation is unresolved; inspect before maintenance')
         elif action == 'resume':
             current = status(p, role, project, text, expected)
+            if current['uncertain_operation']:
+                raise RecoveryError('unresolved Docker operation; cannot resume before operator review')
             if not (current['installed'] and current['checksums_valid'] and current['version_current']):
                 raise RecoveryError('cannot resume missing or drifted installation')
             # Validate without clearing the real maintenance marker. --check-only
@@ -289,7 +340,7 @@ def manage(cfg, action, approved=False, node='all'):
                        '--role', role, '--project', item['project'], '--expected', json.dumps(expected), action]
             if stage:
                 command += ['--helper-source', str(Path(stage) / 'boot-recover.py')]
-            result = json.loads(execute(ssh + [shlex.join(command)]))
+            result = json.loads(execute(ssh + [shlex.join(command)], timeout=600))
             results.append({'node': item['name'], **result})
         except (RecoveryError, ValueError, OSError, subprocess.TimeoutExpired) as error:
             raise RecoveryError(f'{item["name"]}: recovery {action} failed; {len(results)} nodes completed; check status before retry') from error
