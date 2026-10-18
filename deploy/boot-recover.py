@@ -6,10 +6,23 @@ import ipaddress
 import json
 import pathlib
 import subprocess
+import sys
+import tempfile
+import time
+
+# Both deployed scripts are checksum-pinned. Avoid staging-directory bytecode
+# artifacts and share process-tree cleanup with the integrity-checking manager.
+sys.dont_write_bytecode = True
+from recovery import atomic, bounded_run, sync_directory
+
+_deadline = None
 
 
 def run(args):
-    result = subprocess.run(args, capture_output=True, text=True, timeout=120)
+    remaining = 120 if _deadline is None else min(120, _deadline - time.monotonic())
+    if remaining <= 0:
+        raise subprocess.TimeoutExpired(args, 150)
+    result = bounded_run(args, timeout=remaining)
     if result.returncode:
         # Docker/Compose errors can include configuration. Do not log raw output.
         raise RuntimeError('command failed: ' + args[0])
@@ -61,7 +74,40 @@ def validate_mount(current, desired, configured_path):
     return actual[0]['Source']
 
 
+def frozen_compose(env_path, project, role, directory):
+    env_copy = directory / 'runtime.env'
+    raw_copy = directory / 'source.yaml'
+    atomic(env_copy, env_path.read_bytes())
+    atomic(raw_copy, (env_path.parent / 'compose.stateful.yaml').read_bytes())
+    env = env_values(env_copy)
+    if env.get('COMPOSE_PROJECT_NAME') != project:
+        raise ValueError('deployment project drift')
+    prefix = ['docker', 'compose', '--project-directory', str(env_path.parent), '--project-name', project,
+              '--env-file', str(env_copy)]
+    profile = ['--profile', 'database-primary' if role == 'primary' else 'database-standby']
+    desired = json.loads(run(prefix + ['-f', str(raw_copy)] + profile + ['config', '--format', 'json']))
+    model = directory / 'compose.json'
+    # Compose's serialized config already escapes literal dollars for reuse.
+    # Preserve it exactly; escaping again would silently change commands/values.
+    atomic(model, json.dumps(desired).encode())
+    compose = prefix + ['-f', str(model)] + profile
+    # Validate exactly the bytes that subsequent hashes and write commands use.
+    if json.loads(run(compose + ['config', '--format', 'json'])) != desired:
+        raise ValueError('frozen Compose configuration did not round-trip unchanged')
+    return env, compose, desired
+
+
+def mutate(command, uncertain):
+    # Killing a Docker client cannot cancel an already accepted daemon request.
+    # Persist before submission; timeout/crash/failure requires operator review.
+    atomic(uncertain, b'Docker operation may be incomplete; inspect before clearing\n')
+    run(command)
+    uncertain.unlink()
+    sync_directory(uncertain.parent)
+
+
 def main():
+    global _deadline
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--env-file', required=True, type=pathlib.Path)
     parser.add_argument('--role', required=True, choices=['primary', 'secondary'])
@@ -84,61 +130,67 @@ def main():
             if (env_path.parent / '.boot-recover-paused').exists():
                 print('Recovery paused for operator maintenance')
                 return
-        env = env_values(env_path)
-        if env.get('COMPOSE_PROJECT_NAME') != args.expected_project:
-            raise ValueError('deployment project drift')
-        if not args.check_only and not args.expected_identity:
-            raise ValueError('pinned database identity required for automatic recovery')
-        ips = {a['local'] for i in json.loads(run(['ip', '-j', 'address'])) for a in i.get('addr_info', [])}
-        project = env['COMPOSE_PROJECT_NAME']
-        service = 'postgres' if args.role == 'primary' else 'postgres-standby'
-        container = f'{project}-{service}-1'
-        current = json.loads(run(['docker', 'inspect', container]))[0]
-        # Only adopt existing named resources; do not initialize a new cluster.
-        if current.get('Config', {}).get('Labels', {}).get('com.docker.compose.project') != project:
-            raise ValueError('container ownership mismatch')
-        compose = ['docker', 'compose', '--project-directory', str(env_path.parent),
-                   '--env-file', str(env_path), '-f', str(env_path.parent / 'compose.stateful.yaml'),
-                   '--profile', 'database-primary' if args.role == 'primary' else 'database-standby']
-        desired = json.loads(run(compose + ['config', '--format', 'json']))
-        mount = validate_mount(current, desired['services'][service], env['CURSUS_POSTGRES_DATA_PATH'])
-        # Read only the existing container's verified mount, never an unrelated
-        # initialized directory substituted through .env. pg_controldata works
-        # even when the database is stopped; no DB startup is required to inspect.
-        probe = run(['docker', 'run', '--rm', '--pull', 'never', '--network', 'none',
-                     '--read-only', '--entrypoint', 'sh', '--mount',
-                     f'type=bind,source={mount},target=/db,readonly', current['Image'], '-ec',
-                     'test -s /db/PG_VERSION; if test -e /db/standby.signal; then echo secondary; else echo primary; fi; '
-                     'LC_ALL=C pg_controldata /db | sed -n "s/^Database system identifier: *//p"']).splitlines()
-        if len(probe) != 2 or not probe[1].isdigit():
-            raise ValueError('cannot establish PostgreSQL cluster identity')
-        validate(env, args.role, ips, probe[0])
-        identity = {'project': project, 'service': service, 'pgdata': mount, 'system_identifier': probe[1]}
-        if args.expected_identity is not None and identity != args.expected_identity:
-            raise ValueError('database cluster identity drift')
-        hashes = dict(line.split() for line in run(compose + ['config', '--hash', '*']).splitlines())
-        for name in (service, 'velo', 'carta', 'cursus'):
-            existing = json.loads(run(['docker', 'inspect', f'{project}-{name}-1']))[0]
-            labels = existing.get('Config', {}).get('Labels', {})
-            if (labels.get('com.docker.compose.project') != project or not hashes.get(name) or
-                    labels.get('com.docker.compose.config-hash') != hashes[name]):
-                raise ValueError('Compose configuration drift; recovery is not a deployment')
-            expected = json.loads(run(['docker', 'image', 'inspect', desired['services'][name]['image']]))[0]['Id']
-            if existing['Image'] != expected:
-                raise ValueError('image drift; recovery may not perform an application upgrade')
-        if args.check_only:
-            print(json.dumps({'database_identity': identity, 'services_changed': False}))
-            return
-        start = ['up', '-d', '--no-deps', '--no-build', '--pull', 'never']
-        if binding_missing(current, env['CURSUS_POSTGRES_BIND_IP'], env.get('CURSUS_POSTGRES_HOST_PORT', '55432')):
-            # Docker can report a healthy DB after boot with its configured
-            # host port absent. Recreate only this container, preserving PGDATA.
-            run(compose + start + ['--force-recreate', service])
-        elif not current.get('State', {}).get('Running'):
-            run(compose + start + ['--no-recreate', service])
-        for name in ('velo', 'carta', 'cursus'):
-            run(compose + start + ['--no-recreate', name])
-        print('Existing Compose services reconciled; verify readiness and replication separately')
+        uncertain = env_path.parent / '.boot-recover-uncertain'
+        if uncertain.exists():
+            raise ValueError('unresolved Docker operation; operator review required')
+        _deadline = time.monotonic() + 150
+        with tempfile.TemporaryDirectory(prefix='.recovery-snapshot-', dir=env_path.parent) as snapshot:
+            reconcile(args, env_path, pathlib.Path(snapshot), uncertain)
+
+
+def reconcile(args, env_path, snapshot, uncertain):
+    env, compose, desired = frozen_compose(env_path, args.expected_project, args.role, snapshot)
+    if not args.check_only and not args.expected_identity:
+        raise ValueError('pinned database identity required for automatic recovery')
+    ips = {a['local'] for i in json.loads(run(['ip', '-j', 'address'])) for a in i.get('addr_info', [])}
+    project = env['COMPOSE_PROJECT_NAME']
+    service = 'postgres' if args.role == 'primary' else 'postgres-standby'
+    container = f'{project}-{service}-1'
+    current = json.loads(run(['docker', 'inspect', container]))[0]
+    # Only adopt existing named resources; do not initialize a new cluster.
+    if current.get('Config', {}).get('Labels', {}).get('com.docker.compose.project') != project:
+        raise ValueError('container ownership mismatch')
+    mount = validate_mount(current, desired['services'][service], env['CURSUS_POSTGRES_DATA_PATH'])
+    # Read only the existing container's verified mount, never an unrelated
+    # initialized directory substituted through .env. pg_controldata works
+    # even when the database is stopped; no DB startup is required to inspect.
+    probe = run(['docker', 'run', '--rm', '--pull', 'never', '--network', 'none',
+                 '--read-only', '--entrypoint', 'sh', '--mount',
+                 f'type=bind,source={mount},target=/db,readonly', current['Image'], '-ec',
+                 'test -s /db/PG_VERSION; if test -e /db/standby.signal; then echo secondary; else echo primary; fi; '
+                 'LC_ALL=C pg_controldata /db | sed -n "s/^Database system identifier: *//p"']).splitlines()
+    if len(probe) != 2 or not probe[1].isdigit():
+        raise ValueError('cannot establish PostgreSQL cluster identity')
+    validate(env, args.role, ips, probe[0])
+    identity = {'project': project, 'service': service, 'pgdata': mount, 'system_identifier': probe[1]}
+    if args.expected_identity is not None and identity != args.expected_identity:
+        raise ValueError('database cluster identity drift')
+    hashes = dict(line.split() for line in run(compose + ['config', '--hash', '*']).splitlines())
+    for name in (service, 'velo', 'carta', 'cursus'):
+        existing = json.loads(run(['docker', 'inspect', f'{project}-{name}-1']))[0]
+        labels = existing.get('Config', {}).get('Labels', {})
+        if (labels.get('com.docker.compose.project') != project or not hashes.get(name) or
+                labels.get('com.docker.compose.config-hash') != hashes[name]):
+            raise ValueError('Compose configuration drift; recovery is not a deployment')
+        expected = json.loads(run(['docker', 'image', 'inspect', desired['services'][name]['image']]))[0]['Id']
+        if existing['Image'] != expected:
+            raise ValueError('image drift; recovery may not perform an application upgrade')
+    if args.check_only:
+        print(json.dumps({'database_identity': identity, 'services_changed': False}))
+        return
+    start = ['up', '-d', '--no-deps', '--no-build', '--pull', 'never']
+    if binding_missing(current, env['CURSUS_POSTGRES_BIND_IP'], env.get('CURSUS_POSTGRES_HOST_PORT', '55432')):
+        # Docker can report a healthy DB after boot with its configured
+        # host port absent. Recreate only this container, preserving PGDATA.
+        image = desired['services'][service]['image']
+        if '@sha256:' not in image and not image.startswith('sha256:'):
+            raise ValueError('database recreation requires an immutable image reference')
+        mutate(compose + start + ['--force-recreate', service], uncertain)
+    elif not current.get('State', {}).get('Running'):
+        mutate(compose + start + ['--no-recreate', service], uncertain)
+    for name in ('velo', 'carta', 'cursus'):
+        mutate(compose + start + ['--no-recreate', name], uncertain)
+    print('Existing Compose services reconciled; verify readiness and replication separately')
 
 
 if __name__ == '__main__':

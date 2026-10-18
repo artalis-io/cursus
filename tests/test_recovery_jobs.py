@@ -111,6 +111,14 @@ class RecoveryJobsTests(unittest.TestCase):
             self.action('resume')
         self.assertTrue(self.p['paused'].exists())
 
+    def test_uncertainty_cannot_be_resumed_away(self):
+        self.action('install')
+        self.action('pause')
+        self.p['uncertain'].write_text('interrupted Docker request')
+        with self.assertRaisesRegex(jobs.RecoveryError, 'cannot resume'):
+            self.action('resume')
+        self.assertTrue(self.p['paused'].exists())
+
     def test_failed_prerequisite_does_not_change_cron(self):
         before = self.cron
         self.prereq.side_effect = jobs.RecoveryError('Docker missing')
@@ -118,6 +126,13 @@ class RecoveryJobsTests(unittest.TestCase):
             self.action('install')
         self.assertEqual(before, self.cron)
         self.assertFalse(self.p['manifest'].exists())
+
+    def test_atomic_marker_persists_its_directory_entry(self):
+        marker = self.root / 'durable-marker'
+        with patch.object(jobs, 'sync_directory', wraps=jobs.sync_directory) as sync:
+            jobs.atomic(marker, b'pending')
+        sync.assert_called_once_with(self.root)
+        self.assertEqual(b'pending', marker.read_bytes())
 
     def test_failed_crontab_write_rolls_back_deployed_sources(self):
         self.action('install')
@@ -161,15 +176,15 @@ class RecoveryJobsTests(unittest.TestCase):
 
     def test_no_crontab_is_distinguished_from_permission_failure(self):
         # Exercise the real command wrapper, not this fixture's crontab model.
-        with patch.object(subprocess, 'run', return_value=subprocess.CompletedProcess([], 1, '', 'no crontab for lab')):
+        with patch.object(jobs, 'bounded_run', return_value=subprocess.CompletedProcess([], 1, '', 'no crontab for lab')):
             self.assertEqual('', self.real_execute(['crontab', '-l'], allow_missing_crontab=True))
-        with patch.object(subprocess, 'run', return_value=subprocess.CompletedProcess([], 1, '', 'permission denied')):
+        with patch.object(jobs, 'bounded_run', return_value=subprocess.CompletedProcess([], 1, '', 'permission denied')):
             with self.assertRaises(RuntimeError):
                 self.real_execute(['crontab', '-l'], allow_missing_crontab=True)
 
     def test_cron_minimal_path_still_exposes_system_network_tools(self):
         with patch.dict(jobs.os.environ, {'PATH': '/opt/homebrew/bin:/usr/bin:/bin'}), \
-             patch.object(subprocess, 'run', return_value=subprocess.CompletedProcess([], 0, '', '')) as command:
+             patch.object(jobs, 'bounded_run', return_value=subprocess.CompletedProcess([], 0, '', '')) as command:
             self.real_execute(['true'])
         self.assertIn('/usr/sbin', command.call_args.kwargs['env']['PATH'].split(':'))
         self.assertIn('/opt/homebrew/bin', command.call_args.kwargs['env']['PATH'].split(':'))
@@ -191,3 +206,13 @@ class RecoveryJobsTests(unittest.TestCase):
         self.action('install')
         with self.assertRaises(jobs.RecoveryError):
             jobs.local('run', self.env, 'secondary', 'demo')
+
+    def test_uncertain_operation_blocks_recovery_and_pause_reports_not_safe(self):
+        self.action('install')
+        self.p['uncertain'].write_text('interrupted Docker request')
+        self.assertTrue(self.action('status')['uncertain_operation'])
+        with self.assertRaisesRegex(jobs.RecoveryError, 'unresolved Docker'):
+            self.action('run')
+        with self.assertRaisesRegex(jobs.RecoveryError, 'inspect before maintenance'):
+            self.action('pause')
+        self.assertTrue(self.p['paused'].exists())

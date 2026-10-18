@@ -405,7 +405,7 @@ def main(argv: list[str] | None = None) -> int:
         else: result = activate(cfg, args.approve_cutover, args.acceptance_report)
         print(json.dumps(result, indent=2, sort_keys=True))
         if args.command == 'recovery' and args.action == 'status' and not all(
-                n['installed'] and n['checksums_valid'] and n['version_current'] for n in result['nodes']):
+                n['installed'] and n['checksums_valid'] and n['version_current'] and not n.get('uncertain_operation') for n in result['nodes']):
             return 2
         return 0
     except (CutoverError, subprocess.TimeoutExpired, json.JSONDecodeError) as exc:

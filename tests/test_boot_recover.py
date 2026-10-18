@@ -3,11 +3,13 @@ import pathlib
 import tempfile
 import unittest
 import json
+import sys
 from unittest.mock import patch
 
 spec = importlib.util.spec_from_file_location('boot_recover', pathlib.Path(__file__).parents[1] / 'deploy/boot-recover.py')
 module = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(module)
+with patch('sys.path', [str(pathlib.Path(spec.origin).parent), *sys.path]):
+    spec.loader.exec_module(module)
 
 
 class BootRecoveryTests(unittest.TestCase):
@@ -42,14 +44,20 @@ class BootRecoveryTests(unittest.TestCase):
 
     def exercise(self, missing=False, drift=False, check_only=False, paused=False,
                  pause_on_lock=False, mount_drift=False, cluster_drift=False,
-                 config_drift=False, project_drift=False):
+                 config_drift=False, project_drift=False, mutate_live_config=False,
+                 fail_action=False, uncertain=False):
         commands = []
         with tempfile.TemporaryDirectory() as temp:
             env = pathlib.Path(temp) / '.env.production'
             env.write_text('COMPOSE_PROJECT_NAME=demo\nCURSUS_POSTGRES_BIND_IP=10.77.0.1\nCURSUS_POSTGRES_HOST_PORT=55433\nCURSUS_POSTGRES_DATA_PATH=/existing-db\n')
+            (env.parent / 'compose.stateful.yaml').write_text('services: {}\n')
             if paused:
                 (env.parent / '.boot-recover-paused').touch()
+            if uncertain:
+                (env.parent / '.boot-recover-uncertain').touch()
+            image_checks = 0
             def command(argv):
+                nonlocal image_checks
                 commands.append(argv)
                 if argv[0] == 'ip':
                     return json.dumps([{'addr_info': [{'local': '10.77.0.1'}]}])
@@ -63,12 +71,23 @@ class BootRecoveryTests(unittest.TestCase):
                     self.assertIn('--network', argv)
                     return 'primary\n' + ('999' if cluster_drift else '123') + '\n'
                 if argv[:3] == ['docker', 'image', 'inspect']:
+                    image_checks += 1
+                    if mutate_live_config and image_checks == 4:
+                        env.write_text(env.read_text().replace('/existing-db', '/wrong-db'))
+                        (env.parent / 'compose.stateful.yaml').write_text('invalid now; never reread this\n')
                     return json.dumps([{'Id': 'sha256:new' if drift else 'sha256:old'}])
                 if 'config' in argv:
                     self.assertIn('database-primary', argv)
                     if '--hash' in argv:
                         return '\n'.join(s+' matching' for s in ['postgres', 'velo', 'carta', 'cursus'])
-                    return json.dumps({'services': {s: {'image': 'pinned:local', 'volumes': [{'type': 'bind', 'source': '/existing-db', 'target': '/var/lib/postgresql/data'}]} for s in ['postgres', 'velo', 'carta', 'cursus']}})
+                    return json.dumps({'services': {s: {'image': 'postgres@sha256:' + 'a'*64, 'volumes': [{'type': 'bind', 'source': '/existing-db', 'target': '/var/lib/postgresql/data'}]} for s in ['postgres', 'velo', 'carta', 'cursus']}})
+                if 'up' in argv:
+                    self.assertNotEqual(str(env), argv[argv.index('--env-file')+1])
+                    self.assertEqual('/existing-db', module.env_values(pathlib.Path(argv[argv.index('--env-file')+1]))['CURSUS_POSTGRES_DATA_PATH'])
+                    rendered = json.loads(pathlib.Path(argv[argv.index('-f')+1]).read_text())
+                    self.assertEqual('/existing-db', rendered['services']['postgres']['volumes'][0]['source'])
+                    if fail_action:
+                        raise module.subprocess.TimeoutExpired(argv, 0.1)
                 return ''
             identity = {'project': 'demo', 'service': 'postgres', 'pgdata': '/existing-db', 'system_identifier': '123'}
             argv = ['boot-recover', '--env-file', str(env), '--role', 'primary', '--expected-project',
@@ -79,9 +98,13 @@ class BootRecoveryTests(unittest.TestCase):
                     (env.parent / '.boot-recover-paused').touch()
                 return real_flock(lock, flags)
             with patch('sys.argv', argv), patch.object(module, 'run', side_effect=command), patch.object(module.fcntl, 'flock', side_effect=acquire):
-                if drift or mount_drift or cluster_drift or config_drift or project_drift:
+                if drift or mount_drift or cluster_drift or config_drift or project_drift or uncertain:
                     with self.assertRaises(ValueError):
                         module.main()
+                elif fail_action:
+                    with self.assertRaises(module.subprocess.TimeoutExpired):
+                        module.main()
+                    self.assertTrue((env.parent / '.boot-recover-uncertain').exists())
                 else:
                     module.main()
         return commands
@@ -122,3 +145,18 @@ class BootRecoveryTests(unittest.TestCase):
 
     def test_project_drift_never_inspects_another_project(self):
         self.assertEqual([], self.exercise(project_drift=True))
+
+    def test_live_files_cannot_change_validated_recreation(self):
+        self.exercise(missing=True, mutate_live_config=True)
+
+    def test_uncertain_operation_prevents_all_commands(self):
+        self.assertEqual([], self.exercise(uncertain=True))
+
+    def test_timeout_preserves_uncertainty_for_operator_review(self):
+        self.exercise(missing=True, fail_action=True)
+
+    def test_expired_total_deadline_never_starts_another_command(self):
+        with patch.object(module, '_deadline', 0), patch.object(module, 'bounded_run') as process:
+            with self.assertRaises(module.subprocess.TimeoutExpired):
+                module.run(['docker', 'start', 'never'])
+        process.assert_not_called()
