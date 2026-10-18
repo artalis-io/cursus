@@ -111,12 +111,14 @@ def status(p, role, project, text, expected=None):
     manifest = read_manifest(p)
     pinned = (manifest.get('schema_version') == 1 and manifest.get('project') == project and
               manifest.get('role') == role and manifest.get('env_file') == str(p['env']) and
+              bool(manifest.get('database_identity')) and
               all(path.is_file() and sha(path) == manifest.get(name + '_sha256')
                   for name, path in [('helper', p['helper']), ('manager', p['manager'])]))
     current = expected is None or all(manifest.get(name + '_sha256') == value for name, value in expected.items())
     return {'project': project, 'role': role, 'installed': owned == [cron_line(p, role, project)],
             'entries': len(owned), 'checksums_valid': pinned, 'version_current': current,
             'paused': p['paused'].exists(), 'manifest_schema': manifest.get('schema_version'),
+            'database_identity': manifest.get('database_identity'),
             'helper_sha256': manifest.get('helper_sha256'), 'manager_sha256': manifest.get('manager_sha256')}
 
 
@@ -144,7 +146,20 @@ def prerequisites(p, role, project, helper, allow_paused=False):
     # Paused maintenance must not be silently bypassed by installation.
     if p['paused'].exists() and not allow_paused:
         raise RecoveryError('deployment is paused; finish maintenance before installation/resume')
-    execute(['/usr/bin/python3', str(helper), '--env-file', str(p['env']), '--role', role, '--check-only'])
+    command = ['/usr/bin/python3', str(helper), '--env-file', str(p['env']), '--role', role,
+               '--expected-project', project, '--check-only']
+    previous = read_manifest(p).get('database_identity')
+    if previous:
+        command += ['--expected-identity', json.dumps(previous)]
+    result = json.loads(execute(command))
+    identity = result.get('database_identity')
+    if (not isinstance(identity, dict) or identity.get('project') != project or
+            identity.get('service') != ('postgres' if role == 'primary' else 'postgres-standby') or
+            not str(identity.get('system_identifier', '')).isdigit() or not identity.get('pgdata')):
+        raise RecoveryError('database identity prerequisite failed')
+    if previous is not None and identity != previous:
+        raise RecoveryError('database identity changed during recovery validation')
+    return identity
 
 
 def local(action, env_path, role, project, *, helper_source=None, expected=None):
@@ -157,9 +172,11 @@ def local(action, env_path, role, project, *, helper_source=None, expected=None)
         manifest = read_manifest(p)
         if (manifest.get('project') != project or manifest.get('role') != role or
                 manifest.get('env_file') != str(p['env']) or manifest.get('schema_version') != 1 or
+                not manifest.get('database_identity') or
                 any(not p[name].is_file() or sha(p[name]) != manifest.get(name + '_sha256') for name in ('helper', 'manager'))):
             raise RecoveryError('recovery integrity check failed; reinstall from approved source')
-        execute(['/usr/bin/python3', str(p['helper']), '--env-file', str(p['env']), '--role', role])
+        execute(['/usr/bin/python3', str(p['helper']), '--env-file', str(p['env']), '--role', role,
+                 '--expected-project', project, '--expected-identity', json.dumps(manifest['database_identity'])])
         return {'reconciled': True}
     text = execute(['crontab', '-l'], allow_missing_crontab=True)
     if action == 'status':
@@ -182,13 +199,16 @@ def local(action, env_path, role, project, *, helper_source=None, expected=None)
             p['paused'].unlink(missing_ok=True)
         elif action == 'install':
             source = Path(helper_source) if helper_source else ROOT / 'deploy/boot-recover.py'
-            prerequisites(p, role, project, source)
-            replacement = rewritten_cron(text, p, role, project, True)
             content = source.read_bytes()
             manager_content = Path(__file__).read_bytes()
             calculated = {'helper': hashlib.sha256(content).hexdigest(), 'manager': hashlib.sha256(manager_content).hexdigest()}
             if expected and calculated != expected:
                 raise RecoveryError('staged recovery checksum mismatch')
+            # Verify staged bytes before allowing any helper execution.
+            identity = prerequisites(p, role, project, source)
+            if source.read_bytes() != content:
+                raise RecoveryError('staged helper changed during validation')
+            replacement = rewritten_cron(text, p, role, project, True)
             expected = calculated
             before = status(p, role, project, text, expected)
             if before['installed'] and before['checksums_valid'] and before['version_current']:
@@ -204,6 +224,7 @@ def local(action, env_path, role, project, *, helper_source=None, expected=None)
                 atomic(p['helper'], content, 0o644)
                 atomic(p['manager'], manager_content, 0o644)
                 manifest = {'schema_version': 1, 'project': project, 'role': role, 'env_file': str(p['env']),
+                            'database_identity': identity,
                             'helper_sha256': sha(p['helper']), 'manager_sha256': sha(p['manager']),
                             'installed_at': datetime.datetime.now(datetime.timezone.utc).isoformat()}
                 atomic(p['manifest'], (json.dumps(manifest, indent=2) + '\n').encode())

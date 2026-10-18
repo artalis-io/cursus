@@ -12,13 +12,19 @@ port on that private interface; never use a wildcard/public binding. Preserve
 the secret URL's credentials when changing endpoints. Primary and standby must
 keep their existing system identifier and roles.
 
-`deploy/boot-recover.py --env-file /home/lab/cursus-production/.env.production
---role primary` (or `secondary`) safely reconciles an **existing** deployment.
+The internal `deploy/boot-recover.py` helper reconciles an **existing** deployment
+only through its integrity-checking manager, which supplies the pinned project
+and database identity. Do not invoke the helper without those identity arguments.
 It locks against overlap, waits by failing/retrying when the interface is absent,
 requires initialized PGDATA and the expected role, rejects image drift, and
 never builds, pulls, promotes, restores a database or initializes a new cluster.
 If Docker lost the database port binding, it recreates that container against
-the same persistent directory. Otherwise healthy matching services are not
+the same verified persistent directory. It compares the current container mount,
+configured path, rendered Compose mount and pinned PostgreSQL system identifier;
+another initialized directory or cluster is not an acceptable substitute. It
+also requires current/rendered Compose configuration hashes to match for all
+four services. Recovery must not apply a pending deployment/configuration change.
+Otherwise healthy matching services are not
 recreated. Docker/Compose prerequisites remain Herding Sparks' responsibility.
 
 ## Deployment-managed schedule
@@ -68,6 +74,12 @@ does not modify Docker, networking, host packages or machine provisioning.
 It runs after reboot without relying on an interactive login or user linger.
 Monitor `journalctl -t cursus-boot-recover` and public readiness: cron is recovery,
 not alerting or an HA guarantee. Host log retention remains host-managed.
+Installation verifies staged checksums **before** executing the prerequisite
+helper. The returned database identity is recorded in `.boot-recover.json`;
+subsequent installation and runtime checks require that identity to remain the
+same. A legitimate database relocation/replacement requires a separately reviewed
+identity transition, not automatic recovery or silent manifest repinning.
+
 The scheduled manager verifies both files against `.boot-recover.json` before
 executing the helper. Missing manifests or tampering fail closed and log an
 error. This protects against accidental drift, not a hostile Docker/host admin.
@@ -75,7 +87,9 @@ Reinstall from the approved checkout to update pinned helper versions. Do not
 edit installed scripts directly.
 
 Use `pause` before intentional maintenance; it waits for any in-flight helper
-to finish and creates `.boot-recover-paused`. `resume` revalidates prerequisites
+to finish and creates `.boot-recover-paused`. The helper rechecks that flag after
+acquiring the same lock, so a process launched before pause cannot cross the
+maintenance boundary afterward. `resume` revalidates prerequisites
 and integrity before removing it. Approved cutover pauses each node before
 activation and resumes only after origin health passes; a failed cutover leaves
 that node paused for operator review. Other manual update procedures must pause
