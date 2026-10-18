@@ -39,6 +39,21 @@ class CutoverTests(unittest.TestCase):
         with self.assertRaisesRegex(cutover.CutoverError, "approve-cutover"):
             cutover.activate(cfg, False)
 
+    def test_provision_installs_scheduled_recovery_after_backup_verification(self):
+        cfg = self.config()
+        statuses = [
+            {'role': 'primary', 'ready': True, 'image_id': 'same', 'database': {
+                'in_recovery': False, 'connected_standbys': 1, 'replication_lag_bytes': 0}},
+            {'role': 'standby', 'ready': True, 'image_id': 'same', 'database': {'in_recovery': True}},
+        ]
+        with patch.object(cutover, 'ssh'), patch.object(cutover, 'compose'), \
+             patch.object(cutover, 'candidate_status', side_effect=statuses), \
+             patch.object(cutover, 'invoke_adapter', return_value={'backup_id': 'verified', 'restore_verified': True}), \
+             patch.object(cutover, 'write_report'), patch.object(cutover, 'recovery_jobs', return_value={'installed': True}) as recovery:
+            result = cutover.provision(cfg, True, 'adapter')
+        recovery.assert_called_once_with(cfg, 'install', approved=True)
+        self.assertEqual({'installed': True}, result['scheduled_recovery'])
+
     def test_cutover_rejects_missing_acceptance_before_cloudflare_access(self):
         with patch.object(cutover, 'read_evidence', return_value={'nodes': [{'image_id': 'sha256:candidate'}]}), \
              patch.object(cutover, 'candidate_status', return_value={'ready': True, 'image_id': 'sha256:candidate'}), \

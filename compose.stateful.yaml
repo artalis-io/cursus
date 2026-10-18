@@ -31,6 +31,10 @@ services:
       - -c
       - max_replication_slots=10
       - -c
+      - wal_keep_size=512MB
+      - -c
+      - max_slot_wal_keep_size=16GB
+      - -c
       - synchronous_standby_names=
       - -c
       - password_encryption=scram-sha-256

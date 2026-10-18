@@ -69,6 +69,7 @@ jobs:
         run: >-
           python3 -m py_compile deploy/ha.py deploy/stateful.py deploy/cutover.py
           deploy/recovery-adapter.py deploy/migration-source.py deploy/migration-adapter.py
+          deploy/boot-recover.py deploy/recovery.py
 
   stateful:
     runs-on: ubuntu-latest

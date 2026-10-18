@@ -21,3 +21,5 @@ deploy/fixtures
 *.vlg
 *.lcx
 *.idx
+.boot-recover*
+.recovery-*
