@@ -10,7 +10,7 @@ test('toSurgeFleet: maps canonical vehicles to a 0-indexed single-depot fleet', 
   ]);
   assert.equal(f.count, 2);
   assert.equal(f.defaulted, 0);
-  assert.deepEqual(f.vehicles[0], { id: 0, ref: 'RIC-124', capacity: [24000, 33], start_depot_id: 0, end_depot_id: 0, fixed_cost: 100000 });
+  assert.deepEqual(f.vehicles[0], { id: 0, ref: 'RIC-124', capacity: [24000, 33], start_depot_id: 0, end_depot_id: 0, fixed_cost: 100000, gross_weight_kg: 0 });
   assert.equal(f.vehicles[1]!.id, 1);          // ids are contiguous from 0
   assert.deepEqual(f.vehicles[1]!.capacity, [14000, 17]);
 });

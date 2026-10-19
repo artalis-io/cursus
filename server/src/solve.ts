@@ -7,6 +7,8 @@ import { mapSolutionToPlan } from './plan/mapper.js';
 import { fillPlanGeometry } from './geometry/velo.js';
 import { createLegacyStore, type Job, type Scenario } from './store.js';
 import type { SurgeRequest, SurgeSolution } from './types.js';
+import { applyAccessLimits } from './plan/access.js';
+import { nativeSolveRequest } from './state/solver-ids.js';
 
 let legacyStore: ReturnType<typeof createLegacyStore> | undefined;
 export const store: ReturnType<typeof createLegacyStore> = new Proxy({} as ReturnType<typeof createLegacyStore>, {
@@ -56,6 +58,7 @@ export function buildRequest(scenario: Scenario, budgetSec: number, objective: O
   applyOverrides(request, scenario, available);
   applyVehicleOverrides(request, scenario);
   applySequences(request, scenario, available);
+  applyAccessLimits(request, day.enrichment, loadVehicleInfo());
 
   request.config = {
     ...request.config,
@@ -181,7 +184,8 @@ function runSolveProcess(job: Job, scenario: Scenario, budgetSec: number, object
   const jobsDir = resolve(config.dataDir, 'jobs');
   mkdirSync(jobsDir, { recursive: true });
   const reqFile = resolve(jobsDir, `${job.id}_request.json`);
-  writeFileSync(reqFile, JSON.stringify(built.request));
+  const native = nativeSolveRequest(built.request, scenario.sequences);
+  writeFileSync(reqFile, JSON.stringify(native.request));
 
   job.status = 'running';
   job.startedAt = new Date().toISOString();
@@ -235,7 +239,8 @@ function runSolveProcess(job: Job, scenario: Scenario, budgetSec: number, object
       let solution: SurgeSolution | null = null;
       try { solution = JSON.parse(Buffer.concat(out).toString('utf8')) as SurgeSolution; } catch { /* below */ }
 
-      if (!solution || !Array.isArray(solution.routes) || solution.routes.length === 0) {
+      if (!solution || !Array.isArray(solution.routes) || !Array.isArray(solution.unassigned)
+        || !['OK', 'LIMIT', 'INFEASIBLE'].includes(solution.status)) {
         job.status = 'failed';
         job.termination = solution?.status ?? null;
         job.error = (Buffer.concat(err).toString('utf8').trim() || `surge_solve exited ${code}${signal ? ` (${signal})` : ''} with no usable solution`).slice(0, 500);
@@ -243,12 +248,18 @@ function runSolveProcess(job: Job, scenario: Scenario, budgetSec: number, object
         return;
       }
 
+      solution = native.restore(solution);
+
       const planId = store.newId('pln');
       const plan = mapSolutionToPlan({
         day: built.day, request: built.request, solution, enrichment: built.day.enrichment, vehicleInfo: loadVehicleInfo(),
         scenarioId: scenario.id, scenarioRevision: scenario.revision, planId,
         source: 'live', createdAt: new Date().toISOString(),
       });
+      if (plan.provenance.validation.violations.some(v => (v as {type?: string}).type === 'VEHICLE_SIZE')) {
+        job.status = 'failed'; job.error = 'solver violated mandatory destination gross-weight access limits';
+        store.saveJob(job); return;
+      }
       plan.stats.solveElapsedSeconds = Math.round(job.elapsedSec * 10) / 10;
 
       // Fill geometry before publishing (async; does not hold the solve slot).

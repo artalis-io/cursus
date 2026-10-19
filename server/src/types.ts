@@ -16,6 +16,7 @@ export interface SurgeTask {
 export interface SurgeRequestVehicle {
   id: number;
   ref: string; // e.g. "RIC-124"
+  gross_weight_kg?: number; // application metadata: GVW, never payload capacity
   capacity: number[]; // [kg, pallets]
   start_depot_id: number;
   end_depot_id: number;

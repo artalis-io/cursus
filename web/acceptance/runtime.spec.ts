@@ -126,6 +126,25 @@ test.afterEach(async ({ page }) => {
   expect((page as Page & { runtimeErrors: string[] }).runtimeErrors).toEqual([]);
 });
 
+test('a hard GVW access violation is visible and cannot be labelled Baseline OK', async ({ page }) => {
+  await login(page);
+  await page.route('**/api/plans/*', async route => {
+    const response = await route.fetch();
+    const plan = await response.json() as Plan;
+    if (!plan.vehicles?.length) return route.fulfill({ response });
+    plan.source = 'saved'; plan.provenance.termination = 'OK';
+    plan.provenance.validation = { valid: false, violations: [{ type: 'VEHICLE_SIZE', soft: false,
+      vehicle_id: plan.vehicles[0]!.id, actual: 24, limit: 7.5 }] };
+    await route.fulfill({ response, json: plan });
+  });
+  await page.reload();
+  await expect(page.getByText('Baseline · Constraint violation', { exact: true })).toBeVisible();
+  await expect(page.getByText('Baseline · OK', { exact: true })).toHaveCount(0);
+  await page.getByRole('button', { name: 'Issues', exact: true }).click();
+  await expect(page.getByRole('dialog')).toContainText('Constraint violations');
+  await expect(page.getByRole('dialog').getByText(/24t.*7.5t/)).toBeVisible();
+});
+
 test('real authentication, shared sessions, origin checks, and tenant isolation', async ({ page }) => {
   for (const origin of ['', peer]) {
     expect((await page.request.get(`${origin}/api/days`)).status()).toBe(401);

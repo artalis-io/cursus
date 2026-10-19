@@ -18,6 +18,7 @@ import { randomUUID } from 'node:crypto';
 import type { ImmutableObject, ObjectStore } from './objects.js';
 import { StaleFenceError, type Lease, type StatefulStore } from './postgres.js';
 import { nativeSolveRequest } from './solver-ids.js';
+import { applyAccessLimits } from '../plan/access.js';
 
 const OUTPUT_SCHEMA_VERSION = 1;
 const run = promisify(execFile);
@@ -42,7 +43,8 @@ export async function conversionIdentity(payload: ConversionPayload): Promise<{ 
   const converters: Record<string, string> = {};
   for (const [name, path] of Object.entries(paths)) converters[name] = await fileDigest(path);
   const identity = { source: payload.source.sha256, mapping: payload.mapping, fleet: payload.fleet ? { source: payload.fleet.source.sha256, mapping: payload.fleet.mapping } : null, converters,
-    matrix: { profile: config.veloProfile, maxLocations: config.maxMatrixLocations }, outputSchemaVersion: OUTPUT_SCHEMA_VERSION };
+    matrix: { profile: config.veloProfile, maxLocations: config.maxMatrixLocations }, outputSchemaVersion: OUTPUT_SCHEMA_VERSION,
+    fleetEncodingVersion: 2 }; // preserves explicit GVW/unknown GVW in uploaded fleets
   return { fingerprint: createHash('sha256').update(stable(identity)).digest('hex'), converters };
 }
 
@@ -137,6 +139,8 @@ export async function solveConvertedDataset(objects: ObjectStore, tenantId: stri
   if (scenario.removedVehicleIds.length) request.vehicles = request.vehicles.filter((v) => !scenario.removedVehicleIds.includes(v.id));
   const available = new Set(request.vehicles.map((v) => v.id));
   applyOverrides(request, scenario, available); applyVehicleOverrides(request, scenario); applySequences(request, scenario, available);
+  const vehicleInfo = loadVehicleInfo();
+  applyAccessLimits(request, day.enrichment, vehicleInfo);
   request.config = { ...request.config, max_time_seconds: budgetSec, seed: 42, lexicographic_objective: objective !== 'distance' };
   const workspace = await mkdtemp(join(tmpdir(), 'cursus-converted-solve-'));
   try {
@@ -145,9 +149,12 @@ export async function solveConvertedDataset(objects: ObjectStore, tenantId: stri
     const { stdout } = await run(config.surgeBin, [path], { signal, timeout: (budgetSec + config.solveWatchdogGraceSec) * 1000,
       maxBuffer: Math.max(1, config.maxSolveOutputMB) * 1024 * 1024 });
     const solution = native.restore(JSON.parse(stdout) as SurgeSolution);
-    if (!solution.routes?.length) throw new Error('converted dataset solve produced no routes');
-    const plan = mapSolutionToPlan({ day, request, solution, enrichment: day.enrichment, vehicleInfo: loadVehicleInfo(), scenarioId: scenario.id,
+    if (!Array.isArray(solution.routes) || !Array.isArray(solution.unassigned) || !['OK', 'LIMIT', 'INFEASIBLE'].includes(solution.status))
+      throw new Error('converted dataset solve produced an invalid solution');
+    const plan = mapSolutionToPlan({ day, request, solution, enrichment: day.enrichment, vehicleInfo, scenarioId: scenario.id,
       scenarioRevision: scenario.revision, planId: `pln_${randomUUID().slice(0, 8)}`, source: 'live', createdAt: new Date().toISOString() });
+    if (plan.provenance.validation.violations.some(v => (v as {type?: string}).type === 'VEHICLE_SIZE'))
+      throw new Error('solver violated mandatory destination gross-weight access limits');
     await fillPlanGeometry(plan).catch(() => false); return plan;
   } finally { await rm(workspace, { recursive: true, force: true }); }
 }

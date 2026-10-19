@@ -15,7 +15,7 @@ export interface PlanProvenance {
 
 export interface ValidationViolation {
   type: string;            // HARD_TW | CAPACITY | TAIL_LIFT | VEHICLE_SIZE | ...
-  soft?: boolean;          // advisory (access constraints) vs hard (TW/capacity)
+  soft?: boolean;          // advisory (tail lift) vs hard (GVW access/TW/capacity)
   dimension?: string;
   vehicle_id?: number;
   request_id?: number;

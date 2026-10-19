@@ -152,6 +152,27 @@ whose `scenarioRevision` ≠ the currently selected scenario revision, so a slow
 older solve can never replace the active plan. The baseline plan is immutable;
 replans always target a scenario copy.
 
+## Mandatory destination gross-weight access
+
+Destination `maxTonnage` is a maximum **gross vehicle weight**, not a payload
+limit. Legacy and stateful request builders apply it after scenario pins, fleet
+edits and route locks, using per-request vehicle exclusions. Equal GVW is allowed;
+oversize vehicles and vehicles with unknown GVW are excluded from restricted
+destinations. A conflicting manual assignment cannot override the restriction.
+If no eligible vehicle remains, the order stays unassigned.
+
+Uploaded fleets retain `gross_weight_kg` separately from capacity; a missing
+value is explicitly unknown. Legacy fleet metadata uses an exact normalized
+vehicle identifier, not a partial plate match. Changing payload capacity does
+not change GVW. Conversion fingerprints include the fleet encoding version.
+
+Mapped `VEHICLE_SIZE` violations are hard validation errors. Existing persisted
+access advisories are promoted to hard errors in read views without rewriting
+historical plans or changing their original assignments. New solver results
+with access violations fail before publication. Tail-lift advisories are
+unchanged. Native multi-trip ranking must check vehicle eligibility before
+considering either cached insertion candidates or new trips.
+
 ## Pallet / Load view
 
 The 3L loading-feasibility checker is **design-approved but not implemented**
