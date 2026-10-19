@@ -9,7 +9,7 @@ import { colorForIndex } from '../colors.js';
 import { metersToKm } from '../units.js';
 import { makeLeg, waitSec, lateSec } from './schedule.js';
 import { loadTariff, vehicleCostFor, tripCost, type Tariff } from '../cost.js';
-import { grossTonnage } from './access.js';
+import { grossTonnage, hasTailLift } from './access.js';
 
 export interface FleetLimits { maxKg: number; maxPallets: number; anyTailLift: boolean; minTonnage: number }
 
@@ -99,8 +99,7 @@ export function mapSolutionToPlan(inp: MapInputs): Plan {
         const twLate = task?.tw_late ?? 0;
         const lateBySec = lateSec(s.arrival, twLate);
         if (lateBySec > 1) violations.push({ type: 'HARD_TW', vehicle_id: route.vehicle_id, request_id: s.request_id, actual: s.arrival, limit: twLate });
-        // Tail-lift remains advisory; destination GVW limits are mandatory.
-        if (info?.requiresTailLift && !vinfo?.hasTailLift) violations.push({ type: 'TAIL_LIFT', soft: true, vehicle_id: route.vehicle_id, request_id: s.request_id, orderNo });
+        if (info?.requiresTailLift && (!rv || !hasTailLift(rv, inp.vehicleInfo))) violations.push({ type: 'TAIL_LIFT', vehicle_id: route.vehicle_id, request_id: s.request_id, orderNo });
         if (info?.maxTonnage != null && (tonnage == null || tonnage > info.maxTonnage))
           violations.push({ type: 'VEHICLE_SIZE', vehicle_id: route.vehicle_id, request_id: s.request_id, orderNo, actual: tonnage, limit: info.maxTonnage });
         return {
@@ -158,7 +157,7 @@ export function mapSolutionToPlan(inp: MapInputs): Plan {
       vehicleClass: vinfo?.vehicleClass ?? null,
       isSubcontractor: Boolean(vinfo?.isSubcontractor),
       tonnage,
-      hasTailLift: Boolean(vinfo?.hasTailLift),
+      hasTailLift: rv ? hasTailLift(rv, inp.vehicleInfo) : false,
       color: colorForIndex(ri),
       capacityKg: capKg,
       capacityPallets: capPal,
@@ -175,7 +174,7 @@ export function mapSolutionToPlan(inp: MapInputs): Plan {
   const fleet = {
     maxKg: Math.max(0, ...request.vehicles.map((v) => v.capacity[0] ?? 0)),
     maxPallets: Math.max(0, ...request.vehicles.map((v) => v.capacity[1] ?? 0)),
-    anyTailLift: request.vehicles.some((v) => vehicleInfoFor(v.ref, inp.vehicleInfo)?.hasTailLift),
+    anyTailLift: request.vehicles.some((v) => hasTailLift(v, inp.vehicleInfo)),
     minTonnage: Math.min(Infinity, ...request.vehicles.map((v) => grossTonnage(v, inp.vehicleInfo) ?? Infinity)),
   };
   const reqDefById = new Map(request.requests.map((r) => [r.id, r]));
@@ -200,8 +199,8 @@ export function mapSolutionToPlan(inp: MapInputs): Plan {
 
   const deliveryStops = vehicles.reduce((n, v) => n + v.trips.reduce((m, t) => m + t.stops.length, 0), 0);
   const status = solution.status;
-  // Tail-lift advisories do not invalidate the plan. GVW access, time windows
-  // and capacity violations do, including when mapping historical solutions.
+  // Equipment, GVW access, time windows and capacity violations invalidate the
+  // plan, including when mapping historical solutions.
   const hardViolations = violations.filter((v) => !(v as { soft?: boolean }).soft);
   const valid = (status === 'OK' || status === 'LIMIT') && hardViolations.length === 0;
 
@@ -232,6 +231,7 @@ export function mapSolutionToPlan(inp: MapInputs): Plan {
     source: inp.source,
     objective,
     provenance: {
+      ...(inp.day.planningPolicy ? { planningPolicy: structuredClone(inp.day.planningPolicy) } : {}),
       inputSha256: sha256(JSON.stringify(request)),
       solverConfig: request.config,
       termination: status,

@@ -3,6 +3,12 @@ import assert from 'node:assert/strict';
 
 import { toSurgeFleet, DEFAULT_CAP_KG, DEFAULT_CAP_PLT } from './fleet.js';
 
+test('uploaded tail-lift capability is explicit and does not inherit legacy identity', () => {
+  const fleet = toSurgeFleet([{ id: 'A', has_tail_lift: true }, { id: 'B', special_req: 'emelőhátfal' },
+    { id: 'C', has_tail_lift: false, special_req: 'emelőhátfal' }, { id: 'D', has_tail_lift: 'false' }, { id: 'E' }]);
+  assert.deepEqual(fleet.vehicles.map(v => v.has_tail_lift), [true, true, false, false, false]);
+});
+
 test('toSurgeFleet: maps canonical vehicles to a 0-indexed single-depot fleet', () => {
   const f = toSurgeFleet([
     { id: 'RIC-124', capacity_kg: 24000, capacity_pallets: 33 },
@@ -10,7 +16,7 @@ test('toSurgeFleet: maps canonical vehicles to a 0-indexed single-depot fleet', 
   ]);
   assert.equal(f.count, 2);
   assert.equal(f.defaulted, 0);
-  assert.deepEqual(f.vehicles[0], { id: 0, ref: 'RIC-124', capacity: [24000, 33], start_depot_id: 0, end_depot_id: 0, fixed_cost: 100000, gross_weight_kg: 0 });
+  assert.deepEqual(f.vehicles[0], { id: 0, ref: 'RIC-124', capacity: [24000, 33], start_depot_id: 0, end_depot_id: 0, fixed_cost: 100000, gross_weight_kg: 0, has_tail_lift: false });
   assert.equal(f.vehicles[1]!.id, 1);          // ids are contiguous from 0
   assert.deepEqual(f.vehicles[1]!.capacity, [14000, 17]);
 });

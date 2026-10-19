@@ -331,6 +331,22 @@ test('gross weight equal to destination limit remains valid', () => {
   assert.equal(mapSolutionToPlan(input).provenance.validation.valid, true);
 });
 
+test('tail-lift capability is mandatory at mapping boundary, explicit capability overrides enrichment', () => {
+  for (const equipped of [true, false]) {
+    const request = buildRequest(); request.vehicles.find(v => v.id === 42)!.has_tail_lift = equipped;
+    const input = mkInputs(request, { status: 'OK', stats: okStats, unassigned: [102, 103], routes: [{ vehicle_id: 42,
+      distance: 1000, duration: 1000, trip_count: 1,
+      stops: [{ request_id: 101, task_id: 1, type: 'delivery', trip_index: 0, arrival: 500, service_start: 500, departure: 1100 }] }] });
+    input.enrichment.set('ORD-1', { requiresTailLift: true } as OrderInfo);
+    const plan = mapSolutionToPlan(input);
+    assert.equal(plan.provenance.validation.valid, equipped);
+    assert.equal(plan.vehicles[0]!.hasTailLift, equipped);
+    const violations = plan.provenance.validation.violations.filter(v => (v as {type?: string}).type === 'TAIL_LIFT');
+    assert.equal(violations.length, equipped ? 0 : 1);
+    assert.ok(violations.every(v => (v as {soft?: boolean}).soft !== true));
+  }
+});
+
 test('classifyUnassigned: infers the blocking reason, pin/lock first', () => {
   const bigFleet: FleetLimits = { maxKg: 24000, maxPallets: 33, anyTailLift: false, minTonnage: 40 };
   // pin/sequence lock that failed wins over everything

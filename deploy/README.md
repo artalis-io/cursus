@@ -23,7 +23,7 @@ Surge and `matrix_build` are native executables inside the Cursus image and are
 spawned through the existing Cursus interfaces.
 
 The deployment pins OTTO commit
-`b650a2534d0c36dc45723c991aad1985fb9328ec`. `OTTO_ROOT` controls the checkout
+`367061d015f6776f7ea27fb01726c1a14cb4614c`. `OTTO_ROOT` controls the checkout
 used to build OTTO service/preparation images and accepts Compose-supported
 relative or absolute paths. The Cursus application image deliberately builds
 its native CLI tools from the pinned `vendor/otto` submodule, keeping its Docker
@@ -128,6 +128,30 @@ safe-bind guard, not an HTTP authentication scheme; external publication must
 be protected by Cloudflare Access or another trusted authenticating proxy.
 
 ## Verification and troubleshooting
+
+### Import previously audited selected plans
+
+`deploy/import-selected.py` prepares a private batch from an external,
+checksummed selection archive. It verifies the admitted production dataset,
+fully served/validated plans, road geometry and replication. Apply requires an
+exact application image on both replicas, explicit approval, and a private
+pre-import database dump with a matching `.verified.json` restore-evidence
+sidecar (`sha256`, `restoreVerified`, `createdAt`, `systemIdentifier`).
+
+```sh
+python3 deploy/import-selected.py plan --selection /private/selection/manifest.json \
+  --batch /private/import-batch.json --image sha256:EXACT_APPROVED_IMAGE
+python3 deploy/import-selected.py apply --batch /private/import-batch.json \
+  --backup /private/pre-import.dump --approve
+```
+
+The short transaction locks and checks both base scenarios, refuses active
+solves or partial/conflicting imports, appends two uniquely named saved plans,
+and records an audit event. Existing plans, datasets, sessions and email state
+are not rewritten. Both policies and plans publish together; exact retries are
+no-ops. Import never restores a backup over production writes. The newer saved
+plans become the default day/week baselines; all earlier plans remain in history.
+Exception approval is not confirmation of customer access/unloading arrangements.
 
 Run repository-safe checks with `./deploy/test-prepare.sh`. A tiny public Monaco
 fixture under `deploy/fixtures/smoke` supports container/API tests only and is

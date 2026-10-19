@@ -43,6 +43,7 @@ export class ScenarioRepository {
   }
 
   async import(base: Scenario, label: string, edits: ScenarioEditsBundle): Promise<Scenario> {
+    if (edits.planningPolicyId && edits.planningPolicyId !== base.planningPolicy?.id) throw new Error('planning policy reference is not approved in this workspace');
     const copy = await this.copy(base, label);
     const updated = { ...copy, removedVehicleIds: [...edits.removedVehicleIds], pins: structuredClone(edits.pins),
       forbids: structuredClone(edits.forbids), vehicleOverrides: structuredClone(edits.vehicleOverrides), sequences: structuredClone(edits.sequences), revision: copy.revision + 1 };

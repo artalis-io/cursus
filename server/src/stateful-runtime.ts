@@ -49,14 +49,15 @@ app.setNotFoundHandler((req, reply) => req.method === 'GET' && !req.url.startsWi
 let stopping = false;
 const workerId = `${config.statefulWorkerId}-${hostname()}-${process.pid}`;
 async function solve(lease: Lease, signal: AbortSignal): Promise<SolveOutput> {
-  const payload = lease.payload as { scenario?: Scenario; budgetSec?: number; objective?: 'vehicles' | 'distance' };
+  const payload = lease.payload as { scenario?: Scenario; budgetSec?: number; objective?: 'vehicles' | 'distance'; fullBudget?: boolean };
   if (!payload.scenario) throw new Error('solve job has no scenario snapshot');
   const datasets = await store.listDatasets(lease.tenantId, true);
   const dataset = datasets.find((item) => ((item.manifest as { days?: { dayId: string }[] })?.days ?? [])
-    .some((day) => day.dayId === payload.scenario!.day));
+    .some((day) => day.dayId === payload.scenario!.day) && (!payload.scenario!.planningPolicy ||
+      (item.manifest as { artifacts?: { request?: { sha256?: string } } }).artifacts?.request?.sha256 === payload.scenario!.planningPolicy.datasetRequestSha256));
   if (!dataset) throw new Error(`no admitted dataset contains day ${payload.scenario.day}`);
   const plan = await solveConvertedDataset(objects, lease.tenantId, dataset.manifest as never, payload.scenario,
-    Math.max(1, payload.budgetSec ?? config.solveTimeSeconds), payload.objective ?? 'vehicles', signal);
+    Math.max(1, payload.budgetSec ?? config.solveTimeSeconds), payload.objective ?? 'vehicles', signal, payload.fullBudget ?? false);
   return { planId: plan.id, scenarioId: payload.scenario.id, scenarioRevision: payload.scenario.revision, plan };
 }
 

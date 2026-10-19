@@ -10,6 +10,7 @@ import type { SurgeRequest, SurgeSolution } from './types.js';
 import { applyAccessLimits } from './plan/access.js';
 import { nativeSolveRequest } from './state/solver-ids.js';
 import { populationConfig } from './solver-config.js';
+import { withPlanningPolicy } from './plan/policy.js';
 
 let legacyStore: ReturnType<typeof createLegacyStore> | undefined;
 export const store: ReturnType<typeof createLegacyStore> = new Proxy({} as ReturnType<typeof createLegacyStore>, {
@@ -40,7 +41,7 @@ export type Objective = 'vehicles' | 'distance';
  * then minimizes fleet size then distance; 'distance' (false) minimizes the
  * single cost objective (fixed + distance), i.e. the least-distance plan. */
 export function buildRequest(scenario: Scenario, budgetSec: number, objective: Objective = 'vehicles', fullBudget = false): BuiltRequest {
-  const day = loadDay(scenario.day);
+  const day = withPlanningPolicy(loadDay(scenario.day), scenario.planningPolicy);
   // A12: deep-clone everything we mutate, but SHARE the N^2 travel matrix by
   // reference (it is never mutated here). structuredClone of the whole request
   // would deep-copy ~2.25M distance+duration entries on the event loop per solve.
@@ -257,8 +258,8 @@ function runSolveProcess(job: Job, scenario: Scenario, budgetSec: number, object
         scenarioId: scenario.id, scenarioRevision: scenario.revision, planId,
         source: 'live', createdAt: new Date().toISOString(),
       });
-      if (plan.provenance.validation.violations.some(v => (v as {type?: string}).type === 'VEHICLE_SIZE')) {
-        job.status = 'failed'; job.error = 'solver violated mandatory destination gross-weight access limits';
+      if (plan.provenance.validation.violations.some(v => ['VEHICLE_SIZE', 'TAIL_LIFT'].includes((v as {type?: string}).type ?? ''))) {
+        job.status = 'failed'; job.error = 'solver violated mandatory destination access or tail-lift requirements';
         store.saveJob(job); return;
       }
       plan.stats.solveElapsedSeconds = Math.round(job.elapsedSec * 10) / 10;

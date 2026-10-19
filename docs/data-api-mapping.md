@@ -184,9 +184,29 @@ not change GVW. Conversion fingerprints include the fleet encoding version.
 Mapped `VEHICLE_SIZE` violations are hard validation errors. Existing persisted
 access advisories are promoted to hard errors in read views without rewriting
 historical plans or changing their original assignments. New solver results
-with access violations fail before publication. Tail-lift advisories are
-unchanged. Native multi-trip ranking must check vehicle eligibility before
+with access or tail-lift violations fail before publication. Tail-lift is a hard
+requirement: vehicles without confirmed equipment are explicitly forbidden,
+even if manually pinned or locked. Unknown equipment fails closed only for
+orders requiring it. Uploaded fleets retain an explicit `has_tail_lift` boolean
+(default false); legacy fleet capability uses exact normalized identifiers.
+Historical tail-lift advisories become hard errors in read views, without
+rewriting the original plans. Native multi-trip ranking must check eligibility before
 considering either cached insertion candidates or new trips.
+
+Approved exceptions are server-owned `Scenario.planningPolicy` records bound to
+the admitted request SHA-256 and ISO delivery date. Source requirements are
+checked again before applying any exception; mismatch fails closed. Scenario
+copies/edits preserve the policy, and exports carry only its approval ID. Imports
+may reference the destination base's existing policy but cannot grant approvals.
+The effective policy is retained in plan provenance and shown in Plan issues.
+Pins and route locks cannot override any remaining hard requirement. Stateful
+reorder previews use the same admitted dataset and effective requirements.
+
+Stateful full-budget replans forward `fullBudget` into durable jobs and raise
+the native iteration ceiling so the time budget, not the ordinary iteration
+limit, ends the search. All solve paths require population search. Native
+schedule/distance JSON uses round-trip double precision; display km remain
+rounded to one decimal place.
 
 ## Pallet / Load view
 

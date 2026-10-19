@@ -41,6 +41,22 @@ export function IssuesDialog({ open, onOpenChange, plan, onSelect }: {
       <DialogContent className="max-w-lg">
         <DialogHeader><DialogTitle className="flex items-center gap-2"><AlertTriangle className="h-4 w-4" /> {t('issues.title')}{actionable > 0 ? ` · ${actionable}` : ''}</DialogTitle></DialogHeader>
 
+        {!!plan.provenance.planningPolicy?.exceptions.length && (
+          <section aria-label={t('issues.approvedExceptions')} className="rounded-md border bg-muted/40 p-3 text-sm">
+            <h3 className="font-medium">{t('issues.approvedExceptions')}</h3>
+            <ul className="mt-2 space-y-2">
+              {plan.provenance.planningPolicy.exceptions.map(e => (
+                <li key={e.orderNo}>
+                  <span className="font-medium">{e.orderNo}</span>
+                  {e.maxTonnage != null && <span> · GVW ≤ {e.maxTonnage} t</span>}
+                  {e.requiresTailLift === false && <span> · {t('issues.tailLiftWaived')}</span>}
+                  <p className="text-xs text-muted-foreground">{e.reason}</p>
+                </li>
+              ))}
+            </ul>
+          </section>
+        )}
+
         {actionable === 0 && soft.length === 0 ? (
           <p className="flex items-center justify-center gap-2 py-8 text-center text-sm text-muted-foreground"><CheckCircle2 className="h-4 w-4 text-primary" /> {t('issues.none')}</p>
         ) : (

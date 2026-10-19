@@ -42,8 +42,8 @@ export async function executeSurgeLease(lease: Lease, signal: AbortSignal): Prom
     const plan = mapSolutionToPlan({ day: built.day, request: built.request, solution, enrichment: built.day.enrichment,
       vehicleInfo: loadVehicleInfo(), scenarioId: payload.scenarioId, scenarioRevision: payload.scenarioRevision,
       planId, source: 'live', createdAt: new Date().toISOString() });
-    if (plan.provenance.validation.violations.some(v => (v as {type?: string}).type === 'VEHICLE_SIZE'))
-      throw new Error('solver violated mandatory destination gross-weight access limits');
+    if (plan.provenance.validation.violations.some(v => ['VEHICLE_SIZE', 'TAIL_LIFT'].includes((v as {type?: string}).type ?? '')))
+      throw new Error('solver violated mandatory destination access or tail-lift requirements');
     await fillPlanGeometry(plan).catch(() => false);
     return { planId, scenarioId: payload.scenarioId, scenarioRevision: payload.scenarioRevision, plan };
   } finally { await rm(workspace, { recursive: true, force: true }); }

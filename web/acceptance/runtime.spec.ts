@@ -53,6 +53,11 @@ function assertPlan(plan: Plan): void {
   expect(plan.unassigned).toHaveLength(0);
   expect(plan.provenance.validation.valid).toBe(true);
   expect(plan.provenance.validation.violations).toEqual([]);
+  expect(plan.provenance.planningPolicy?.id).toBe('acceptance-approved-policy');
+  expect(plan.stats.solveElapsedSeconds).toBeGreaterThan(0);
+  const approved = plan.vehicles.flatMap(v => v.trips.flatMap(t => t.stops.map(s => ({ v, s })))).find(x => x.s.orderNo === 'PUBLIC-1');
+  expect(approved?.v.id).toBe(10); // waiver does not waive the independent 5.5 t GVW restriction
+  expect(approved?.s.maxTonnage).toBe(5.5);
   expect(Number.isFinite(plan.stats.totalDistanceKm)).toBe(true);
   expect(plan.stats.totalDistanceKm).toBeGreaterThan(0);
   for (const vehicle of plan.vehicles) {
@@ -124,6 +129,20 @@ test('Hungarian public sign-in and confirmation preserve anonymous API protectio
 });
 test.afterEach(async ({ page }) => {
   expect((page as Page & { runtimeErrors: string[] }).runtimeErrors).toEqual([]);
+});
+
+test('approved exceptions remain visible and cannot be injected through scenario imports', async ({ page }) => {
+  await login(page);
+  const plan = await baseline(page);
+  assertPlan(plan);
+  await page.getByRole('button', { name: 'Issues', exact: true }).click();
+  await expect(page.getByRole('region', { name: 'Approved planning exceptions' })).toContainText('PUBLIC-1');
+  await expect(page.getByRole('region', { name: 'Approved planning exceptions' })).toContainText('Tail-lift waived');
+  await page.keyboard.press('Escape');
+  const exported = await get<{ edits: { planningPolicyId: string } }>(page.request, '/api/scenarios/acceptance-day-base/export');
+  expect(exported.edits.planningPolicyId).toBe('acceptance-approved-policy');
+  const invalid = await page.request.post('/api/scenarios/import', { data: { ...exported, edits: { ...exported.edits, planningPolicyId: 'not-approved' } } });
+  expect(invalid.status()).toBe(400);
 });
 
 test('a hard GVW access violation is visible and cannot be labelled Baseline OK', async ({ page }) => {

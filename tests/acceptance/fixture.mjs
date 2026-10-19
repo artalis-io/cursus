@@ -32,6 +32,7 @@ async function seed() {
     locations: Array.from({ length: 9 }, (_, i) => ({ x: 19 + i * .002, y: 47 + i * .001 })),
     depots: [{ location_id: 0, tw_early: 0, tw_late: 86400 }],
     vehicles: [10, 30, 50].map(id => ({ id, ref: `ACCEPT-${id}`, capacity: [1000, 10],
+      gross_weight_kg: id === 10 ? 3500 : 12000, has_tail_lift: id === 30,
       start_depot_id: 0, end_depot_id: 0, shift_early: 0, shift_late: 86400, max_trips: 1 })),
     tasks: Array.from({ length: 8 }, (_, i) => ({ id: i, ref: `PUBLIC-${i + 1}`, type: 'delivery',
       location_id: i + 1, tw_early: 0, tw_late: 86400, service_seconds: 60, demand: [100, 1] })),
@@ -45,7 +46,8 @@ async function seed() {
   // boundary that legacy browser tests missed. No private customers or files.
   const geo = { records: request.tasks.map((task, i) => ({ order_no: task.ref,
     delivery_date: i % 4 === 3 ? '2026-05-07' : '2026-05-06', customer: `Public fixture ${i + 1}`,
-    city: 'Budapest', lat: request.locations[i + 1].y, lon: request.locations[i + 1].x })) };
+    city: 'Budapest', lat: request.locations[i + 1].y, lon: request.locations[i + 1].x,
+    ...(i === 0 ? { special_req: 'emelőhátfal 5,5 t' } : {}) })) };
   const requestObject = await objects.putImmutable('acceptance', Buffer.from(JSON.stringify(request)), 'application/json');
   const geoObject = await objects.putImmutable('acceptance', Buffer.from(JSON.stringify(geo)), 'application/json');
   const manifest = { schemaVersion: 1, label: 'Public acceptance fixture', name: 'public-fixture.json', source: requestObject,
@@ -60,6 +62,11 @@ async function seed() {
   for (const day of manifest.days) {
     const scenario = { id: `${day.dayId}-base`, day: day.dayId, kind: 'base', revision: 0, parentId: null,
       label: day.label, removedVehicleIds: [], pins: [], forbids: [], sequences: [], vehicleOverrides: [], createdAt: new Date().toISOString() };
+    if (day.dayId === 'acceptance-day') scenario.planningPolicy = {
+      version: 1, id: 'acceptance-approved-policy', date: day.isoDate, datasetRequestSha256: requestObject.sha256,
+      approvedAt: new Date().toISOString(), approvedBy: 'acceptance fixture',
+      exceptions: [{ orderNo: 'PUBLIC-1', originalRequiresTailLift: true, requiresTailLift: false, reason: 'Public fixture unloading approval' }],
+    };
     await store.createScenario('acceptance', scenario.id, scenario);
     const plan = await solveConvertedDataset(objects, 'acceptance', manifest, scenario, 2, 'vehicles', AbortSignal.timeout(30000));
     assert.equal(plan.stats.servedOrders, day.orders);

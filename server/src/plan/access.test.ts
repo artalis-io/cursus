@@ -5,7 +5,7 @@ import { promisify } from 'node:util';
 import { mkdtemp, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { applyAccessLimits, grossTonnage, withHardAccessValidation } from './access.js';
+import { applyAccessLimits, grossTonnage, hasTailLift, withHardAccessValidation } from './access.js';
 import { applyOverrides, applySequences } from '../solve.js';
 import { nativeSolveRequest } from '../state/solver-ids.js';
 import { toSurgeFleet } from '../data/fleet.js';
@@ -35,7 +35,7 @@ test('historical access advisories become hard errors on read without mutating p
   const view = withHardAccessValidation(stored);
   assert.equal(view.provenance.validation.valid, false);
   assert.equal((view.provenance.validation.violations[0] as { soft: boolean }).soft, false);
-  assert.equal((view.provenance.validation.violations[1] as { soft: boolean }).soft, true);
+  assert.equal((view.provenance.validation.violations[1] as { soft: boolean }).soft, false);
   assert.deepEqual(stored, original);
 });
 
@@ -85,6 +85,56 @@ test('uploaded fleet retains GVW independently of capacity and records unknown e
   assert.equal(fleet.vehicles[0]!.capacity[0], 10000);
   assert.equal(fleet.vehicles[1]!.gross_weight_kg, 0);
 });
+
+test('tail-lift exclusions are hard, idempotent and independent of GVW restrictions', () => {
+  const request = fixture(); request.vehicles[0]!.has_tail_lift = false; request.vehicles[1]!.has_tail_lift = true;
+  const required = new Map([['ORDER', { requiresTailLift: true, maxTonnage: null } as OrderInfo]]);
+  applyAccessLimits(request, required, new Map()); applyAccessLimits(request, required, new Map());
+  assert.deepEqual(request.requests[0]!.forbidden_vehicles, [7]);
+  applyAccessLimits(request, new Map([['ORDER', { requiresTailLift: true, maxTonnage: 3.5 } as OrderInfo]]), new Map());
+  assert.deepEqual(request.requests[0]!.forbidden_vehicles, [7]);
+});
+
+test('equipment requires exact legacy identity, explicit false wins, and unknown fails closed', () => {
+  const request = fixture(), v = request.vehicles[0]!;
+  const info = new Map([['OTHERHEAVY', { hasTailLift: true } as VehicleInfo]]);
+  assert.equal(hasTailLift(v, info), false);
+  info.set('HEAVY', { hasTailLift: true } as VehicleInfo);
+  assert.equal(hasTailLift(v, info), true); v.has_tail_lift = false;
+  assert.equal(hasTailLift(v, info), false);
+  applyAccessLimits(request, new Map([['ORDER', { requiresTailLift: true } as OrderInfo]]), info);
+  assert.deepEqual(request.requests[0]!.forbidden_vehicles, [7, 42]);
+  const unrestricted = fixture(); applyAccessLimits(unrestricted, orders(null), new Map());
+  assert.equal(unrestricted.requests[0]!.forbidden_vehicles, undefined);
+});
+
+test('historical tail-lift-only advisory invalidates read view without rewriting saved plan', () => {
+  const plan = { provenance: { validation: { valid: true, violations: [{ type: 'TAIL_LIFT', soft: true }] } } } as Plan;
+  assert.equal(withHardAccessValidation(plan).provenance.validation.valid, false);
+  assert.equal(plan.provenance.validation.valid, true);
+});
+
+test('native Surge enforces tail-lift for ordinary, pinned, locked and no-equipped-fleet cases',
+  { skip: !process.env.CURSUS_TEST_SURGE_BIN }, async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'cursus-tail-lift-test-'));
+    try {
+      for (const mode of ['eligible', 'pinned', 'locked', 'none']) {
+        const request = fixture(); request.vehicles[0]!.has_tail_lift = false;
+        request.vehicles[1]!.has_tail_lift = mode !== 'none';
+        const edit = scenario(mode === 'pinned' ? { pins: [{ orderNo: 'ORDER', vehicleId: 7 }] }
+          : mode === 'locked' ? { sequences: [{ vehicleId: 7, orderNos: ['ORDER'], locked: true }] } : {});
+        applyOverrides(request, edit); applySequences(request, edit);
+        applyAccessLimits(request, new Map([['ORDER', { requiresTailLift: true } as OrderInfo]]), new Map());
+        const native = nativeSolveRequest(request, edit.sequences), path = join(dir, mode+'.json');
+        await writeFile(path, JSON.stringify(native.request));
+        const { stdout } = await promisify(execFile)(process.env.CURSUS_TEST_SURGE_BIN!, [path], { timeout: 30000 });
+        const result = native.restore(JSON.parse(stdout) as SurgeSolution);
+        assert.ok(!result.routes.some(r => r.vehicle_id === 7 && r.stops.length), mode);
+        if (mode === 'eligible') { assert.equal(result.routes[0]?.vehicle_id, 42); assert.deepEqual(result.unassigned, []); }
+        else assert.deepEqual(result.unassigned, [91], mode);
+      }
+    } finally { await rm(dir, { recursive: true, force: true }); }
+  });
 
 test('native Surge respects GVW exclusions including conflicting route seeds and all-unassigned results',
   { skip: !process.env.CURSUS_TEST_SURGE_BIN }, async () => {

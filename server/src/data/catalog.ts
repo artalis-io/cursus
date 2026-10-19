@@ -38,6 +38,7 @@ const VEHICLES: CanonicalField[] = [
   { field: 'capacity_kg', type: 'double', required: false, label: 'Capacity (kg)', aliases: ['kapacitás', 'teherbírás', 'capacity', 'kg'] },
   { field: 'capacity_pallets', type: 'double', required: false, label: 'Capacity (plt)', aliases: ['raklap', 'pallet', 'plt'] },
   { field: 'gross_weight_kg', type: 'double', required: false, label: 'GVW (kg)', aliases: ['össztömeg', 'gvw', 'gross'] },
+  { field: 'has_tail_lift', type: 'bool', required: false, label: 'Tail lift', aliases: ['tail_lift', 'has_tail_lift', 'hátfalas'] },
   { field: 'special_req', type: 'string', required: false, label: 'Equipment', aliases: ['felszereltség', 'emelőhátfal', 'special', 'equipment'] },
   { field: 'is_subcontractor', type: 'bool', required: false, label: 'Subcontractor', aliases: ['alvállalkozó', 'bérfuvaros', 'subcontractor'] },
   { field: 'operator', type: 'string', required: false, label: 'Operator', aliases: ['üzemeltető', 'operator'] },
