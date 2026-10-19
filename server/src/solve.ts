@@ -9,6 +9,7 @@ import { createLegacyStore, type Job, type Scenario } from './store.js';
 import type { SurgeRequest, SurgeSolution } from './types.js';
 import { applyAccessLimits } from './plan/access.js';
 import { nativeSolveRequest } from './state/solver-ids.js';
+import { populationConfig } from './solver-config.js';
 
 let legacyStore: ReturnType<typeof createLegacyStore> | undefined;
 export const store: ReturnType<typeof createLegacyStore> = new Proxy({} as ReturnType<typeof createLegacyStore>, {
@@ -60,7 +61,7 @@ export function buildRequest(scenario: Scenario, budgetSec: number, objective: O
   applySequences(request, scenario, available);
   applyAccessLimits(request, day.enrichment, loadVehicleInfo());
 
-  request.config = {
+  request.config = populationConfig({
     ...request.config,
     max_time_seconds: budgetSec,
     seed: 42,
@@ -71,7 +72,7 @@ export function buildRequest(scenario: Scenario, budgetSec: number, objective: O
     // "Run full budget": raise the iteration cap so only the time limit stops the
     // search (keep improving/searching until budgetSec), instead of converging early.
     ...(fullBudget ? { max_iterations: 2_000_000_000 } : {}),
-  };
+  });
   return { request, day };
 }
 

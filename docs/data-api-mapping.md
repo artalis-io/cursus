@@ -152,6 +152,21 @@ whose `scenarioRevision` ≠ the currently selected scenario revision, so a slow
 older solve can never replace the active plan. The baseline plan is immutable;
 replans always target a scenario copy.
 
+## Optimization search mode
+
+Every Cursus optimization uses Surge's HGS-style population search, including
+legacy solves, durable leased jobs and admitted-dataset replanning. Dataset
+configuration cannot disable population search or reduce it to one generation
+(which would fall back to ordinary parallel search). Cursus uses three
+generations and defaults to four threads **per active solve**.
+
+`DISPATCH_SOLVE_THREADS` accepts integers 1–16; it never selects all host cores
+automatically. Account for simultaneous jobs and replicas when setting this
+value. Existing queue/concurrency limits and cancellation remain in effect.
+Time budgets, objectives and hard constraints are retained, and the effective
+population settings are included in plan provenance. A time limit is still a
+ceiling: the iteration limit can finish the search earlier.
+
 ## Mandatory destination gross-weight access
 
 Destination `maxTonnage` is a maximum **gross vehicle weight**, not a payload

@@ -1,5 +1,6 @@
 import type { SurgeRequest, SurgeSolution } from '../types.js';
 import type { Scenario } from '../store.js';
+import { populationConfig } from '../solver-config.js';
 
 /** Surge's JSON reader assigns IDs by array position, ignoring explicit id
  * fields. Keep application IDs stable while compacting the native boundary. */
@@ -9,6 +10,7 @@ export function nativeSolveRequest(request: SurgeRequest, sequences: Scenario['s
   const requests = new Map(request.requests.map((r, i) => [r.id, i]));
   const native: SurgeRequest = {
     ...request,
+    config: populationConfig(request.config),
     vehicles: request.vehicles.map((v, id) => ({ ...v, id })),
     tasks: request.tasks.map((t, id) => ({ ...t, id })),
     requests: request.requests.map((r, id) => ({ ...r, id, delivery_task_id: tasks.get(r.delivery_task_id)!,

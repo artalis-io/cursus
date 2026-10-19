@@ -6,6 +6,31 @@ import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 
 import { missingConfigPaths } from './config.js';
+import { populationConfig } from './solver-config.js';
+
+test('population search cannot be disabled by stored dataset settings', () => {
+  const previous = { population: false, population_threads: 0, population_generations: 1,
+    max_time_seconds: 360, hard_capacity: true, hard_time_windows: true, lexicographic_objective: true };
+  const result = populationConfig(previous);
+  assert.equal(result.population, true);
+  assert.equal(result.population_generations, 3);
+  assert.ok(Number.isInteger(result.population_threads));
+  assert.ok(Number(result.population_threads) >= 1 && Number(result.population_threads) <= 16);
+  assert.equal(result.max_time_seconds, 360);
+  assert.equal(result.hard_capacity, true);
+  assert.equal(result.hard_time_windows, true);
+  assert.equal(result.lexicographic_objective, true);
+  assert.equal(previous.population, false, 'immutable dataset settings must not be mutated');
+});
+
+test('population thread configuration is bounded and rejects unsafe values', () => {
+  for (const value of ['0', '-1', '1.5', '17', 'NaN']) {
+    const result = spawnSync(process.execPath, ['--import', 'tsx', '--input-type=module', '--eval',
+      "await import('./src/config.ts')"], { cwd: process.cwd(), env: { ...process.env, DISPATCH_SOLVE_THREADS: value }, encoding: 'utf8' });
+    assert.notEqual(result.status, 0, value);
+    assert.match(result.stderr, /DISPATCH_SOLVE_THREADS must be an integer from 1 to 16/);
+  }
+});
 
 test('missingConfigPaths: reports dependency paths that do not exist, naming var + feature', () => {
   const missing = missingConfigPaths();

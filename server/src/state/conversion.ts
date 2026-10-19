@@ -19,6 +19,7 @@ import type { ImmutableObject, ObjectStore } from './objects.js';
 import { StaleFenceError, type Lease, type StatefulStore } from './postgres.js';
 import { nativeSolveRequest } from './solver-ids.js';
 import { applyAccessLimits } from '../plan/access.js';
+import { populationConfig } from '../solver-config.js';
 
 const OUTPUT_SCHEMA_VERSION = 1;
 const run = promisify(execFile);
@@ -141,7 +142,7 @@ export async function solveConvertedDataset(objects: ObjectStore, tenantId: stri
   applyOverrides(request, scenario, available); applyVehicleOverrides(request, scenario); applySequences(request, scenario, available);
   const vehicleInfo = loadVehicleInfo();
   applyAccessLimits(request, day.enrichment, vehicleInfo);
-  request.config = { ...request.config, max_time_seconds: budgetSec, seed: 42, lexicographic_objective: objective !== 'distance' };
+  request.config = populationConfig({ ...request.config, max_time_seconds: budgetSec, seed: 42, lexicographic_objective: objective !== 'distance' });
   const workspace = await mkdtemp(join(tmpdir(), 'cursus-converted-solve-'));
   try {
     const native = nativeSolveRequest(request, scenario.sequences);
