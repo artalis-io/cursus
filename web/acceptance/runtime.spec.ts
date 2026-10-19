@@ -54,7 +54,8 @@ function assertPlan(plan: Plan): void {
   expect(plan.provenance.validation.valid).toBe(true);
   expect(plan.provenance.validation.violations).toEqual([]);
   expect(plan.provenance.planningPolicy?.id).toBe('acceptance-approved-policy');
-  expect(plan.stats.solveElapsedSeconds).toBeGreaterThan(0);
+  expect(Number.isFinite(plan.stats.solveElapsedSeconds)).toBe(true);
+  expect(plan.stats.solveElapsedSeconds).toBeGreaterThanOrEqual(0); // sub-50ms public fixture rounds to 0.0s
   const approved = plan.vehicles.flatMap(v => v.trips.flatMap(t => t.stops.map(s => ({ v, s })))).find(x => x.s.orderNo === 'PUBLIC-1');
   expect([10, 50]).toContain(approved?.v.id); // waiver does not waive the independent 5.5 t GVW restriction
   expect(approved?.s.maxTonnage).toBe(5.5);
