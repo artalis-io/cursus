@@ -13,6 +13,7 @@ import type { Scenario } from '../store.js';
 import type { SurgeSolution } from '../types.js';
 import type { Lease } from './postgres.js';
 import type { SolveOutput } from './worker.js';
+import { nativeSolveRequest } from './solver-ids.js';
 
 const run = promisify(execFile);
 interface SolvePayload { scenario: Scenario; scenarioId: string; scenarioRevision: number; budgetSec?: number; objective?: Objective; fullBudget?: boolean }
@@ -28,16 +29,21 @@ export async function executeSurgeLease(lease: Lease, signal: AbortSignal): Prom
   const workspace = await mkdtemp(join(tmpdir(), 'cursus-solve-'));
   const requestFile = join(workspace, 'request.json');
   try {
-    await writeFile(requestFile, JSON.stringify(built.request), { mode: 0o600 });
+    const native = nativeSolveRequest(built.request, payload.scenario.sequences);
+    await writeFile(requestFile, JSON.stringify(native.request), { mode: 0o600 });
     const { stdout, stderr } = await run(config.surgeBin, [requestFile], { signal, timeout: (budget + config.solveWatchdogGraceSec) * 1000,
       maxBuffer: Math.max(1, config.maxSolveOutputMB) * 1024 * 1024 });
     let solution: SurgeSolution;
     try { solution = JSON.parse(stdout) as SurgeSolution; } catch { throw new Error(`surge_solve returned invalid JSON: ${stderr.slice(0, 500)}`); }
-    if (!Array.isArray(solution.routes) || !solution.routes.length) throw new Error(`surge_solve produced no usable routes (${solution.status ?? 'unknown'})`);
+    if (!Array.isArray(solution.routes) || !Array.isArray(solution.unassigned) || !['OK', 'LIMIT', 'INFEASIBLE'].includes(solution.status))
+      throw new Error(`surge_solve produced no usable solution (${solution.status ?? 'unknown'})`);
+    solution = native.restore(solution);
     const planId = `pln_${randomUUID().slice(0, 8)}`;
     const plan = mapSolutionToPlan({ day: built.day, request: built.request, solution, enrichment: built.day.enrichment,
       vehicleInfo: loadVehicleInfo(), scenarioId: payload.scenarioId, scenarioRevision: payload.scenarioRevision,
       planId, source: 'live', createdAt: new Date().toISOString() });
+    if (plan.provenance.validation.violations.some(v => ['VEHICLE_SIZE', 'TAIL_LIFT'].includes((v as {type?: string}).type ?? '')))
+      throw new Error('solver violated mandatory destination access or tail-lift requirements');
     await fillPlanGeometry(plan).catch(() => false);
     return { planId, scenarioId: payload.scenarioId, scenarioRevision: payload.scenarioRevision, plan };
   } finally { await rm(workspace, { recursive: true, force: true }); }

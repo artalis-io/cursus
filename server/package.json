@@ -9,8 +9,8 @@
     "start": "tsx src/server.ts",
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "node --import tsx --test src/auth.test.ts src/plan/mapper.test.ts src/plan/stats.test.ts src/plan/compare.test.ts src/plan/week.test.ts src/store.test.ts src/solve.test.ts src/cost.test.ts src/export.test.ts src/ratelimit.test.ts src/validate.test.ts src/data/onboard.test.ts src/data/admit.test.ts src/data/fleet.test.ts src/util/semaphore.test.ts src/config.test.ts src/server.test.ts",
-    "test:ci": "node --import tsx --test src/state/solver-ids.test.ts src/auth.test.ts src/state/api-contract.test.ts src/state/outbox.test.ts src/plan/stats.test.ts src/plan/compare.test.ts src/plan/week.test.ts src/store.test.ts src/cost.test.ts src/export.test.ts src/ratelimit.test.ts src/validate.test.ts src/data/onboard.test.ts src/data/fleet.test.ts src/util/semaphore.test.ts src/config.test.ts",
+    "test": "node --import tsx --test src/auth.test.ts src/plan/access.test.ts src/plan/policy.test.ts src/plan/mapper.test.ts src/plan/stats.test.ts src/plan/compare.test.ts src/plan/week.test.ts src/store.test.ts src/solve.test.ts src/cost.test.ts src/export.test.ts src/ratelimit.test.ts src/validate.test.ts src/data/onboard.test.ts src/data/admit.test.ts src/data/fleet.test.ts src/util/semaphore.test.ts src/config.test.ts src/server.test.ts",
+    "test:ci": "node --import tsx --test src/state/solver-ids.test.ts src/auth.test.ts src/state/api-contract.test.ts src/state/outbox.test.ts src/plan/access.test.ts src/plan/policy.test.ts src/plan/mapper.test.ts src/solve.test.ts src/plan/stats.test.ts src/plan/compare.test.ts src/plan/week.test.ts src/store.test.ts src/cost.test.ts src/export.test.ts src/ratelimit.test.ts src/validate.test.ts src/data/onboard.test.ts src/data/fleet.test.ts src/util/semaphore.test.ts src/config.test.ts",
     "test:stateful": "node --import tsx --test src/state/integration.test.ts"
   },
   "dependencies": {

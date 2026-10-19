@@ -306,6 +306,47 @@ test('trip load over capacity produces a CAPACITY violation', () => {
   assert.equal(plan.provenance.validation.valid, false);
 });
 
+test('gross-weight access violations invalidate mapped historical and live solutions', () => {
+  for (const grossWeight of [24000, 0]) {
+    const request = buildRequest(); request.vehicles.find(v => v.id === 42)!.gross_weight_kg = grossWeight;
+    const solution: SurgeSolution = { status: 'OK', stats: okStats, unassigned: [102, 103], routes: [{ vehicle_id: 42,
+      distance: 1000, duration: 1000, trip_count: 1,
+      stops: [{ request_id: 101, task_id: 1, type: 'delivery', trip_index: 0, arrival: 500, service_start: 500, departure: 1100 }] }] };
+    const input = mkInputs(request, solution);
+    input.source = 'saved'; input.enrichment.set('ORD-1', { maxTonnage: 7.5 } as OrderInfo);
+    const plan = mapSolutionToPlan(input);
+    assert.equal(plan.provenance.validation.valid, false);
+    const violation = plan.provenance.validation.violations.find(v => (v as {type: string}).type === 'VEHICLE_SIZE') as {soft?: boolean; actual: number | null};
+    assert.ok(violation); assert.notEqual(violation.soft, true);
+    assert.equal(violation.actual, grossWeight ? 24 : null);
+  }
+});
+
+test('gross weight equal to destination limit remains valid', () => {
+  const request = buildRequest(); request.vehicles.find(v => v.id === 42)!.gross_weight_kg = 7500;
+  const input = mkInputs(request, { status: 'OK', stats: okStats, unassigned: [102, 103], routes: [{ vehicle_id: 42,
+    distance: 1000, duration: 1000, trip_count: 1,
+    stops: [{ request_id: 101, task_id: 1, type: 'delivery', trip_index: 0, arrival: 500, service_start: 500, departure: 1100 }] }] });
+  input.enrichment.set('ORD-1', { maxTonnage: 7.5 } as OrderInfo);
+  assert.equal(mapSolutionToPlan(input).provenance.validation.valid, true);
+});
+
+test('tail-lift capability is mandatory at mapping boundary, explicit capability overrides enrichment', () => {
+  for (const equipped of [true, false]) {
+    const request = buildRequest(); request.vehicles.find(v => v.id === 42)!.has_tail_lift = equipped;
+    const input = mkInputs(request, { status: 'OK', stats: okStats, unassigned: [102, 103], routes: [{ vehicle_id: 42,
+      distance: 1000, duration: 1000, trip_count: 1,
+      stops: [{ request_id: 101, task_id: 1, type: 'delivery', trip_index: 0, arrival: 500, service_start: 500, departure: 1100 }] }] });
+    input.enrichment.set('ORD-1', { requiresTailLift: true } as OrderInfo);
+    const plan = mapSolutionToPlan(input);
+    assert.equal(plan.provenance.validation.valid, equipped);
+    assert.equal(plan.vehicles[0]!.hasTailLift, equipped);
+    const violations = plan.provenance.validation.violations.filter(v => (v as {type?: string}).type === 'TAIL_LIFT');
+    assert.equal(violations.length, equipped ? 0 : 1);
+    assert.ok(violations.every(v => (v as {soft?: boolean}).soft !== true));
+  }
+});
+
 test('classifyUnassigned: infers the blocking reason, pin/lock first', () => {
   const bigFleet: FleetLimits = { maxKg: 24000, maxPallets: 33, anyTailLift: false, minTonnage: 40 };
   // pin/sequence lock that failed wins over everything

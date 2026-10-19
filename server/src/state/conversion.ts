@@ -18,6 +18,9 @@ import { randomUUID } from 'node:crypto';
 import type { ImmutableObject, ObjectStore } from './objects.js';
 import { StaleFenceError, type Lease, type StatefulStore } from './postgres.js';
 import { nativeSolveRequest } from './solver-ids.js';
+import { applyAccessLimits } from '../plan/access.js';
+import { withPlanningPolicy } from '../plan/policy.js';
+import { populationConfig } from '../solver-config.js';
 
 const OUTPUT_SCHEMA_VERSION = 1;
 const run = promisify(execFile);
@@ -42,7 +45,8 @@ export async function conversionIdentity(payload: ConversionPayload): Promise<{ 
   const converters: Record<string, string> = {};
   for (const [name, path] of Object.entries(paths)) converters[name] = await fileDigest(path);
   const identity = { source: payload.source.sha256, mapping: payload.mapping, fleet: payload.fleet ? { source: payload.fleet.source.sha256, mapping: payload.fleet.mapping } : null, converters,
-    matrix: { profile: config.veloProfile, maxLocations: config.maxMatrixLocations }, outputSchemaVersion: OUTPUT_SCHEMA_VERSION };
+    matrix: { profile: config.veloProfile, maxLocations: config.maxMatrixLocations }, outputSchemaVersion: OUTPUT_SCHEMA_VERSION,
+    fleetEncodingVersion: 3 }; // preserves explicit GVW and tail-lift capabilities in uploaded fleets
   return { fingerprint: createHash('sha256').update(stable(identity)).digest('hex'), converters };
 }
 
@@ -124,30 +128,41 @@ export async function loadConvertedDay(objects: ObjectStore, tenantId: string, m
   const scopedReqIds = request.requests.map((r) => r.id);
   const solution: SurgeSolution = { status: 'OK', routes: [], unassigned: scopedReqIds,
     stats: { vehicles_used: 0, trips: 0, total_distance: 0, unassigned: scopedReqIds.length } };
-  return { def: { id: dayMeta.dayId, date: dayMeta.date ?? dayMeta.isoDate, isoDate: dayMeta.isoDate, label: dayMeta.label,
+  return withPlanningPolicy({ datasetRequestSha256: requestObject.sha256,
+    def: { id: dayMeta.dayId, date: dayMeta.date ?? dayMeta.isoDate, isoDate: dayMeta.isoDate, label: dayMeta.label,
     requestFile: '', solutionFile: '' }, kind: 'uploaded', request, solution,
     scopeTaskIds: new Set(request.requests.map((r) => r.delivery_task_id)),
-    depot: { name: 'Depot', lon: request.locations[0]!.x, lat: request.locations[0]!.y }, enrichment: enrichmentFromRecords(rows) };
+    depot: { name: 'Depot', lon: request.locations[0]!.x, lat: request.locations[0]!.y }, enrichment: enrichmentFromRecords(rows) }, scenario.planningPolicy);
 }
 
 export async function solveConvertedDataset(objects: ObjectStore, tenantId: string, manifest: ConvertedManifest, scenario: Scenario,
-  budgetSec: number, objective: Objective, signal: AbortSignal): Promise<Plan> {
+  budgetSec: number, objective: Objective, signal: AbortSignal, fullBudget = false): Promise<Plan> {
   const day = await loadConvertedDay(objects, tenantId, manifest, scenario);
   const request = day.request;
   if (scenario.removedVehicleIds.length) request.vehicles = request.vehicles.filter((v) => !scenario.removedVehicleIds.includes(v.id));
   const available = new Set(request.vehicles.map((v) => v.id));
   applyOverrides(request, scenario, available); applyVehicleOverrides(request, scenario); applySequences(request, scenario, available);
-  request.config = { ...request.config, max_time_seconds: budgetSec, seed: 42, lexicographic_objective: objective !== 'distance' };
+  const vehicleInfo = loadVehicleInfo();
+  applyAccessLimits(request, day.enrichment, vehicleInfo);
+  request.config = populationConfig({ ...request.config, max_time_seconds: budgetSec, seed: 42, lexicographic_objective: objective !== 'distance',
+    hard_capacity: true, hard_time_windows: true, hard_max_duration: true,
+    ...(fullBudget ? { max_iterations: 2_000_000_000 } : {}) });
   const workspace = await mkdtemp(join(tmpdir(), 'cursus-converted-solve-'));
   try {
     const native = nativeSolveRequest(request, scenario.sequences);
     const path = join(workspace, 'request.json'); await writeFile(path, JSON.stringify(native.request), { mode: 0o600 });
+    const startedAt = Date.now();
     const { stdout } = await run(config.surgeBin, [path], { signal, timeout: (budgetSec + config.solveWatchdogGraceSec) * 1000,
       maxBuffer: Math.max(1, config.maxSolveOutputMB) * 1024 * 1024 });
     const solution = native.restore(JSON.parse(stdout) as SurgeSolution);
-    if (!solution.routes?.length) throw new Error('converted dataset solve produced no routes');
-    const plan = mapSolutionToPlan({ day, request, solution, enrichment: day.enrichment, vehicleInfo: loadVehicleInfo(), scenarioId: scenario.id,
+    if (!Array.isArray(solution.routes) || !Array.isArray(solution.unassigned) || !['OK', 'LIMIT', 'INFEASIBLE'].includes(solution.status))
+      throw new Error('converted dataset solve produced an invalid solution');
+    const plan = mapSolutionToPlan({ day, request, solution, enrichment: day.enrichment, vehicleInfo, scenarioId: scenario.id,
       scenarioRevision: scenario.revision, planId: `pln_${randomUUID().slice(0, 8)}`, source: 'live', createdAt: new Date().toISOString() });
+    if (scenario.planningPolicy) plan.provenance.planningPolicy = structuredClone(scenario.planningPolicy);
+    plan.stats.solveElapsedSeconds = Math.round((Date.now() - startedAt) / 100) / 10;
+    if (plan.provenance.validation.violations.some(v => ['VEHICLE_SIZE', 'TAIL_LIFT'].includes((v as {type?: string}).type ?? '')))
+      throw new Error('solver violated mandatory destination access or tail-lift requirements');
     await fillPlanGeometry(plan).catch(() => false); return plan;
   } finally { await rm(workspace, { recursive: true, force: true }); }
 }

@@ -334,7 +334,8 @@ app.post('/api/scenarios/import', async (req, reply) => {
   if ('error' in parsed) return reply.code(400).send({ error: parsed.error });
   if (!allDayIds().some((d) => d.id === parsed.day)) return reply.code(400).send({ error: `unknown day '${parsed.day}' (admit its dataset first)` });
   const base = store.ensureBaseScenario(parsed.day, loadDay(parsed.day).def.label);
-  return store.importScenario(base, parsed.label, parsed.edits);
+  try { return store.importScenario(base, parsed.label, parsed.edits); }
+  catch (error) { return reply.code(400).send({ error: (error as Error).message }); }
 });
 
 /* ---- Solve jobs ---- */

@@ -34,6 +34,9 @@ export function toSurgeFleet(records: Record<string, unknown>[]): Fleet {
       id: i, ref,
       capacity: [Math.round(kg ?? DEFAULT_CAP_KG), Math.round(plt ?? DEFAULT_CAP_PLT)],
       start_depot_id: 0, end_depot_id: 0, fixed_cost: DEFAULT_FIXED_COST,
+      gross_weight_kg: num(v.gross_weight_kg) ?? 0, // explicit unknown: never borrow legacy fleet metadata
+      has_tail_lift: typeof v.has_tail_lift === 'boolean' ? v.has_tail_lift :
+        v.requires_tail_lift === true || (typeof v.special_req === 'string' && /emel[őo]h[áa]tfal/i.test(v.special_req)),
     };
   });
   return { vehicles, defaulted, count: vehicles.length };

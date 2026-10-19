@@ -9,6 +9,7 @@ import { colorForIndex } from '../colors.js';
 import { metersToKm } from '../units.js';
 import { makeLeg, waitSec, lateSec } from './schedule.js';
 import { loadTariff, vehicleCostFor, tripCost, type Tariff } from '../cost.js';
+import { grossTonnage, hasTailLift } from './access.js';
 
 export interface FleetLimits { maxKg: number; maxPallets: number; anyTailLift: boolean; minTonnage: number }
 
@@ -68,6 +69,7 @@ export function mapSolutionToPlan(inp: MapInputs): Plan {
     const capPal = rv?.capacity[1] ?? 0;
     const ref = rv?.ref ?? `veh-${route.vehicle_id}`;
     const vinfo = vehicleInfoFor(ref, inp.vehicleInfo);
+    const tonnage = rv ? grossTonnage(rv, inp.vehicleInfo) : null;
 
     // group stops by trip_index preserving visiting order
     const byTrip = new Map<number, typeof route.stops>();
@@ -97,10 +99,9 @@ export function mapSolutionToPlan(inp: MapInputs): Plan {
         const twLate = task?.tw_late ?? 0;
         const lateBySec = lateSec(s.arrival, twLate);
         if (lateBySec > 1) violations.push({ type: 'HARD_TW', vehicle_id: route.vehicle_id, request_id: s.request_id, actual: s.arrival, limit: twLate });
-        // Soft advisories: physical access constraints the current solve does not model.
-        if (info?.requiresTailLift && !vinfo?.hasTailLift) violations.push({ type: 'TAIL_LIFT', soft: true, vehicle_id: route.vehicle_id, request_id: s.request_id, orderNo });
-        if (info?.maxTonnage != null && vinfo?.tonnage != null && vinfo.tonnage > info.maxTonnage + 0.01)
-          violations.push({ type: 'VEHICLE_SIZE', soft: true, vehicle_id: route.vehicle_id, request_id: s.request_id, orderNo, actual: vinfo.tonnage, limit: info.maxTonnage });
+        if (info?.requiresTailLift && (!rv || !hasTailLift(rv, inp.vehicleInfo))) violations.push({ type: 'TAIL_LIFT', vehicle_id: route.vehicle_id, request_id: s.request_id, orderNo });
+        if (info?.maxTonnage != null && (tonnage == null || tonnage > info.maxTonnage))
+          violations.push({ type: 'VEHICLE_SIZE', vehicle_id: route.vehicle_id, request_id: s.request_id, orderNo, actual: tonnage, limit: info.maxTonnage });
         return {
           orderId: info?.id ?? null,
           orderNo,
@@ -155,8 +156,8 @@ export function mapSolutionToPlan(inp: MapInputs): Plan {
       ref,
       vehicleClass: vinfo?.vehicleClass ?? null,
       isSubcontractor: Boolean(vinfo?.isSubcontractor),
-      tonnage: vinfo?.tonnage ?? null,
-      hasTailLift: Boolean(vinfo?.hasTailLift),
+      tonnage,
+      hasTailLift: rv ? hasTailLift(rv, inp.vehicleInfo) : false,
       color: colorForIndex(ri),
       capacityKg: capKg,
       capacityPallets: capPal,
@@ -173,8 +174,8 @@ export function mapSolutionToPlan(inp: MapInputs): Plan {
   const fleet = {
     maxKg: Math.max(0, ...request.vehicles.map((v) => v.capacity[0] ?? 0)),
     maxPallets: Math.max(0, ...request.vehicles.map((v) => v.capacity[1] ?? 0)),
-    anyTailLift: request.vehicles.some((v) => vehicleInfoFor(v.ref, inp.vehicleInfo)?.hasTailLift),
-    minTonnage: Math.min(Infinity, ...request.vehicles.map((v) => vehicleInfoFor(v.ref, inp.vehicleInfo)?.tonnage ?? Infinity)),
+    anyTailLift: request.vehicles.some((v) => hasTailLift(v, inp.vehicleInfo)),
+    minTonnage: Math.min(Infinity, ...request.vehicles.map((v) => grossTonnage(v, inp.vehicleInfo) ?? Infinity)),
   };
   const reqDefById = new Map(request.requests.map((r) => [r.id, r]));
 
@@ -198,8 +199,8 @@ export function mapSolutionToPlan(inp: MapInputs): Plan {
 
   const deliveryStops = vehicles.reduce((n, v) => n + v.trips.reduce((m, t) => m + t.stops.length, 0), 0);
   const status = solution.status;
-  // Soft advisories (tail-lift / vehicle-size access) do not invalidate the plan;
-  // only hard violations (time windows, capacity) do.
+  // Equipment, GVW access, time windows and capacity violations invalidate the
+  // plan, including when mapping historical solutions.
   const hardViolations = violations.filter((v) => !(v as { soft?: boolean }).soft);
   const valid = (status === 'OK' || status === 'LIMIT') && hardViolations.length === 0;
 
@@ -230,6 +231,7 @@ export function mapSolutionToPlan(inp: MapInputs): Plan {
     source: inp.source,
     objective,
     provenance: {
+      ...(inp.day.planningPolicy ? { planningPolicy: structuredClone(inp.day.planningPolicy) } : {}),
       inputSha256: sha256(JSON.stringify(request)),
       solverConfig: request.config,
       termination: status,

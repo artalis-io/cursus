@@ -59,6 +59,7 @@ export function TopBar({
   const [exportOpen, setExportOpen] = useState(false);
   const isReplan = scenario.kind === 'copy';
   const termOk = plan.provenance.termination === 'OK';
+  const invalid = !plan.provenance.validation.valid;
 
   function downloadUrl(url: string) {
     const a = document.createElement('a');
@@ -108,10 +109,11 @@ export function TopBar({
           {scenario.label}{changesCount > 0 ? ` · ${t('topbar.editsN', { n: changesCount })}` : ''}
         </Badge>
       ) : (
-        <Badge variant={plan.source === 'saved' ? 'outline' : 'default'} title="Plan source / Surge termination" className="border-white/20 text-graphite-foreground">
-          {plan.source === 'saved' ? t('topbar.baseline') : t('topbar.live')} · {termOk ? 'OK' : plan.provenance.termination}
+        <Badge variant={invalid ? 'destructive' : plan.source === 'saved' ? 'outline' : 'default'} title="Plan source / validation / Surge termination" className={invalid ? '' : 'border-white/20 text-graphite-foreground'}>
+          {plan.source === 'saved' ? t('topbar.baseline') : t('topbar.live')} · {invalid ? t('topbar.invalid') : termOk ? 'OK' : plan.provenance.termination}
         </Badge>
       )}
+      {isReplan && invalid && <Badge variant="destructive">{t('topbar.invalid')}</Badge>}
 
       <div className="ml-auto flex items-center gap-1.5">
         {/* Navigation / panels: icon-only toolbar (labels via tooltip + aria-label) */}

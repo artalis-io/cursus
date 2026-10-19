@@ -19,6 +19,9 @@ test('native IDs survive day filtering, fleet exclusion, pins, and locked sequen
   } as unknown as SurgeRequest;
   const original = structuredClone(request);
   const native = nativeSolveRequest(request);
+  assert.equal(native.request.config.population, true);
+  assert.equal(native.request.config.population_generations, 3);
+  assert.ok(Number(native.request.config.population_threads) >= 1);
   assert.deepEqual(native.request.requests[0], { id: 0, delivery_task_id: 2, allowed_vehicles: [1], forbidden_vehicles: [0] });
   assert.deepEqual(native.request.precedences, [{ before: 0, after: 1 }]);
   const extra = native.request as unknown as Record<string, unknown>;

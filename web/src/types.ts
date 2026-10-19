@@ -7,6 +7,7 @@
 export type PlanSource = 'saved' | 'live' | 'sample';
 
 export interface PlanProvenance {
+  planningPolicy?: { id: string; date: string; exceptions: { orderNo: string; reason: string; maxTonnage?: number; requiresTailLift?: boolean }[] };
   inputSha256: string;
   solverConfig: Record<string, unknown>; // raw Surge config (seed, max_time_seconds, hard_*, ...)
   termination: string;                    // OK | LIMIT | ...
@@ -15,7 +16,7 @@ export interface PlanProvenance {
 
 export interface ValidationViolation {
   type: string;            // HARD_TW | CAPACITY | TAIL_LIFT | VEHICLE_SIZE | ...
-  soft?: boolean;          // advisory (access constraints) vs hard (TW/capacity)
+  soft?: boolean;          // equipment, GVW access, time windows and capacity are hard
   dimension?: string;
   vehicle_id?: number;
   request_id?: number;

@@ -168,6 +168,8 @@ export function vehicleInfoFor(ref: string, table: Map<string, VehicleInfo>): Ve
 }
 
 export interface LoadedDay {
+  datasetRequestSha256?: string; // immutable admitted input identity for server-owned approvals
+  planningPolicy?: import('../plan/policy.js').PlanningPolicy;
   def: DayDef;
   kind: 'builtin' | 'uploaded';
   request: SurgeRequest;

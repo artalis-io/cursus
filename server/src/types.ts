@@ -16,6 +16,8 @@ export interface SurgeTask {
 export interface SurgeRequestVehicle {
   id: number;
   ref: string; // e.g. "RIC-124"
+  gross_weight_kg?: number; // application metadata: GVW, never payload capacity
+  has_tail_lift?: boolean; // explicit capability; false overrides legacy enrichment
   capacity: number[]; // [kg, pallets]
   start_depot_id: number;
   end_depot_id: number;
@@ -169,6 +171,7 @@ export interface PlanUnassigned {
 }
 
 export interface PlanProvenance {
+  planningPolicy?: import('./plan/policy.js').PlanningPolicy;
   inputSha256: string;
   solverConfig: Record<string, unknown>;
   termination: string; // Surge status

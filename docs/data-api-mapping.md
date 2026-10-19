@@ -152,6 +152,62 @@ whose `scenarioRevision` ≠ the currently selected scenario revision, so a slow
 older solve can never replace the active plan. The baseline plan is immutable;
 replans always target a scenario copy.
 
+## Optimization search mode
+
+Every Cursus optimization uses Surge's HGS-style population search, including
+legacy solves, durable leased jobs and admitted-dataset replanning. Dataset
+configuration cannot disable population search or reduce it to one generation
+(which would fall back to ordinary parallel search). Cursus uses three
+generations and defaults to four threads **per active solve**.
+
+`DISPATCH_SOLVE_THREADS` accepts integers 1–16; it never selects all host cores
+automatically. Account for simultaneous jobs and replicas when setting this
+value. Existing queue/concurrency limits and cancellation remain in effect.
+Time budgets, objectives and hard constraints are retained, and the effective
+population settings are included in plan provenance. A time limit is still a
+ceiling: the iteration limit can finish the search earlier.
+
+## Mandatory destination gross-weight access
+
+Destination `maxTonnage` is a maximum **gross vehicle weight**, not a payload
+limit. Legacy and stateful request builders apply it after scenario pins, fleet
+edits and route locks, using per-request vehicle exclusions. Equal GVW is allowed;
+oversize vehicles and vehicles with unknown GVW are excluded from restricted
+destinations. A conflicting manual assignment cannot override the restriction.
+If no eligible vehicle remains, the order stays unassigned.
+
+Uploaded fleets retain `gross_weight_kg` separately from capacity; a missing
+value is explicitly unknown. Legacy fleet metadata uses an exact normalized
+vehicle identifier, not a partial plate match. Changing payload capacity does
+not change GVW. Conversion fingerprints include the fleet encoding version.
+
+Mapped `VEHICLE_SIZE` violations are hard validation errors. Existing persisted
+access advisories are promoted to hard errors in read views without rewriting
+historical plans or changing their original assignments. New solver results
+with access or tail-lift violations fail before publication. Tail-lift is a hard
+requirement: vehicles without confirmed equipment are explicitly forbidden,
+even if manually pinned or locked. Unknown equipment fails closed only for
+orders requiring it. Uploaded fleets retain an explicit `has_tail_lift` boolean
+(default false); legacy fleet capability uses exact normalized identifiers.
+Historical tail-lift advisories become hard errors in read views, without
+rewriting the original plans. Native multi-trip ranking must check eligibility before
+considering either cached insertion candidates or new trips.
+
+Approved exceptions are server-owned `Scenario.planningPolicy` records bound to
+the admitted request SHA-256 and ISO delivery date. Source requirements are
+checked again before applying any exception; mismatch fails closed. Scenario
+copies/edits preserve the policy, and exports carry only its approval ID. Imports
+may reference the destination base's existing policy but cannot grant approvals.
+The effective policy is retained in plan provenance and shown in Plan issues.
+Pins and route locks cannot override any remaining hard requirement. Stateful
+reorder previews use the same admitted dataset and effective requirements.
+
+Stateful full-budget replans forward `fullBudget` into durable jobs and raise
+the native iteration ceiling so the time budget, not the ordinary iteration
+limit, ends the search. All solve paths require population search. Native
+schedule/distance JSON uses round-trip double precision; display km remain
+rounded to one decimal place.
+
 ## Pallet / Load view
 
 The 3L loading-feasibility checker is **design-approved but not implemented**

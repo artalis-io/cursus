@@ -120,14 +120,15 @@ export async function createStatefulApi(options: StatefulApiOptions): Promise<Fa
   app.post('/api/scenarios/import', async (req, reply) => {
     const parsed = parseScenarioImport(req.body); if ('error' in parsed) return reply.code(400).send({ error: parsed.error });
     const base = await scenarios.get(`${parsed.day}-base`); if (!base) return reply.code(400).send({ error: `unknown day '${parsed.day}' (admit its dataset first)` });
-    return scenarios.import(base, parsed.label, parsed.edits);
+    try { return await scenarios.import(base, parsed.label, parsed.edits); }
+    catch (error) { return reply.code(400).send({ error: (error as Error).message }); }
   });
-  app.post<{ Params: { id: string }; Body: { budgetSec?: number; objective?: string } }>('/api/scenarios/:id/solve', async (req, reply) => {
+  app.post<{ Params: { id: string }; Body: { budgetSec?: number; objective?: string; fullBudget?: boolean } }>('/api/scenarios/:id/solve', async (req, reply) => {
     const scenario = await scenarios.get(req.params.id); if (!scenario) return reply.code(404).send({ error: 'scenario not found' });
     let id: string;
     try {
       id = await options.store.enqueueJob(options.tenantId, 'solve', `solve/${scenario.id}/${scenario.revision}/${randomKey()}`, {
-        scenarioId: scenario.id, scenarioRevision: scenario.revision, budgetSec: req.body?.budgetSec, objective: req.body?.objective ?? 'vehicles', scenario,
+        scenarioId: scenario.id, scenarioRevision: scenario.revision, budgetSec: req.body?.budgetSec, objective: req.body?.objective ?? 'vehicles', fullBudget: req.body?.fullBudget === true, scenario,
       }, config.maxSolveQueue);
     } catch (error) {
       if (error instanceof JobQueueFullError) return reply.code(429).send({ error: 'optimization queue is full; retry later' });
@@ -163,14 +164,13 @@ export async function createStatefulApi(options: StatefulApiOptions): Promise<Fa
       const scenario = await scenarios.get(plan.scenarioId);
       if (!scenario) return reply.code(404).send({ error: 'scenario not found for plan' });
       let day;
-      try { day = loadDay(scenario.day); }
-      catch {
-        if (!options.objects) return reply.code(404).send({ error: 'dataset not available for plan' });
+      if (options.objects) {
         const rows = await options.store.listDatasets(options.tenantId, true);
-        const row = rows.find((candidate) => ((candidate.manifest as ConvertedManifest | undefined)?.days ?? []).some((d) => d.dayId === scenario.day));
+        const row = rows.find((candidate) => ((candidate.manifest as ConvertedManifest | undefined)?.days ?? []).some((d) => d.dayId === scenario.day) &&
+          (!scenario.planningPolicy || (candidate.manifest as ConvertedManifest).artifacts?.request?.sha256 === scenario.planningPolicy.datasetRequestSha256));
         if (!row) return reply.code(404).send({ error: 'dataset not available for plan' });
         day = await loadConvertedDay(options.objects, options.tenantId, row.manifest as ConvertedManifest, scenario);
-      }
+      } else { day = loadDay(scenario.day); }
       return { trip: evaluateTrip({ day, request: day.request, vehicleId: b.vehicleId, tripIndex: srcTrip.index,
         startSec: typeof b.startSec === 'number' ? b.startSec : srcTrip.startSec, tripCountOnVehicle: vehicle.trips.length,
         reloadSecAfter: typeof b.reloadSecAfter === 'number' ? b.reloadSecAfter : srcTrip.reloadSecAfter,

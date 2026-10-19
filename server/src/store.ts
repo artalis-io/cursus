@@ -5,6 +5,7 @@ import { config } from './config.js';
 import { writeJsonAtomic } from './util/jsonfile.js';
 import type { Plan } from './types.js';
 import { withNormalizedPlanStats } from './plan/stats.js';
+import type { PlanningPolicy } from './plan/policy.js';
 
 /* Minimal durable store for scenarios, plans and jobs. JSON files under the
  * local data dir (not SQLite) - fastest reliable for a single-node demo, and
@@ -40,6 +41,7 @@ export interface VehicleSequence { vehicleId: number; orderNos: string[]; locked
 export const MAX_SEQUENCE_LEN = 500;
 
 export interface Scenario {
+  planningPolicy?: PlanningPolicy;
   id: string;
   day: string;            // 'day1' | 'day2'
   kind: 'base' | 'copy';
@@ -158,6 +160,7 @@ export function applyScenarioEdits(scenario: Scenario, edits: ScenarioEdit[]): S
 /* A portable scenario: its edits + day + label, shareable as JSON so a colleague
  * can import it to recreate the same what-if (there is no multi-user store). */
 export interface ScenarioEditsBundle {
+  planningPolicyId?: string; // reference only; never grants new approval
   removedVehicleIds: number[];
   pins: Pin[];
   forbids: Forbid[];
@@ -170,6 +173,7 @@ export function exportScenario(s: Scenario): ScenarioExport {
   return {
     otto_scenario: 1, day: s.day, label: s.label,
     edits: {
+      ...(s.planningPolicy ? { planningPolicyId: s.planningPolicy.id } : {}),
       removedVehicleIds: [...s.removedVehicleIds],
       pins: s.pins.map((p) => ({ ...p })),
       forbids: s.forbids.map((f) => ({ ...f })),
@@ -214,7 +218,10 @@ export function parseScenarioImport(body: unknown): { error: string } | { day: s
     if (new Set(orderNos).size !== orderNos.length) continue;
     if (orderNos.length >= 2 || (sq.locked && orderNos.length >= 1)) sequences.push({ vehicleId: sq.vehicleId, orderNos, ...(sq.locked ? { locked: true } : {}) });
   }
-  return { day, label, edits: { removedVehicleIds, pins, forbids, vehicleOverrides, sequences } };
+  if (e.planningPolicyId !== undefined && (typeof e.planningPolicyId !== 'string' || !/^[a-zA-Z0-9_-]{1,128}$/.test(e.planningPolicyId)))
+    return { error: 'invalid planning policy reference' };
+  return { day, label, edits: { removedVehicleIds, pins, forbids, vehicleOverrides, sequences,
+    ...(typeof e.planningPolicyId === 'string' ? { planningPolicyId: e.planningPolicyId } : {}) } };
 }
 
 export type JobStatus = 'pending' | 'running' | 'completed' | 'failed' | 'cancelled';
@@ -357,6 +364,7 @@ export class Store {
     const removed = [...parent.removedVehicleIds];
     if (edits.removeVehicleId != null && !removed.includes(edits.removeVehicleId)) removed.push(edits.removeVehicleId);
     const s: Scenario = {
+      ...(parent.planningPolicy ? { planningPolicy: structuredClone(parent.planningPolicy) } : {}),
       id: this.newId('scn'),
       day: parent.day,
       kind: 'copy',
@@ -498,6 +506,7 @@ export class Store {
   }
   /** Recreate a scenario from an imported edits bundle as a new copy of the day's base. */
   importScenario(base: Scenario, label: string, edits: ScenarioEditsBundle): Scenario {
+    if (edits.planningPolicyId && edits.planningPolicyId !== base.planningPolicy?.id) throw new Error('planning policy reference is not approved in this workspace');
     const s = this.createCopy(base, {}, label);
     s.removedVehicleIds = [...edits.removedVehicleIds];
     s.pins = edits.pins.map((p) => ({ ...p }));
