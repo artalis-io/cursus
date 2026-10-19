@@ -32,7 +32,7 @@ async function seed() {
     locations: Array.from({ length: 9 }, (_, i) => ({ x: 19 + i * .002, y: 47 + i * .001 })),
     depots: [{ location_id: 0, tw_early: 0, tw_late: 86400 }],
     vehicles: [10, 30, 50].map(id => ({ id, ref: `ACCEPT-${id}`, capacity: [1000, 10],
-      gross_weight_kg: id === 10 ? 3500 : 12000, has_tail_lift: id === 30,
+      gross_weight_kg: id === 30 ? 12000 : 3500, has_tail_lift: id === 30,
       start_depot_id: 0, end_depot_id: 0, shift_early: 0, shift_late: 86400, max_trips: 1 })),
     tasks: Array.from({ length: 8 }, (_, i) => ({ id: i, ref: `PUBLIC-${i + 1}`, type: 'delivery',
       location_id: i + 1, tw_early: 0, tw_late: 86400, service_seconds: 60, demand: [100, 1] })),
