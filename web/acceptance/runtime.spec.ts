@@ -142,7 +142,7 @@ test('approved exceptions remain visible and cannot be injected through scenario
   await page.keyboard.press('Escape');
   const exported = await get<{ edits: { planningPolicyId: string } }>(page.request, '/api/scenarios/acceptance-day-base/export');
   expect(exported.edits.planningPolicyId).toBe('acceptance-approved-policy');
-  const invalid = await page.request.post('/api/scenarios/import', { data: { ...exported, edits: { ...exported.edits, planningPolicyId: 'not-approved' } } });
+  const invalid = await page.request.post('/api/scenarios/import', { headers: { origin: new URL(page.url()).origin }, data: { ...exported, edits: { ...exported.edits, planningPolicyId: 'not-approved' } } });
   expect(invalid.status()).toBe(400);
 });
 
