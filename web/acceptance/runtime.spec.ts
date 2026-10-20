@@ -200,6 +200,40 @@ test('chaos: failed preview request remains recoverable and rapid double clicks 
     await page.getByRole('button', { name: 'Return to Admin', exact: true }).click();
   } finally { chaosRole('planner'); }
 });
+
+test('chaos: client role tampering and mixed API verbs cannot mutate Reviewer state through either replica', async ({ page, context }) => {
+  await chaosLogin(page, 'reviewer');
+  try {
+    const base = await baseline(page);
+    const before = await get<Scenario>(page.request, `/api/scenarios/${base.scenarioId}`);
+    const scenariosBefore = await get<unknown[]>(page.request, '/api/scenarios');
+    await page.evaluate(() => { localStorage.setItem('role', 'admin'); localStorage.setItem('permissions', JSON.stringify(['scenario.edit', 'dataset.admit'])); });
+    await context.addCookies([{ name: 'cursus_view_as', value: 'admin', url: page.url() }]);
+    await page.reload(); await expect(page.getByText('Read-only access', { exact: true })).toBeVisible();
+    for (const origin of ['', peer]) {
+      for (const [method, path] of [
+        ['POST', `/api/scenarios/${base.scenarioId}/edit?role=admin`],
+        ['POST', `/api/scenarios/${base.scenarioId}/edits`],
+        ['POST', `/api/scenarios/${base.scenarioId}/solve`],
+        ['PATCH', `/api/scenarios/${base.scenarioId}`],
+        ['PUT', `/api/scenarios/${base.scenarioId}`],
+        ['DELETE', `/api/scenarios/${base.scenarioId}`],
+        ['POST', '/api/import/upload'], ['POST', '/api/import/datasets/no/convert'],
+      ]) {
+        const response = await page.request.fetch(`${origin}${path}`, { method,
+          headers: { origin: new URL(page.url()).origin, 'x-role': 'admin', 'x-tenant-id': 'foreign', 'x-http-method-override': 'GET' },
+          data: { role: 'admin', permissions: ['scenario.edit'], edit: { op: 'removeVehicle', vehicleId: base.vehicles[0]!.id } } });
+        expect(response.status(), `${method} ${path}`).toBe(403);
+      }
+      expect(await get<Scenario>(page.request, `${origin}/api/scenarios/${base.scenarioId}`)).toEqual(before);
+      expect(await get<unknown[]>(page.request, `${origin}/api/scenarios`)).toEqual(scenariosBefore);
+      expect((await page.request.get(`${origin}/api/plans/${base.id}/handoff.json`)).status()).toBe(200);
+    }
+    const identity = await get<{ role: string; effectiveRole: string }>(page.request, '/api/auth/me');
+    expect(identity.role).toBe('reviewer'); expect(identity.effectiveRole).toBe('reviewer');
+    await expect(page.getByRole('button', { name: /^(Optimize|Replan|View as Planner|View as Reviewer)$/ })).toHaveCount(0);
+  } finally { chaosRole('planner'); }
+});
 async function baseline(page: Page): Promise<Plan> {
   const days = await get<DaySummary[]>(page.request, '/api/days');
   expect(days).toHaveLength(2);
