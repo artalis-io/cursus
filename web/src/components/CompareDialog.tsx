@@ -14,9 +14,9 @@ function DeltaCell({ value, goodWhenNegative, unit = '' }: { value: number; good
   return <span className={`tnum font-medium ${good ? 'text-primary' : 'text-warning'}`}>{value > 0 ? '+' : ''}{value}{unit}</span>;
 }
 
-function CostDelta({ delta, baseTotal, currency, savedLabel }: { delta: number; baseTotal: number; currency: string; savedLabel: (p: number) => string }) {
+function CostDelta({ delta, baseTotal, currency, savedLabel, lostService }: { delta: number; baseTotal: number; currency: string; savedLabel: (p: number) => string; lostService: boolean }) {
   if (delta === 0) return <span className="tnum text-muted-foreground">±0</span>;
-  const good = delta < 0;
+  const good = delta < 0 && !lostService;
   const pctSaved = good && baseTotal > 0 ? Math.round((-delta / baseTotal) * 100) : 0;
   return (
     <span className={`tnum font-medium ${good ? 'text-primary' : 'text-warning'}`}>
@@ -52,7 +52,7 @@ export function CompareDialog({ open, onOpenChange, basePlanId, revisedPlanId, s
   }, [open, basePlanId, revisedPlanId, t]);
 
   const b = cmp?.base.stats, r = cmp?.revised.stats;
-  const servedDrop = cmp ? cmp.deltas.servedOrders < 0 : false;
+  const servedDrop = cmp ? cmp.deltas.servedOrders < 0 || cmp.newlyUnassigned.length > 0 : false;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -66,10 +66,10 @@ export function CompareDialog({ open, onOpenChange, basePlanId, revisedPlanId, s
               <div className="flex items-start gap-2 rounded-md border border-warning/40 bg-warning/10 p-2.5 text-sm text-warning">
                 <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0" />
                 <span>
-                  {t('compare.fewerServed', {
+                  {cmp.deltas.servedOrders < 0 ? t('compare.fewerServed', {
                     n: Math.abs(cmp.deltas.servedOrders),
                     save: cmp.deltas.totalDistanceKm < 0 ? t('compare.saveFragment', { km: km(Math.abs(cmp.deltas.totalDistanceKm)) }) : '',
-                  })}
+                  }) : t('readiness.lostService')}
                 </span>
               </div>
             )}
@@ -88,7 +88,7 @@ export function CompareDialog({ open, onOpenChange, basePlanId, revisedPlanId, s
                   base={money(cmp.base.cost.total, cmp.base.cost.currency, true)}
                   revised={money(cmp.revised.cost.total, cmp.revised.cost.currency, true)}
                   delta={cmp.costComparison === 'comparable' && cmp.deltas.costTotal != null
-                    ? <CostDelta delta={cmp.deltas.costTotal} baseTotal={cmp.base.cost.total} currency={cmp.revised.cost.currency} savedLabel={(p) => t('compare.saved', { p })} />
+                    ? <CostDelta delta={cmp.deltas.costTotal} baseTotal={cmp.base.cost.total} currency={cmp.revised.cost.currency} lostService={servedDrop} savedLabel={(p) => t('compare.saved', { p })} />
                     : <span className="text-xs font-medium text-warning" title={t('compare.notComparableDetail')}>{t('compare.notComparable')}</span>} />
               )}
             </div>
