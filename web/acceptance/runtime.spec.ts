@@ -78,10 +78,10 @@ test('chaos: a delayed Admin identity cannot undo a newer real Reviewer demotion
     await expect(page.getByText('Read-only access', { exact: true })).toBeVisible();
     const late = page.waitForResponse(r => r.url().endsWith('/api/auth/me'));
     held.release(); await settleResponse(page, await late);
-    await expect(page.getByText('Read-only access', { exact: true })).toBeVisible();
-    await expect(page.getByRole('button', { name: /^(Optimize|Replan|View as Planner|View as Reviewer)$/ })).toHaveCount(0);
     const base = await baseline(page);
     expect((await page.request.post(`/api/scenarios/${base.scenarioId}/solve`, { headers: { origin: new URL(page.url()).origin }, data: {} })).status()).toBe(403);
+    expect(await page.getByText('Read-only access', { exact: true }).isVisible()).toBe(true);
+    expect(await page.getByRole('button', { name: /^(Optimize|Replan|View as Planner|View as Reviewer)$/ }).count()).toBe(0);
   } finally { held.release(); chaosRole('planner'); }
 });
 
@@ -99,9 +99,9 @@ test('chaos: late authenticated refresh cannot resurrect the workspace after rea
     await expect(page.getByRole('heading', { name: 'Continue to Cursus' })).toBeVisible();
     const late = page.waitForResponse(r => r.url().endsWith('/api/auth/me'));
     held.release(); await settleResponse(page, await late);
-    await expect(page.getByRole('contentinfo')).toHaveCount(0);
-    await expect(page.getByRole('heading', { name: 'Continue to Cursus' })).toBeVisible();
     for (const origin of ['', peer]) expect((await page.request.get(`${origin}/api/days`)).status()).toBe(401);
+    expect(await page.getByRole('contentinfo').count()).toBe(0);
+    expect(await page.getByRole('heading', { name: 'Continue to Cursus' }).isVisible()).toBe(true);
   } finally { held.release(); chaosRole('planner'); }
 });
 
