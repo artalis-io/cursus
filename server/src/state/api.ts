@@ -28,7 +28,7 @@ import { comparePlans } from '../plan/compare.js';
 import { evaluateTrip } from '../plan/evaluate.js';
 import { loadDay, loadVehicleInfo } from '../data/dataset.js';
 import { loadConvertedDay, type ConvertedManifest } from './conversion.js';
-import { registerAccessControl } from '../access-control.js';
+import { registerAccessControl, viewIdentity } from '../access-control.js';
 
 export interface StatefulApiOptions { store: StatefulStore; tenantId: string; tenantName: string; auth?: StatefulAuthService; publicOrigin?: string; objects?: ObjectStore; maxUploadBytes?: number }
 
@@ -76,7 +76,7 @@ export async function createStatefulApi(options: StatefulApiOptions): Promise<Fa
     if (!options.auth) return { email: 'local@cursus', tenantId: options.tenantId, tenantName: options.tenantName, role: 'admin', build: buildInfo };
     const principal = await options.auth.authenticate(cookieValue(req.headers.cookie, 'cursus_session'));
     if (!principal || principal.tenantId !== options.tenantId) return reply.code(401).send({ error: 'authentication required' });
-    return { ...principal, tenantName: await options.store.getTenantName(principal.tenantId), build: buildInfo };
+    return { ...viewIdentity(principal, req.headers.cookie), tenantName: await options.store.getTenantName(principal.tenantId), build: buildInfo };
   });
   app.post('/api/auth/logout', async (req, reply) => {
     if (options.auth && req.headers.origin !== options.publicOrigin) return reply.code(403).send({ error: 'invalid request origin' });

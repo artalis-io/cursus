@@ -33,7 +33,7 @@ import { CATALOG, suggestMapping, type Entity } from './data/catalog.js';
 import { newUploadPath, uploadPath, sampleUpload, runIngestPreview, runGeocode, extFromName, type Mapping } from './data/onboard.js';
 import type { Plan } from './types.js';
 import { buildInfo } from './build-info.js';
-import { registerAccessControl } from './access-control.js';
+import { registerAccessControl, viewIdentity } from './access-control.js';
 
 const ENTITIES: Entity[] = ['orders', 'vehicles', 'routes'];
 
@@ -171,7 +171,7 @@ app.get('/api/auth/me', async (req, reply) => {
   if (!auth) return { email: 'local@cursus', tenantId: 'local', tenantName: config.authTenantName, role: 'admin', build: buildInfo };
   const principal = auth.authenticate(cookieValue(req.headers.cookie, 'cursus_session'));
   if (!principal) return reply.code(401).send({ error: 'authentication required' });
-  return { ...principal, tenantName: config.authTenantName, build: buildInfo };
+  return { ...viewIdentity(principal, req.headers.cookie), tenantName: config.authTenantName, build: buildInfo };
 });
 app.post('/api/auth/logout', async (req, reply) => {
   if (auth && req.headers.origin !== config.authPublicOrigin) return reply.code(403).send({ error: 'invalid request origin' });

@@ -146,6 +146,23 @@ test('approved exceptions remain visible and cannot be injected through scenario
   expect(invalid.status()).toBe(400);
 });
 
+test('Admin can preview Reviewer with enforced read-only API and return without changing membership', async ({ page }) => {
+  await login(page);
+  await page.getByRole('button', { name: 'View as Reviewer', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Return to Admin', exact: true })).toBeVisible();
+  await expect(page.getByText('Read-only access', { exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: /^(Optimize|Replan|Solve settings)$/ })).toHaveCount(0);
+  const identity = await get<{ role: string; effectiveRole: string }>(page.request, '/api/auth/me');
+  expect(identity.role).toBe('admin'); expect(identity.effectiveRole).toBe('reviewer');
+  const denied = await page.request.post('/api/solve', { headers: { origin: new URL(page.url()).origin }, data: {} });
+  expect(denied.status()).toBe(403);
+  await page.reload();
+  await expect(page.getByRole('button', { name: 'Return to Admin', exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Return to Admin', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'View as Reviewer', exact: true })).toBeVisible();
+  expect((await get<{ effectiveRole: string }>(page.request, '/api/auth/me')).effectiveRole).toBe('admin');
+});
+
 test('Reviewer can inspect and export but cannot edit, upload, compute or drag stops', async ({ page }) => {
   // Ensure a second, real Admin membership exists even when this test runs
   // alone, so the operator command can safely demote the promoted Reviewer.

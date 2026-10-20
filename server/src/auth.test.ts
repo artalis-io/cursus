@@ -16,6 +16,35 @@ import { registerAccessControl } from './access-control.js';
 import { parseRoleAllowlist } from './roles.js';
 import type { Principal } from './auth.js';
 
+test('Admin Reviewer preview is read-only, reversible, session-bound and cannot elevate Reviewers', async () => {
+  for (const asyncAuth of [false, true]) {
+    const app = Fastify();
+    let role: 'admin' | 'reviewer' = 'admin';
+    registerAccessControl(app, { tenantId: 'tenant', publicOrigin: 'https://cursus.example.test', authenticate: token => {
+      const principal = token ? { userId: 'u', email: 'admin@example.test', tenantId: 'tenant', role } : null;
+      return asyncAuth ? Promise.resolve(principal) : principal;
+    } });
+    app.post('/api/write', async () => ({ ok: true }));
+    const headers = { origin: 'https://cursus.example.test', cookie: 'cursus_session=one' };
+    try {
+      const enable = await app.inject({ method: 'POST', url: '/api/auth/view-as', headers, payload: { role: 'reviewer' } });
+      assert.equal(enable.statusCode, 200);
+      const cookie = String(enable.headers['set-cookie']).split(';')[0];
+      const preview = { ...headers, cookie: `${headers.cookie}; ${cookie}` };
+      assert.equal((await app.inject({ method: 'POST', url: '/api/write', headers: preview })).statusCode, 403);
+      assert.equal((await app.inject({ method: 'POST', url: '/api/auth/view-as', headers: preview, payload: { role: null } })).statusCode, 200);
+      assert.equal((await app.inject({ method: 'POST', url: '/api/write', headers })).statusCode, 200);
+      assert.equal((await app.inject({ method: 'POST', url: '/api/write', headers: { ...headers, cookie: `cursus_session=two; ${cookie}` } })).statusCode, 200);
+      assert.equal((await app.inject({ method: 'POST', url: '/api/auth/view-as', headers: { ...headers, origin: 'https://evil.test' }, payload: { role: null } })).statusCode, 403);
+      assert.equal((await app.inject({ method: 'POST', url: '/api/auth/view-as', headers, payload: { role: 'admin' } })).statusCode, 400);
+      role = 'reviewer';
+      assert.equal((await app.inject({ method: 'POST', url: '/api/auth/view-as', headers: preview, payload: { role: null } })).statusCode, 403);
+      assert.equal((await app.inject({ method: 'POST', url: '/api/write', headers })).statusCode, 403);
+      assert.equal((await app.inject({ method: 'POST', url: '/api/auth/view-as', payload: { role: 'reviewer' } })).statusCode, 401);
+    } finally { await app.close(); }
+  }
+});
+
 test('explicit role allowlists fail closed and preserve historical admin bootstrap', () => {
   assert.equal(parseRoleAllowlist('Admin@example.test\n').get('admin@example.test'), 'admin');
   const roles = parseRoleAllowlist('{"admins":["admin@example.test"],"reviewers":["reviewer@example.test"]}');

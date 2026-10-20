@@ -2,6 +2,16 @@
 
 ## Access roles
 
+Admins can select **View as Reviewer** in the account bar and **Return to Admin**
+to exit. This previews the same tenant with read-only controls and server-enforced
+mutation denial, without changing membership or impersonating another user.
+The mode survives reloads, is bound to the browser's current login session, and
+applies across that browser's tabs (other tabs refresh their controls on focus).
+Switching reloads the workspace and clears unsaved local edits. Already-running
+jobs are not cancelled. Real Reviewers cannot use this feature to elevate access.
+Authenticated deployments only; the intentionally auth-free local mode has no
+role-preview switch.
+
 Roles belong to a tenant membership, not to a browser, email domain, or request
 parameter. **Admin** retains all existing operations. **Reviewer** can inspect
 days, plans, scenarios, comparisons, provenance, maps and exports, but cannot
