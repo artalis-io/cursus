@@ -16,12 +16,12 @@ async function get<T>(request: APIRequestContext, path: string): Promise<T> {
   expect(response.status(), path).toBe(200);
   return response.json() as Promise<T>;
 }
-async function login(page: Page): Promise<string> {
+async function login(page: Page, email = 'admin@acceptance.example.test'): Promise<string> {
   await page.addInitScript(() => { try { localStorage.setItem('otto.helpSeen', '1'); } catch { /* no storage on error documents */ } });
   await page.goto('/');
   await expect(page.getByRole('contentinfo', { name: 'Account and build' })).toHaveCount(0);
   await expect(page.getByRole('heading', { name: 'Continue to Cursus' })).toBeVisible();
-  await page.getByRole('textbox', { name: 'Work email' }).fill('admin@acceptance.example.test');
+  await page.getByRole('textbox', { name: 'Work email' }).fill(email);
   await page.getByRole('button', { name: /Email me a sign-in link/ }).click();
   await expect(page.getByRole('status')).toContainText('Check your inbox');
   // Delivery is disabled. Read the actual test-only outbox instead of mocking
@@ -144,6 +144,50 @@ test('approved exceptions remain visible and cannot be injected through scenario
   expect(exported.edits.planningPolicyId).toBe('acceptance-approved-policy');
   const invalid = await page.request.post('/api/scenarios/import', { headers: { origin: new URL(page.url()).origin }, data: { ...exported, edits: { ...exported.edits, planningPolicyId: 'not-approved' } } });
   expect(invalid.status()).toBe(400);
+});
+
+test('Reviewer can inspect and export but cannot edit, upload, compute or drag stops', async ({ page }) => {
+  await login(page, 'reviewer@acceptance.example.test');
+  const principal = await get<{ role: string }>(page.request, '/api/auth/me');
+  expect(principal.role).toBe('reviewer');
+  await expect(page.getByRole('contentinfo')).toContainText('Reviewer');
+  await expect(page.getByText('Read-only access', { exact: true })).toBeVisible();
+  const mutations: string[] = [];
+  page.on('request', request => { if (!['GET', 'HEAD', 'OPTIONS'].includes(request.method())) mutations.push(request.url()); });
+  const plan = await baseline(page), vehicle = plan.vehicles[0]!;
+  await expect(page.getByRole('button', { name: /^(Optimize|Replan|Solve settings|Generate|Cancel)$/ })).toHaveCount(0);
+  await page.locator('aside').first().getByText(vehicle.ref, { exact: true }).click();
+  await expect(page.getByRole('button', { name: /Mark .* unavailable|Lock route|Unlock route/ })).toHaveCount(0);
+  await expect(page.locator('aside').last().locator('input[type=number]')).toHaveCount(0);
+  await page.locator('aside').first().getByRole('button', { name: 'Expand trips' }).first().click();
+  await page.locator('aside').first().getByRole('button', { name: /Trip 1/ }).first().click();
+  await expect(page.locator('[draggable=true]')).toHaveCount(0);
+  await expect(page.getByRole('button', { name: /Move .* (earlier|later)/ })).toHaveCount(0);
+  await page.getByRole('button', { name: 'Data', exact: true }).click();
+  await expect(page.getByRole('tab', { name: 'Upload', exact: true })).toHaveCount(0);
+  await expect(page.locator('input[type=file]')).toHaveCount(0);
+  await page.keyboard.press('Escape');
+  await page.getByRole('button', { name: 'Scenarios', exact: true }).click();
+  await expect(page.getByRole('button', { name: /Rename|Delete/ })).toHaveCount(0);
+  await expect(page.locator('input[type=file]')).toHaveCount(0);
+  await page.keyboard.press('Escape');
+  expect(mutations).toEqual([]);
+  for (const suffix of ['export.csv', 'routes.csv', 'routesheet.html', 'handoff.json'])
+    expect((await page.request.get(`/api/plans/${plan.id}/${suffix}`)).status()).toBe(200);
+  for (const base of ['', peer]) {
+    for (const [method, path, data] of [
+      ['POST', `/api/scenarios/${plan.scenarioId}/edit`, { edit: { op: 'removeVehicle', vehicleId: vehicle.id }, role: 'admin' }],
+      ['POST', `/api/scenarios/${plan.scenarioId}/solve`, {}], ['POST', `/api/plans/${plan.id}/evaluate`, {}],
+      ['POST', '/api/import/upload', {}], ['POST', `/api/plans/${plan.id}/narrate`, {}],
+      ['DELETE', `/api/scenarios/${plan.scenarioId}`, undefined],
+    ] as const) {
+      const response = await page.request.fetch(`${base}${path}`, { method, data, headers: { origin: new URL(page.url()).origin } });
+      expect(response.status(), path).toBe(403);
+    }
+  }
+  expect((await get<Plan>(page.request, `/api/plans/${plan.id}`)).stats).toEqual(plan.stats);
+  await page.getByRole('button', { name: 'Sign out', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Continue to Cursus' })).toBeVisible();
 });
 
 test('a hard GVW access violation is visible and cannot be labelled Baseline OK', async ({ page }) => {

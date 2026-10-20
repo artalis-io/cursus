@@ -19,6 +19,7 @@ import { HelpOverlay } from '@/components/HelpOverlay';
 import { api, pollJob } from '@/lib/api';
 import { useT, describeApiError } from '@/i18n';
 import type { DaySummary, Job, Objective, Plan, Scenario, ScenarioEdit, Selection } from '@/types';
+import { useCanEdit } from '@/permissions';
 
 /* The live solve budget for UI-triggered solves. The saved baseline used ~240s
  * to reach day-1 117/0; 60s gives a believable, genuinely-elapsed optimize/replan
@@ -123,6 +124,7 @@ function sameSel(a: Selection, b: Selection): boolean {
 }
 
 export default function App() {
+  const canEdit = useCanEdit();
   const t = useT();
   const [days, setDays] = useState<DaySummary[]>([]);
   const [dayId, setDayId] = useState<string>('day1');
@@ -457,7 +459,7 @@ export default function App() {
   const stopClock = useCallback(() => { setPlaying(false); setClockSec(null); }, []);
   useEffect(() => { if (plan) planRef.current = plan; }, [plan]);
   useEffect(() => { scenarioRef.current = scenario; }, [scenario]);
-  const previewTotals = usePreviewTotals(plan, scenario);
+  const previewTotals = usePreviewTotals(canEdit ? plan : null, scenario);
 
   if (error && !plan) return <div className="flex h-full items-center justify-center text-sm text-destructive">{t('app.failed', { e: error })}</div>;
   if (!plan || !baseline || !scenario) return <div className="flex h-full items-center justify-center text-sm text-muted-foreground">{t('app.loading')}</div>;

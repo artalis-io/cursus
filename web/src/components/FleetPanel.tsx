@@ -8,6 +8,7 @@ import { hhmm, km, ratio, pct } from '@/lib/format';
 import { setDraggedOrder, isOrderDrag, readDraggedOrder } from '@/lib/dnd';
 import { useT } from '@/i18n';
 import type { Plan, Scenario, Vehicle, Selection } from '@/types';
+import { useCanEdit } from '@/permissions';
 
 function FilterChip({ active, onClick, label, warn }: { active: boolean; onClick: () => void; label: string; warn?: boolean }) {
   return (
@@ -43,7 +44,8 @@ function VehicleCard({
   const selThisVeh = selection && selection.kind !== 'unassigned' && selection.vehicleId === vehicle.id;
   const selTrip = selection && (selection.kind === 'trip' || selection.kind === 'stop') ? selection.tripIndex : null;
   // Drop target: dragging an order here pins it to this vehicle (applied on Replan).
-  const canDrop = !!onAssignOrder && !solving && !removed;
+  const canEdit = useCanEdit();
+  const canDrop = canEdit && !!onAssignOrder && !solving && !removed;
   const [dragOver, setDragOver] = useState(false);
   const dropProps = canDrop ? {
     onDragOver: (e: React.DragEvent) => { if (isOrderDrag(e)) { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; if (!dragOver) setDragOver(true); } },
@@ -85,7 +87,7 @@ function VehicleCard({
                 </button>
               );
             })}
-            {removed ? (
+            {canEdit && (removed ? (
               <button type="button" disabled={solving} onClick={() => onRestore(vehicle.id)}
                 className="mt-1 flex w-full items-center justify-center gap-1.5 rounded border border-divider px-2 py-1 text-[11px] font-medium text-muted-foreground hover:bg-accent disabled:opacity-40">
                 <RotateCcw className="h-3 w-3" /> {t('fleet.restore')}
@@ -96,7 +98,7 @@ function VehicleCard({
                 className="mt-1 flex w-full items-center justify-center gap-1.5 rounded border border-warning/40 px-2 py-1 text-[11px] font-medium text-warning hover:bg-warning/10 disabled:opacity-40">
                 <Ban className="h-3 w-3" /> {t('fleet.markUnavailable')}
               </button>
-            )}
+            ))}
           </div>
         )}
       </div>
@@ -116,6 +118,7 @@ export function FleetPanel({
   onBulkAssign?: (orderNos: string[], vehicleId: number) => void;
 }) {
   const t = useT();
+  const canEdit = useCanEdit();
   const [query, setQuery] = useState('');
   // Bulk-select of unassigned orders -> assign many to one vehicle at once.
   const [bulkSel, setBulkSel] = useState<Set<string>>(new Set());
@@ -191,7 +194,7 @@ export function FleetPanel({
         </button>
         {unassignedOpen && (
           <div className="px-2 pb-2">
-            {onBulkAssign && plan.unassigned.length > 0 && (
+            {canEdit && onBulkAssign && plan.unassigned.length > 0 && (
               <div className="flex items-center gap-2 py-1 text-[10px] text-muted-foreground">
                 <button type="button" onClick={() => setBulkSel((prev) => prev.size === plan.unassigned.length ? new Set() : new Set(plan.unassigned.map((u) => u.orderNo)))}
                   className="rounded px-1 py-0.5 hover:bg-accent hover:text-foreground">
@@ -202,10 +205,10 @@ export function FleetPanel({
             )}
             <div className="max-h-44 overflow-y-auto">
               {plan.unassigned.map((u) => {
-                const canDrag = !!onAssignOrder && !solving;
+                const canDrag = canEdit && !!onAssignOrder && !solving;
                 return (
                   <div key={u.orderNo} className="flex items-center gap-1 border-t border-divider">
-                    {onBulkAssign && (
+                    {canEdit && onBulkAssign && (
                       <input type="checkbox" checked={bulkSel.has(u.orderNo)} onChange={() => toggleBulk(u.orderNo)}
                         aria-label={t('bulk.selectOrder', { o: u.orderNo })}
                         className="ml-1.5 h-3.5 w-3.5 shrink-0 accent-[var(--primary)]" />
@@ -226,7 +229,7 @@ export function FleetPanel({
               })}
               {plan.unassigned.length === 0 && <p className="py-2 pl-2 text-xs text-muted-foreground">{t('fleet.allAssigned')}</p>}
             </div>
-            {onBulkAssign && bulkSel.size > 0 && (
+            {canEdit && onBulkAssign && bulkSel.size > 0 && (
               <div className="mt-1.5 flex items-center gap-1.5 rounded-md border border-primary/40 bg-primary/5 p-1.5">
                 <select value={bulkVeh} onChange={(e) => setBulkVeh(e.target.value)} disabled={solving}
                   aria-label={t('bulk.toVehicle')}

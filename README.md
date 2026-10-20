@@ -1,5 +1,48 @@
 # Cursus
 
+## Access roles
+
+Roles belong to a tenant membership, not to a browser, email domain, or request
+parameter. **Admin** retains all existing operations. **Reviewer** can inspect
+days, plans, scenarios, comparisons, provenance, maps and exports, but cannot
+create, edit, reorder, exclude vehicles, pin/lock routes, import/upload/admit,
+evaluate, optimize/replan, cancel jobs, generate AI text, or administer access.
+Filters, playback, language selection and sign-out remain available. The UI
+shows a Reviewer badge and read-only label; the API independently rejects
+non-read operations with HTTP 403 before parsing uploads or executing work.
+Authentication and session housekeeping are allowed, not business mutations.
+
+Keep `CURSUS_AUTH_ALLOWED_EMAILS_FILE` external and private. Its existing plain
+email-list format still bootstraps Admin memberships. For explicit roles on
+**new** memberships, use JSON (example addresses only):
+
+```json
+{"admins":["admin@example.test"],"reviewers":["reviewer@example.test"]}
+```
+
+Existing database roles are never overwritten at login. For an existing member,
+run this operator-only command inside the configured application container
+(replace placeholders; no real addresses belong in Git):
+
+```bash
+node /app/server/dist/manage-role.js --tenant TENANT_ID --email MEMBER_EMAIL --role reviewer --approve
+```
+
+Use `--role admin` to promote. The command requires an existing membership,
+records an audit event, preserves sessions, and refuses to demote the last
+tenant Admin. There is no browser/API self-promotion endpoint. Roles are checked
+against the database on every request; open UIs refresh identity on focus,
+periodically, and after an authorization rejection. Removing an address from
+the private allowlist takes effect after restarting the application replicas.
+
+The Reviewer release adds PostgreSQL migration **002** (and a transactional
+SQLite upgrade), preserving existing Admins, sessions and application data.
+Back up before deployment; update both replicas before assigning Reviewers.
+Images declare schema compatibility **1..2**. Do not roll back to a schema-1-only
+image after migration; deployment checks reject that combination. Do not restore
+an old backup over new production writes. This feature does not itself deploy
+the application, migrate production, or change anyone's role.
+
 A polished dispatch-planning workspace over a sample logistics dataset: load a
 planning day, optimize deliveries with **Surge**, inspect vehicle trips, apply
 manual overrides, replan, and compare plans — on a **Carta** basemap with

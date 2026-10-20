@@ -10,6 +10,100 @@ import { workspaceBranding, gyermelyiIcon } from './workspace-branding.js';
 import { createStatefulApi } from './state/api.js';
 import type { StatefulStore } from './state/postgres.js';
 import type { StatefulAuthService } from './state/auth.js';
+import Fastify from 'fastify';
+import Database from 'better-sqlite3';
+import { registerAccessControl } from './access-control.js';
+import { parseRoleAllowlist } from './roles.js';
+import type { Principal } from './auth.js';
+
+test('explicit role allowlists fail closed and preserve historical admin bootstrap', () => {
+  assert.equal(parseRoleAllowlist('Admin@example.test\n').get('admin@example.test'), 'admin');
+  const roles = parseRoleAllowlist('{"admins":["admin@example.test"],"reviewers":["reviewer@example.test"]}');
+  assert.equal(roles.get('reviewer@example.test'), 'reviewer');
+  for (const value of ['', '{}', '{"owners":[]}', '{"admins":"admin@example.test"}',
+    '{"admins":["same@example.test"],"reviewers":["SAME@example.test"]}', '{"reviewers":[3]}']) assert.throws(() => parseRoleAllowlist(value));
+});
+
+test('both sync and async runtimes deny all Reviewer mutation methods before handlers', async () => {
+  for (const asyncAuth of [false, true]) {
+    const app = Fastify(); let mutations = 0;
+    let principal: Principal | null = { userId: 'u', email: 'reader@example.test', tenantId: 'tenant', role: 'reviewer' };
+    registerAccessControl(app, { tenantId: 'tenant', publicOrigin: 'https://cursus.example.test',
+      authenticate: () => asyncAuth ? Promise.resolve(principal) : principal });
+    app.get('/api/fixture', async () => ({ readable: true }));
+    for (const method of ['POST', 'PUT', 'PATCH', 'DELETE'] as const)
+      app.route({ method, url: '/api/fixture', handler: async () => { mutations++; return { changed: true }; } });
+    try {
+      assert.equal((await app.inject('/api/fixture')).statusCode, 200);
+      assert.equal((await app.inject({ method: 'HEAD', url: '/api/fixture' })).statusCode, 200);
+      for (const method of ['POST', 'PUT', 'PATCH', 'DELETE'] as const) {
+        const denied = await app.inject({ method, url: '/api/fixture?role=admin', headers: { origin: 'https://cursus.example.test', 'x-role': 'admin' } });
+        assert.equal(denied.statusCode, 403);
+      }
+      assert.equal(mutations, 0);
+      principal = { ...principal!, role: 'admin' };
+      assert.equal((await app.inject({ method: 'POST', url: '/api/fixture' })).statusCode, 403, 'Admin still requires same origin');
+      assert.equal((await app.inject({ method: 'POST', url: '/api/fixture', headers: { origin: 'https://cursus.example.test' } })).statusCode, 200);
+      principal = { ...principal, tenantId: 'other' };
+      assert.equal((await app.inject('/api/fixture')).statusCode, 401);
+      principal = null;
+      assert.equal((await app.inject('/api/fixture')).statusCode, 401);
+    } finally { await app.close(); }
+  }
+});
+
+test('stateful Reviewer API rejects edits, uploads, compute and future writes without touching repositories', async () => {
+  const store = { ensureTenant: async () => {}, listScenarios: async () => [] } as unknown as StatefulStore;
+  const auth = { initialize: async () => {}, authenticate: async () => ({ userId: 'u', tenantId: 't', email: 'reader@example.test', role: 'reviewer' }) } as unknown as StatefulAuthService;
+  const app = await createStatefulApi({ store, auth, tenantId: 't', tenantName: 'Tenant', publicOrigin: 'https://cursus.example.test' });
+  try {
+    assert.equal((await app.inject('/api/scenarios')).statusCode, 200);
+    for (const url of ['/api/scenarios', '/api/scenarios/import', '/api/scenarios/id/edit', '/api/scenarios/id/edits',
+      '/api/scenarios/id/rename', '/api/scenarios/id/solve', '/api/plans/id/evaluate', '/api/plans/id/narrate', '/api/compare/narrate',
+      '/api/import/upload', '/api/import/preview', '/api/import/geocode', '/api/import/admit',
+      '/api/import/datasets/id/validate', '/api/import/datasets/id/admit', '/api/import/datasets/id/convert', '/api/future-mutation'])
+      assert.equal((await app.inject({ method: 'POST', url, headers: { origin: 'https://cursus.example.test' } })).statusCode, 403, url);
+    for (const url of ['/api/scenarios/id', '/api/jobs/id', '/api/import/datasets/id'])
+      assert.equal((await app.inject({ method: 'DELETE', url, headers: { origin: 'https://cursus.example.test' } })).statusCode, 403, url);
+  } finally { await app.close(); }
+});
+
+test('SQLite upgrade preserves sessions and reads role changes without login elevation', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'cursus-reviewer-'));
+  const allow = join(root, 'allowed'), dbPath = join(root, 'auth.sqlite'), key = join(root, 'resend');
+  writeFileSync(allow, JSON.stringify({ admins: ['one@example.test', 'two@example.test'], reviewers: ['reader@example.test'] }));
+  writeFileSync(key, 'test-key');
+  const cfg = { databasePath: dbPath, allowedEmailsFile: allow, resendApiKeyFile: key, publicOrigin: 'https://cursus.example.test',
+    from: 'Cursus <login@example.test>', tenantId: 't', tenantName: 'Tenant', secureCookies: true };
+  const oldFetch = globalThis.fetch; let html = '';
+  globalThis.fetch = async (_input, init) => { html = JSON.parse(String(init?.body)).html; return new Response('{}'); };
+  let auth = new AuthService(cfg);
+  const login = async (email: string) => {
+    await auth.requestMagicLink(email);
+    const token = decodeURIComponent(html.match(/token=([^"<]+)/)![1]!);
+    const session = auth.consumeMagicLink(token); assert.ok(session); return session;
+  };
+  try {
+    const one = await login('one@example.test'); await login('two@example.test');
+    const reader = await login('reader@example.test');
+    assert.equal(auth.authenticate(reader)?.role, 'reviewer');
+    auth.setRole('one@example.test', 'reviewer');
+    assert.equal(auth.authenticate(one)?.role, 'reviewer');
+    await login('one@example.test');
+    assert.equal(auth.authenticate(one)?.role, 'reviewer', 'admin bootstrap config never elevates an existing membership');
+    assert.throws(() => auth.setRole('two@example.test', 'reviewer'), /last tenant administrator/);
+    assert.throws(() => auth.setRole('missing@example.test', 'reviewer'), /existing tenant membership/);
+    auth.setRole('one@example.test', 'admin');
+    auth.close();
+    const db = new Database(dbPath);
+    db.exec("DELETE FROM memberships WHERE role='reviewer'; ALTER TABLE memberships RENAME TO previous_memberships; CREATE TABLE memberships(tenant_id TEXT NOT NULL REFERENCES tenants(id),user_id TEXT NOT NULL REFERENCES users(id),role TEXT NOT NULL CHECK(role IN ('admin')),created_at INTEGER NOT NULL,PRIMARY KEY(tenant_id,user_id)); INSERT INTO memberships SELECT * FROM previous_memberships; DROP TABLE previous_memberships; DELETE FROM schema_migrations WHERE version=2;");
+    db.close();
+    auth = new AuthService(cfg);
+    assert.equal(auth.authenticate(one)?.role, 'admin', 'v1 migration preserves existing sessions and memberships');
+    auth.setRole('one@example.test', 'reviewer');
+    assert.equal(auth.authenticate(one)?.role, 'reviewer');
+  } finally { auth.close(); globalThis.fetch = oldFetch; rmSync(root, { recursive: true, force: true }); }
+});
 
 test('public workspace branding is explicitly deployment-scoped, not user-selected', async () => {
   for (const name of ['Gyermelyi', ' GYERMELYI ', 'Other customer', 'Gyermelyi demo', '<img src=x>']) {

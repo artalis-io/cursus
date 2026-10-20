@@ -32,7 +32,7 @@ FROM node:20.19.5-bookworm-slim@sha256:9e70124bd00f47dd023e349cd587132ae61892acc
 ARG OTTO_REVISION=unknown
 ARG CURSUS_REVISION=unknown
 ARG CURSUS_SCHEMA_MIN=1
-ARG CURSUS_SCHEMA_MAX=1
+ARG CURSUS_SCHEMA_MAX=2
 LABEL org.opencontainers.image.title="Cursus" \
       org.opencontainers.image.source="https://github.com/artalis-io/cursus" \
       org.opencontainers.image.revision="$CURSUS_REVISION" \

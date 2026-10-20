@@ -4,6 +4,7 @@ import { Button } from '@/components/ui/button';
 import { AccountBar, type AccountUser } from '@/components/AccountBar';
 import { WorkspaceNameContext } from '@/workspace';
 import { useI18n } from '@/i18n';
+import { RoleContext } from '@/permissions';
 
 export function AuthGate({ children }: { children: ReactNode }) {
   const { lang, setLang, t } = useI18n();
@@ -17,12 +18,21 @@ export function AuthGate({ children }: { children: ReactNode }) {
   const [workspaceBrand, setWorkspaceBrand] = useState(false);
 
   useEffect(() => {
-    fetch('/api/auth/me').then(async (r) => setUser(r.ok ? await r.json() as AccountUser : null)).catch(() => setUser(null));
+    let alive = true;
+    const refresh = () => { void fetch('/api/auth/me', { cache: 'no-store' }).then(async r => {
+      if (r.ok) { const value = await r.json() as AccountUser; if (alive) setUser(value); }
+      else if (r.status === 401 && alive) setUser(null);
+    }).catch(() => { if (alive) setUser(current => current === undefined ? null : current); }); };
+    refresh();
+    const timer = window.setInterval(refresh, 30_000);
+    window.addEventListener('focus', refresh);
+    window.addEventListener('cursus:refresh-auth', refresh);
     fetch('/api/auth/workspace').then(async (r) => {
       if (!r.ok) return;
       const data = await r.json() as { branding?: { name?: string; icon?: string } | null };
       setWorkspaceBrand(data.branding?.name === 'Gyermelyi' && data.branding.icon === '/api/auth/workspace/icon');
     }).catch(() => { /* Branding failure must never block sign-in. */ });
+    return () => { alive = false; window.clearInterval(timer); window.removeEventListener('focus', refresh); window.removeEventListener('cursus:refresh-auth', refresh); };
   }, []);
 
   if (user === undefined) return <div className="flex min-h-screen items-center justify-center bg-background text-muted-foreground">
@@ -40,7 +50,9 @@ export function AuthGate({ children }: { children: ReactNode }) {
 
   if (user) return <div className="flex h-full min-h-0 flex-col overflow-hidden">
     <WorkspaceNameContext.Provider value={user.tenantName?.trim() || null}>
-      <div data-testid="workspace-content" className="min-h-0 min-w-0 flex-1 overflow-hidden">{children}</div>
+      <RoleContext.Provider value={user.role === 'admin' ? 'admin' : 'reviewer'}>
+        <div data-testid="workspace-content" className="min-h-0 min-w-0 flex-1 overflow-hidden">{children}</div>
+      </RoleContext.Provider>
     </WorkspaceNameContext.Provider>
     <AccountBar user={user} signingOut={signingOut} error={logoutError} onSignOut={() => void logout()} />
   </div>;

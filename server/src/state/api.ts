@@ -28,6 +28,7 @@ import { comparePlans } from '../plan/compare.js';
 import { evaluateTrip } from '../plan/evaluate.js';
 import { loadDay, loadVehicleInfo } from '../data/dataset.js';
 import { loadConvertedDay, type ConvertedManifest } from './conversion.js';
+import { registerAccessControl } from '../access-control.js';
 
 export interface StatefulApiOptions { store: StatefulStore; tenantId: string; tenantName: string; auth?: StatefulAuthService; publicOrigin?: string; objects?: ObjectStore; maxUploadBytes?: number }
 
@@ -42,17 +43,8 @@ export async function createStatefulApi(options: StatefulApiOptions): Promise<Fa
   const scenarios = new ScenarioRepository(options.store, options.tenantId);
   const datasets = options.objects ? new DatasetRepository(options.store, options.objects, options.tenantId) : null;
   if (datasets) await app.register(fastifyMultipart, { limits: { files: 1, fileSize: options.maxUploadBytes ?? 25 * 1024 * 1024 } });
-  app.addHook('onRequest', async (req, reply) => {
-    // The SPA shell and its static assets must remain public so an
-    // unauthenticated browser can render the magic-link login screen.
-    const path = req.url.split('?', 1)[0]!;
-    const protectedPath = path.startsWith('/api/') || path === '/tiles.vector.json' || path.startsWith('/tiles/');
-    if (!options.auth || !protectedPath || path.startsWith('/api/health') || path.startsWith('/api/auth/')) return;
-    const principal = await options.auth.authenticate(cookieValue(req.headers.cookie, 'cursus_session'));
-    if (!principal || principal.tenantId !== options.tenantId) return reply.code(401).send({ error: 'authentication required' });
-    if (!['GET', 'HEAD', 'OPTIONS'].includes(req.method) && req.headers.origin !== options.publicOrigin)
-      return reply.code(403).send({ error: 'invalid request origin' });
-  });
+  registerAccessControl(app, options.auth ? { authenticate: token => options.auth!.authenticate(token),
+    tenantId: options.tenantId, publicOrigin: options.publicOrigin ?? '' } : undefined);
   app.get('/api/health', async () => ({ status: 'ok', service: 'cursus-api', runtime: 'stateful' }));
   app.get('/health/ready', async (_req, reply) => {
     try {
@@ -83,7 +75,7 @@ export async function createStatefulApi(options: StatefulApiOptions): Promise<Fa
     reply.header('Cache-Control', 'private, no-store');
     if (!options.auth) return { email: 'local@cursus', tenantId: options.tenantId, tenantName: options.tenantName, role: 'admin', build: buildInfo };
     const principal = await options.auth.authenticate(cookieValue(req.headers.cookie, 'cursus_session'));
-    if (!principal) return reply.code(401).send({ error: 'authentication required' });
+    if (!principal || principal.tenantId !== options.tenantId) return reply.code(401).send({ error: 'authentication required' });
     return { ...principal, tenantName: await options.store.getTenantName(principal.tenantId), build: buildInfo };
   });
   app.post('/api/auth/logout', async (req, reply) => {

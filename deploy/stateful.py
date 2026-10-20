@@ -129,7 +129,7 @@ def acceptance_evidence(path: Path | None, image_id: str, *, fresh: bool = True)
                   and report['cleanup_completed'] is True
                   and report['checkout_dirty'] is False and stats['expected'] >= 8
                   and stats['unexpected'] == stats['flaky'] == stats['skipped'] == 0
-                  and report['runtime']['migrations'] == [1]
+                  and report['runtime']['migrations'] in ([1], [1, 2])
                   and all(len(report['runtime']['native'][name]) == 64 for name in ['surge', 'matrix', 'nexus'])
                   and len(report['image_revision']) == 40 and len(report['otto_revision']) == 40
                   and report['harness_sha256'] == current_harness_digest() and age >= 0 and (not fresh or age <= 86400))
@@ -153,10 +153,19 @@ def update_application(cfg: dict[str, Any], image: str, approved: bool, action: 
                              "{{index .Config.Labels \"io.artalis.cursus.schema.minimum\"}}|"
                              "{{index .Config.Labels \"io.artalis.cursus.schema.maximum\"}}|{{.Id}}"])
         fields = inspect.stdout.strip().split("|", 2)
-        if len(fields) != 3 or fields[0] != "1" or fields[1] != "1":
-            raise DeploymentError(f"{node['name']}: image does not declare schema compatibility 1..1")
+        if len(fields) != 3 or fields[0] != "1" or fields[1] not in ("1", "2"):
+            raise DeploymentError(f"{node['name']}: image does not declare supported schema compatibility")
         acceptance_evidence(acceptance_report, fields[2], fresh=action != 'rollback')
         checked.append((node, fields[2]))
+    # Inspect both images/evidence before any write, then check the actual DB.
+    # A pre-Reviewer image must never be rolled back onto schema version 2.
+    for node, image_id in checked:
+        database = ssh(node, ['docker', 'exec', f"{node['project']}-{node['postgres_service']}-1",
+                              'psql', '-U', 'cursus', '-d', 'cursus', '-Atc', 'SELECT coalesce(max(version),0) FROM schema_migrations'])
+        schema = database.stdout.strip()
+        inspect = ssh(node, ['docker', 'image', 'inspect', image_id, '--format', '{{index .Config.Labels "io.artalis.cursus.schema.maximum"}}'])
+        if schema not in ('1', '2') or not inspect.stdout.strip().isdigit() or int(schema) > int(inspect.stdout.strip()):
+            raise DeploymentError(f"{node['name']}: image is incompatible with the current database schema")
     # Check the image and its acceptance evidence on BOTH nodes before any write.
     for node, image_id in checked:
         remote = (

@@ -8,6 +8,7 @@ import { useI18n, useT } from '@/i18n';
 import type { DaySummary, Objective, Plan, Scenario } from '@/types';
 import type { JobView } from '@/App';
 import { WorkspaceNameContext } from '@/workspace';
+import { useCanEdit } from '@/permissions';
 
 /* Localize the planning-day label from its ISO date (e.g. "kedd, 2026. május 6."
  * in Hungarian) rather than using the backend's fixed English label. */
@@ -54,6 +55,7 @@ export function TopBar({
 }) {
   const { lang, setLang } = useI18n();
   const t = useT();
+  const canEdit = useCanEdit();
   const workspaceName = useContext(WorkspaceNameContext);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [exportOpen, setExportOpen] = useState(false);
@@ -136,12 +138,12 @@ export function TopBar({
         {showCompare && (
           <IconButton onClick={onCompare} disabled={solving} label={t('topbar.compare')}><GitCompareArrows className="h-4 w-4" /></IconButton>
         )}
-        {isReplan && (
+        {canEdit && isReplan && (
           <IconButton onClick={onReset} disabled={solving} label={t('topbar.reset')}><RotateCcw className="h-4 w-4" /></IconButton>
         )}
 
         {/* Solve settings (objective + time budget) */}
-        <div className="relative">
+        {canEdit && <div className="relative">
           <Button variant="graphite" size="icon" className="h-8 w-8 border border-white/15" title={t('topbar.settings')} aria-label={t('topbar.settings')}
             onClick={() => setSettingsOpen((o) => !o)} disabled={solving}>
             <Settings2 className="h-4 w-4" />
@@ -176,11 +178,11 @@ export function TopBar({
               </label>
             </div>
           </Popover>
-        </div>
+        </div>}
 
         {/* Keep this footprint constant: conditionally inserting Cancel and
             allowing the timer label to grow used to shift the entire toolbar. */}
-        <div className="flex w-[190px] shrink-0 items-center gap-1.5">
+        {canEdit ? <div className="flex w-[190px] shrink-0 items-center gap-1.5">
           {solving ? (
             <Button variant="default" size="sm" disabled className="w-[152px] shrink-0 overflow-hidden">
               <Loader2 className="h-4 w-4 animate-spin" /> {isReplan ? t('topbar.replanning') : t('topbar.optimizing')} {job ? `${job.elapsedSec.toFixed(0)}s` : ''}
@@ -195,7 +197,7 @@ export function TopBar({
             className={`h-8 w-8 shrink-0 border border-white/15 ${solving ? '' : 'invisible'}`}>
             <X className="h-4 w-4" />
           </Button>
-        </div>
+        </div> : <span className="px-2 text-xs text-graphite-foreground/80">{t('account.readOnly')}</span>}
 
         {/* Export menu */}
         <div className="relative">

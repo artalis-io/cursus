@@ -83,7 +83,9 @@ class StatefulDeploymentTests(unittest.TestCase):
     def test_rollout_is_secondary_first_and_requires_schema_label(self, ssh):
         ssh.side_effect = [
             type("R", (), {"stdout": "1|1|sha256:candidate\n"})(),
-            type("R", (), {"stdout": "1|1|sha256:candidate\n"})(), type("R", (), {"stdout": ""})(),
+            type("R", (), {"stdout": "1|1|sha256:candidate\n"})(),
+            *[type("R", (), {"stdout": "1\n"})() for _ in range(4)],
+            type("R", (), {"stdout": ""})(),
             type("R", (), {"stdout": '{"status":"ready"}'})(),
             type("R", (), {"stdout": ""})(),
             type("R", (), {"stdout": '{"status":"ready"}'})(),
@@ -113,6 +115,16 @@ class StatefulDeploymentTests(unittest.TestCase):
             report = self.acceptance(); report['finished_at'] = '2020-01-01T00:00:00+00:00'
             path.write_text(json.dumps(report))
             self.assertEqual(deploy.acceptance_evidence(path, 'sha256:candidate', fresh=False)['status'], 'passed')
+
+    @patch.object(deploy, 'ssh')
+    def test_old_image_rollback_is_blocked_after_reviewer_migration(self, ssh):
+        ssh.side_effect = [type('R', (), {'stdout': '1|1|sha256:candidate'})() for _ in range(2)] + [
+            type('R', (), {'stdout': '2'})(), type('R', (), {'stdout': '1'})()]
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'report.json'; path.write_text(json.dumps(self.acceptance()))
+            with self.assertRaisesRegex(deploy.DeploymentError, 'incompatible'):
+                deploy.update_application(self.config(), 'cursus-app:old', True, 'rollback', path)
+        self.assertFalse(any('compose' in ' '.join(call.args[1]) for call in ssh.call_args_list))
 
     @patch.object(deploy, 'ssh')
     def test_peer_image_mismatch_prevents_all_deployment_mutations(self, ssh):
