@@ -4,6 +4,7 @@ import { TooltipProvider } from '@/components/ui/tooltip';
 import { Button } from '@/components/ui/button';
 import { TopBar } from '@/components/TopBar';
 import { KpiStrip } from '@/components/KpiStrip';
+import { ReadinessPanel } from '@/components/ReadinessPanel';
 import { FleetPanel } from '@/components/FleetPanel';
 import { Inspector } from '@/components/Inspector';
 import { Timeline } from '@/components/Timeline';
@@ -147,6 +148,7 @@ export default function App() {
   const [scenario, setScenario] = useState<Scenario | null>(null);
   const [plan, setPlan] = useState<Plan | null>(null);
   const [baseline, setBaseline] = useState<Plan | null>(null);
+  const [pendingEdits, setPendingEdits] = useState(0);
   // Selection history: browser-style back/forward through inspected items.
   const [nav, setNav] = useState<{ stack: Selection[]; idx: number }>({ stack: [null], idx: 0 });
   const selection = nav.stack[nav.idx] ?? null;
@@ -341,6 +343,7 @@ export default function App() {
   // on the map until Replan).
   const applyEdit = useCallback((edit: ScenarioEdit): Promise<boolean> => {
     if (!writeAccess.current.mounted || !writeAccess.current.edit) return Promise.resolve(false);
+    setPendingEdits(n => n + 1);
     const epoch = writeAccess.current.epoch;
     const queued = editQueue.current.then(async () => {
       if (!writeAccess.current.mounted || !writeAccess.current.edit || epoch !== writeAccess.current.epoch) return false;
@@ -355,6 +358,7 @@ export default function App() {
         return true;
       } catch (e) { setError(describeApiError(e, t)); return false; }
     });
+    void queued.finally(() => { if (writeAccess.current.mounted) setPendingEdits(n => Math.max(0, n - 1)); });
     editQueue.current = queued;
     return queued;
   }, [showToast, t]);
@@ -364,6 +368,7 @@ export default function App() {
     if (!writeAccess.current.mounted || !writeAccess.current.edit) return Promise.resolve(false);
     const epoch = writeAccess.current.epoch;
     if (edits.length === 0) return Promise.resolve(true);
+    setPendingEdits(n => n + 1);
     const queued = editQueue.current.then(async () => {
       if (!writeAccess.current.mounted || !writeAccess.current.edit || epoch !== writeAccess.current.epoch) return false;
       const current = scenarioRef.current;
@@ -377,6 +382,7 @@ export default function App() {
         return true;
       } catch (e) { setError(describeApiError(e, t)); return false; }
     });
+    void queued.finally(() => { if (writeAccess.current.mounted) setPendingEdits(n => Math.max(0, n - 1)); });
     editQueue.current = queued;
     return queued;
   }, [showToast, t]);
@@ -526,6 +532,7 @@ export default function App() {
         />
         <KpiStrip plan={plan} baseline={baseline} compare={isReplan} job={job}
           previewDistanceKm={previewTotals?.distanceKm} previewCostTotal={previewTotals?.costTotal} />
+        <ReadinessPanel plan={plan} baseline={baseline} scenario={scenario} pending={pendingEdits > 0 || !!solving} />
         {error && <div role="alert" className="border-b border-destructive/30 bg-destructive/10 px-4 py-2 text-sm text-destructive">{error}</div>}
 
         {dirty && changesCount > 0 && !solving && (

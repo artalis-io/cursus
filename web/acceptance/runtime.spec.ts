@@ -681,6 +681,10 @@ test('an immediate Replan waits for a delayed real edit response', async ({ page
   const edited = page.waitForResponse(r => r.request().method() === 'POST' && r.url().endsWith('/edit'));
   await inspector.locator('ol li').first().locator('button[data-move$=":1"]').click();
   await intercepted;
+  // Even before the edit response arrives, readiness cannot certify the old
+  // snapshot as current. This also covers the queue-to-server race window.
+  const readiness = page.locator('details[aria-label="Dispatch readiness"]');
+  await expect(readiness.locator('summary')).toContainText('Action required');
   const solving = finishSolve(page, async () => {
     await page.getByRole('button', { name: /^(Optimize|Replan)$/ }).click();
     release();
@@ -689,6 +693,77 @@ test('an immediate Replan waits for a delayed real edit response', async ({ page
   const plan = await solving;
   expect(plan.scenarioId).toBe(scenario.id);
   expect(plan.scenarioRevision).toBe(scenario.revision);
+  await expect(readiness.locator('summary')).toContainText('Matches the loaded scenario revision');
+});
+
+test('Reviewer can review snapshot readiness, baseline metrics and Hungarian details without write controls', async ({ page }) => {
+  await login(page, 'reviewer@acceptance.example.test');
+  const plan = await baseline(page);
+  const panel = page.locator('details[aria-label="Dispatch readiness"]');
+  await expect(panel.locator('summary')).toContainText(`${plan.stats.servedOrders}/${plan.stats.totalOrders} orders served`);
+  await panel.locator('summary').click();
+  await expect(panel.getByRole('region', { name: 'Coverage', exact: true })).toBeVisible();
+  const constraints = panel.getByRole('region', { name: 'Constraints', exact: true });
+  for (const label of ['Gross vehicle weight (GVW)', 'Tail-lift', 'Payload / pallet capacity', 'Time windows', 'Locked routes'])
+    await expect(constraints.getByText(label, { exact: true })).toBeVisible();
+  await expect(panel.getByRole('region', { name: 'Freshness', exact: true })).toContainText('Matches the loaded scenario revision');
+  await expect(panel.getByRole('region', { name: 'Comparison with day baseline' })).toContainText(plan.id);
+  await expect(panel).toContainText('not necessarily the original handwritten plan');
+  await expect(panel.getByRole('button')).toHaveCount(0);
+  await page.screenshot({ path: test.info().outputPath('readiness-en.png'), fullPage: true });
+  await page.getByRole('button', { name: 'HU', exact: true }).click();
+  await expect(panel).toHaveCount(0);
+  const magyar = page.locator('details[aria-label="Indítás előtti ellenőrzés"]');
+  await expect(magyar.getByText('Jármű-össztömeg (GVW)', { exact: true })).toBeVisible();
+  await page.screenshot({ path: test.info().outputPath('readiness-hu.png'), fullPage: true });
+  for (const width of [375, 1440]) {
+    await page.setViewportSize({ width, height: 900 });
+    expect(await magyar.evaluate(el => el.scrollWidth <= el.clientWidth + 1)).toBe(true);
+  }
+});
+
+test('native reduced-fleet result reports unassigned orders without claiming efficiency savings', async ({ page }) => {
+  await login(page);
+  const headers = { origin: new URL(page.url()).origin };
+  // The public fixture has exactly two GVW-eligible vehicles for PUBLIC-1.
+  // Removing both creates a genuinely unserviceable order, not a mocked plan.
+  const edited = await page.request.post('/api/scenarios/acceptance-day-base/edits', {
+    headers, data: { label: 'Readiness service-loss regression', edits: [
+      { op: 'removeVehicle', vehicleId: 10 }, { op: 'removeVehicle', vehicleId: 50 },
+    ] },
+  });
+  expect(edited.status()).toBe(200);
+  const scenario = await edited.json() as Scenario;
+  const submitted = await page.request.post(`/api/scenarios/${scenario.id}/solve`, { headers, data: { budgetSec: 1 } });
+  expect(submitted.status()).toBe(202);
+  const { jobId } = await submitted.json() as { jobId: string };
+  let job: Job;
+  await expect.poll(async () => {
+    job = await get<Job>(page.request, `${peer}/api/jobs/${jobId}`);
+    if (job.status === 'failed') throw Error(job.error);
+    return job.status;
+  }, { timeout: 60000 }).toBe('completed');
+  const revised = await get<Plan>(page.request, `${peer}/api/plans/${job!.planId}`);
+  expect(revised.unassigned.some(order => order.orderNo === 'PUBLIC-1')).toBe(true);
+  const delta = await get<{ deltas: { costTotal: number } }>(page.request,
+    `/api/compare?base=${(await baseline(page)).id}&revised=${revised.id}`);
+  expect(delta.deltas.costTotal).toBeLessThan(0); // exercises the former false "saved" branch
+  // Open through the real history UI, including its real scenario context.
+  await page.getByRole('button', { name: 'Plans', exact: true }).click();
+  const history = page.getByRole('dialog');
+  await history.locator(`[data-plan-id="${revised.id}"]`).getByRole('button', { name: 'Reopen', exact: true }).click();
+  await expect(history).toHaveCount(0);
+  const panel = page.locator('details[aria-label="Dispatch readiness"]');
+  await expect(panel.locator('summary')).toContainText('Action required');
+  await panel.locator('summary').click();
+  const coverage = panel.getByRole('region', { name: 'Coverage', exact: true });
+  await expect(coverage).toContainText('PUBLIC-1');
+  await expect(coverage).toContainText('Unassigned orders are reported by Surge');
+  await expect(panel).toContainText('Lower distance or cost must not be interpreted as efficiency savings');
+  await page.getByRole('button', { name: 'Compare', exact: true }).click();
+  const comparison = page.getByRole('dialog');
+  await expect(comparison).toContainText('Lower distance or cost must not be interpreted as efficiency savings');
+  await expect(comparison.getByText(/% saved/)).toHaveCount(0);
 });
 
 test('restart retains authentication, plans, and exports while the peer stays ready', async ({ page }) => {
