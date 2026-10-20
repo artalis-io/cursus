@@ -125,7 +125,7 @@ test('chaos: queued edits are dropped after demotion even when the first real ed
     held.release(); await settleResponse(page, await late);
     // A read through the peer is a network barrier after the queued microtasks.
     await get(page.request, `${peer}/api/scenarios`);
-    await expect.poll(() => edits).toBe(1);
+    expect(edits).toBe(1);
     await expect(page.getByRole('button', { name: /Mark .* unavailable|Lock route|Unlock route/ })).toHaveCount(0);
   } finally { held.release(); chaosRole('planner'); }
 });
@@ -134,7 +134,7 @@ test('chaos: open rename/upload dialogs lose their privileged controls immediate
   await chaosLogin(page, 'admin');
   try {
     await page.getByRole('button', { name: 'Data', exact: true }).click();
-    await page.getByRole('button', { name: 'Upload', exact: true }).click();
+    await page.getByRole('tab', { name: 'Upload', exact: true }).click();
     await expect(page.locator('input[type=file]').first()).toBeAttached();
     chaosRole('planner'); await page.evaluate(() => window.dispatchEvent(new Event('focus')));
     // Radix marks the background aria-hidden while the dialog is open.
@@ -376,7 +376,7 @@ test('Planner can manage scenario edits but cannot administer shared data or ele
   await expect(page.getByRole('contentinfo')).toContainText('Planner');
   await expect(page.getByRole('button', { name: /^View as / })).toHaveCount(0);
   await page.getByRole('button', { name: 'Data', exact: true }).click();
-  await expect(page.getByRole('button', { name: 'Upload', exact: true })).toHaveCount(0);
+  await expect(page.getByRole('tab', { name: 'Upload', exact: true })).toHaveCount(0);
   await page.keyboard.press('Escape');
   const plan = await baseline(page);
   const response = await page.request.post('/api/scenarios', { headers: { origin: new URL(page.url()).origin }, data: { from: plan.scenarioId, label: 'Planner copy' } });
