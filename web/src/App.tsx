@@ -131,9 +131,11 @@ export default function App() {
   // Async callbacks can outlive the render that authorized them. Recheck at
   // dispatch, and invalidate queued intents across revocation/regrant cycles.
   const writeAccess = useRef({ edit: canEdit, solve: canSolve, cancel: canCancel, epoch: 0, mounted: true });
-  if (writeAccess.current.edit !== canEdit || writeAccess.current.solve !== canSolve || writeAccess.current.cancel !== canCancel)
-    writeAccess.current.epoch++;
-  Object.assign(writeAccess.current, { edit: canEdit, solve: canSolve, cancel: canCancel });
+  useLayoutEffect(() => {
+    const access = writeAccess.current;
+    if (access.edit !== canEdit || access.solve !== canSolve || access.cancel !== canCancel) access.epoch++;
+    Object.assign(access, { edit: canEdit, solve: canSolve, cancel: canCancel });
+  }, [canEdit, canSolve, canCancel]);
   useLayoutEffect(() => {
     const access = writeAccess.current;
     access.mounted = true;
