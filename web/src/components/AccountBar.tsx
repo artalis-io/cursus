@@ -33,7 +33,9 @@ export function AccountBar({ user, signingOut, error, onSignOut }: {
   const parts = local.split(/[._+-]+/).filter(Boolean);
   const initials = (parts.length > 1 ? parts.slice(0, 2).map(p => Array.from(p)[0]).join('') : Array.from(local).slice(0, 2).join('')).toUpperCase();
   const revision = user.build?.revision;
-  const canPreview = user.role === 'admin' && (user.permissions?.includes('role.preview') ?? true);
+  // Effective permissions deliberately omit role.preview in preview mode.
+  // The real Admin identity must retain the explicit escape hatch.
+  const canPreview = user.role === 'admin' && (!!user.viewingAs || (user.permissions?.includes('role.preview') ?? true));
   return <footer aria-label={t('account.label')} className="shrink-0 border-t border-white/10 bg-graphite text-graphite-foreground">
     {error && <p role="alert" className="px-4 pt-2 text-xs">{t('account.signOutError')}</p>}
     {viewError && <p role="alert" className="px-4 pt-2 text-xs">{t('account.viewError')}</p>}
