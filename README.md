@@ -2,13 +2,13 @@
 
 ## Access roles
 
-Admins can select **View as Reviewer** in the account bar and **Return to Admin**
-to exit. This previews the same tenant with read-only controls and server-enforced
-mutation denial, without changing membership or impersonating another user.
+Admins can select **View as Planner** or **View as Reviewer** in the account bar
+and **Return to Admin** to exit. This previews the same tenant with the selected
+permissions enforced by both UI and API, without changing membership or impersonating another user.
 The mode survives reloads, is bound to the browser's current login session, and
 applies across that browser's tabs (other tabs refresh their controls on focus).
 Switching reloads the workspace and clears unsaved local edits. Already-running
-jobs are not cancelled. Real Reviewers cannot use this feature to elevate access.
+jobs are not cancelled. Planners and Reviewers cannot use this feature to elevate access.
 Authenticated deployments only; the intentionally auth-free local mode has no
 role-preview switch.
 
@@ -22,12 +22,44 @@ shows a Reviewer badge and read-only label; the API independently rejects
 non-read operations with HTTP 403 before parsing uploads or executing work.
 Authentication and session housekeeping are allowed, not business mutations.
 
+**Planner** can create/copy, rename and import scenarios referencing admitted
+tenant data; reorder stops, pin/assign orders, exclude/restore vehicles, lock
+routes, adjust scenario vehicle constraints, evaluate previews and optimize/replan.
+Planners cannot delete shared scenarios, upload/convert/admit/delete datasets,
+change membership roles or switch tenants. Scenarios are shared within the tenant,
+not private to their creator. Scenario adjustments do not modify master data or
+waive hard GVW, tail-lift or approved-exception policy checks.
+
+| Capability | Reviewer | Planner | Admin |
+|---|:---:|:---:|:---:|
+| Read tenant data and export | Yes | Yes | Yes |
+| Create/rename/import scenarios and edit dispatch decisions | No | Yes | Yes |
+| Evaluate, optimize/replan, AI generation where supported | No | Yes | Yes |
+| Delete shared scenarios or administer datasets | No | No | Yes |
+| Preview other roles | No | No | Yes |
+
+The canonical permission bundles are in `server/src/roles.ts` (also used by the
+frontend). `server/src/route-permissions.ts` classifies exact methods and route
+templates; unclassified business routes fail registration and unknown requests
+fail closed, even for Admin. Public authentication exceptions are method-specific.
+The UI consumes effective permissions from `/api/auth/me`, intersected with the
+canonical role grants. Unsupported stateful cancellation, dataset deletion and AI-generation
+endpoints are not advertised as usable controls; supported legacy behavior stays
+available. This does not introduce either endpoint into the stateful runtime.
+
+Every authorized business mutation records durable `access.authorized` intent
+before its handler runs, including actor ID, tenant, actual/effective role,
+permission, route and target IDs. Audit-store failure prevents execution. The
+record is an authorization intent, not proof of successful completion or an
+atomic business-change audit; no request payloads, tokens or email addresses are
+included. Existing repository transactions and worker fencing govern publication.
+
 Keep `CURSUS_AUTH_ALLOWED_EMAILS_FILE` external and private. Its existing plain
 email-list format still bootstraps Admin memberships. For explicit roles on
 **new** memberships, use JSON (example addresses only):
 
 ```json
-{"admins":["admin@example.test"],"reviewers":["reviewer@example.test"]}
+{"admins":["admin@example.test"],"planners":["planner@example.test"],"reviewers":["reviewer@example.test"]}
 ```
 
 Existing database roles are never overwritten at login. For an existing member,
@@ -38,22 +70,31 @@ run this operator-only command inside the configured application container
 node /app/server/dist/manage-role.js --tenant TENANT_ID --email MEMBER_EMAIL --role reviewer --approve
 ```
 
-Use `--role admin` to promote. The command requires an existing membership,
+Use `--role planner` or `--role admin` to change an existing member. The command requires an existing membership,
 records an audit event, preserves sessions, and refuses to demote the last
 tenant Admin. There is no browser/API self-promotion endpoint. Roles are checked
 against the database on every request; open UIs refresh identity on focus,
 periodically, and after an authorization rejection. Removing an address from
 the private allowlist takes effect after restarting the application replicas.
 Demotion blocks new requests; it does not cancel jobs previously authorized by
-an Admin or undo their completed writes.
+an Admin/Planner or undo their completed writes.
 
-The Reviewer release adds PostgreSQL migration **002** (and a transactional
-SQLite upgrade), preserving existing Admins, sessions and application data.
-Back up before deployment; update both replicas before assigning Reviewers.
-Images declare schema compatibility **1..2**. Do not roll back to a schema-1-only
+Reviewer adds migration **002** and Planner adds **003** (with transactional
+SQLite upgrades), preserving existing memberships, sessions and application data.
+Back up before deployment; update both replicas before assigning the new roles.
+Images declare schema compatibility **1..3**. Do not roll back to a schema-1/2-only
 image after migration; deployment checks reject that combination. Do not restore
 an old backup over new production writes. This feature does not itself deploy
 the application, migrate production, or change anyone's role.
+
+Role regression gates include independently specified permission-matrix tests,
+fail-closed route coverage, direct API denial/no-side-effect tests, SQLite and
+PostgreSQL upgrades, two-instance tenant/role checks, and Docker/Playwright flows
+using real authentication and native Surge. Browser tests exercise Admin and
+Planner reorder/exclusion/route-lock replans, Reviewer read-only/export, both
+Admin preview modes, English/Hungarian labels and mobile layouts. Private
+Gyermelyi/failure-workflow tests remain opt-in with external fixtures; they are
+not implied by the public fixture suite.
 
 A polished dispatch-planning workspace over a sample logistics dataset: load a
 planning day, optimize deliveries with **Surge**, inspect vehicle trips, apply

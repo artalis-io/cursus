@@ -77,8 +77,8 @@ def main():
                  f'OTTO_REVISION={otto_revision}', '-t', image, '.'])
         inspected = json.loads(run(['docker', 'image', 'inspect', image], capture=True).stdout)[0]
         labels = inspected['Config']['Labels'] or {}
-        if labels.get('io.artalis.cursus.schema.minimum') != '1' or labels.get('io.artalis.cursus.schema.maximum') != '2':
-            raise ValueError('image must declare supported schema versions 1..2')
+        if labels.get('io.artalis.cursus.schema.minimum') != '1' or labels.get('io.artalis.cursus.schema.maximum') != '3':
+            raise ValueError('image must declare supported schema versions 1..3')
         report.update(image_id=inspected['Id'], architecture=inspected['Architecture'],
                       image_revision=labels.get('org.opencontainers.image.revision'),
                       otto_revision=labels.get('io.artalis.otto.revision'))
@@ -87,7 +87,7 @@ def main():
             path.chmod(0o755)  # disposable fixture credentials, readable by UID 10001
             for name, value in {'database-url': 'postgres://cursus:integration-only@postgres:5432/cursus',
                                 'access-key': 'integration', 'secret-key': 'integration',
-                                'allowlist': json.dumps({'admins': ['admin@acceptance.example.test'], 'reviewers': ['reviewer@acceptance.example.test']}),
+                                'allowlist': json.dumps({'admins': ['admin@acceptance.example.test'], 'planners': ['planner@acceptance.example.test'], 'reviewers': ['reviewer@acceptance.example.test']}),
                                 'unused-map.vlg': 'not a geographic index; unused by this suite'}.items():
                 (path / name).write_text(value + '\n')
                 (path / name).chmod(0o444)

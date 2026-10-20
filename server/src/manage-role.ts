@@ -10,7 +10,7 @@ import { StatefulStore } from './state/postgres.js';
 
 const { values } = parseArgs({ options: { email: { type: 'string' }, role: { type: 'string' }, tenant: { type: 'string' }, approve: { type: 'boolean' } } });
 if (!values.approve || !values.email || !isRole(values.role) || values.tenant !== config.authTenantId)
-  throw new Error('requires --email, --role admin|reviewer, --tenant matching CURSUS_TENANT_ID, and --approve');
+  throw new Error('requires --email, --role admin|planner|reviewer, --tenant matching CURSUS_TENANT_ID, and --approve');
 if (config.runtimeMode === 'stateful') {
   const url = config.databaseUrlFile ? (await readFile(config.databaseUrlFile, 'utf8')).trim() : config.databaseUrl;
   if (!url) throw new Error('database configuration required');

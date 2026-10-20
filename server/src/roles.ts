@@ -1,6 +1,17 @@
-export type Role = 'admin' | 'reviewer';
-export const isRole = (value: unknown): value is Role => value === 'admin' || value === 'reviewer';
-export const canWrite = (role: unknown): boolean => role === 'admin';
+export type Role = 'admin' | 'planner' | 'reviewer';
+export const isRole = (value: unknown): value is Role => value === 'admin' || value === 'planner' || value === 'reviewer';
+export const permissions = ['workspace.read', 'workspace.export', 'scenario.create', 'scenario.rename',
+  'scenario.edit', 'scenario.import', 'scenario.delete', 'plan.evaluate', 'optimization.submit',
+  'optimization.cancel', 'analysis.generate', 'dataset.upload', 'dataset.convert', 'dataset.validate',
+  'dataset.admit', 'dataset.delete', 'role.preview'] as const;
+export type Permission = typeof permissions[number];
+const read: readonly Permission[] = ['workspace.read', 'workspace.export'];
+const planning: readonly Permission[] = [...read, 'scenario.create', 'scenario.rename', 'scenario.edit',
+  'scenario.import', 'plan.evaluate', 'optimization.submit', 'optimization.cancel', 'analysis.generate'];
+export const rolePermissions: Readonly<Record<Role, readonly Permission[]>> = {
+  admin: permissions, planner: planning, reviewer: read,
+};
+export const hasPermission = (role: unknown, permission: Permission): boolean => isRole(role) && rolePermissions[role].includes(permission);
 export const isReadMethod = (method: string): boolean => ['GET', 'HEAD', 'OPTIONS'].includes(method);
 
 /** Private operator configuration. Plain legacy allowlists retain their admin
@@ -18,9 +29,9 @@ export function parseRoleAllowlist(source: string): Map<string, Role> {
     let data: unknown;
     try { data = JSON.parse(source); }
     catch { throw new Error('invalid authentication role configuration'); }
-    if (!data || typeof data !== 'object' || Array.isArray(data) || Object.keys(data).some(k => !['admins', 'reviewers'].includes(k)))
+    if (!data || typeof data !== 'object' || Array.isArray(data) || Object.keys(data).some(k => !['admins', 'planners', 'reviewers'].includes(k)))
       throw new Error('invalid authentication role configuration');
-    for (const [key, role] of [['admins', 'admin'], ['reviewers', 'reviewer']] as const) {
+    for (const [key, role] of [['admins', 'admin'], ['planners', 'planner'], ['reviewers', 'reviewer']] as const) {
       const values = (data as Record<string, unknown>)[key] ?? [];
       if (!Array.isArray(values)) throw new Error('authentication role lists must be arrays');
       for (const email of values) add(email, role);

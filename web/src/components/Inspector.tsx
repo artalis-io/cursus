@@ -11,7 +11,7 @@ import { api } from '@/lib/api';
 import { useT } from '@/i18n';
 import { useEffect, useRef, useState } from 'react';
 import type { Plan, Scenario, Selection, Vehicle, Trip, Stop, ValidationViolation, VehicleConstraintPatch } from '@/types';
-import { useCanEdit } from '@/permissions';
+import { usePermission } from '@/permissions';
 
 function Field({ label, value, warn }: { label: string; value: string; warn?: boolean }) {
   return (
@@ -468,7 +468,7 @@ export function Inspector({ plan, scenario, selection, onSelect, onBack, onForwa
   onClearSequence?: (vehicleId: number) => void;
 }) {
   const t = useT();
-  const canEdit = useCanEdit();
+  const canEdit = usePermission('scenario.edit');
   const overrideCount = scenario.pins.length + scenario.forbids.length;
   const currency = plan.cost?.currency ?? 'HUF';
   const nav = { onBack, onForward, canGoBack, canGoForward };

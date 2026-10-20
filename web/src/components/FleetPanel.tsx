@@ -8,7 +8,7 @@ import { hhmm, km, ratio, pct } from '@/lib/format';
 import { setDraggedOrder, isOrderDrag, readDraggedOrder } from '@/lib/dnd';
 import { useT } from '@/i18n';
 import type { Plan, Scenario, Vehicle, Selection } from '@/types';
-import { useCanEdit } from '@/permissions';
+import { usePermission } from '@/permissions';
 
 function FilterChip({ active, onClick, label, warn }: { active: boolean; onClick: () => void; label: string; warn?: boolean }) {
   return (
@@ -44,7 +44,7 @@ function VehicleCard({
   const selThisVeh = selection && selection.kind !== 'unassigned' && selection.vehicleId === vehicle.id;
   const selTrip = selection && (selection.kind === 'trip' || selection.kind === 'stop') ? selection.tripIndex : null;
   // Drop target: dragging an order here pins it to this vehicle (applied on Replan).
-  const canEdit = useCanEdit();
+  const canEdit = usePermission('scenario.edit');
   const canDrop = canEdit && !!onAssignOrder && !solving && !removed;
   const [dragOver, setDragOver] = useState(false);
   const dropProps = canDrop ? {
@@ -118,7 +118,7 @@ export function FleetPanel({
   onBulkAssign?: (orderNos: string[], vehicleId: number) => void;
 }) {
   const t = useT();
-  const canEdit = useCanEdit();
+  const canEdit = usePermission('scenario.edit');
   const [query, setQuery] = useState('');
   // Bulk-select of unassigned orders -> assign many to one vehicle at once.
   const [bulkSel, setBulkSel] = useState<Set<string>>(new Set());

@@ -62,7 +62,7 @@ export class StatefulAuthService {
     if (!session) return null;
     const { rows } = await this.store.pool.query<Principal>(`UPDATE sessions s SET last_seen_at=now() FROM users u,memberships m
       WHERE s.token_hash=$1 AND s.revoked_at IS NULL AND s.expires_at>=now() AND u.id=s.user_id
-      AND m.user_id=s.user_id AND m.tenant_id=s.tenant_id AND m.role IN ('admin','reviewer')
+      AND m.user_id=s.user_id AND m.tenant_id=s.tenant_id AND m.role IN ('admin','planner','reviewer')
       RETURNING s.user_id "userId",s.tenant_id "tenantId",u.email,m.role`, [sha256(session)]);
     const row = rows[0];
     return row && isRole(row.role) && row.tenantId === this.config.tenantId && this.allowed.has(row.email) ? row : null;
@@ -80,7 +80,7 @@ export class StatefulAuthService {
       if (!member) throw new Error('existing tenant membership required');
       if (member.role === role) return;
       const admins = await client.query("SELECT count(*)::int n FROM memberships WHERE tenant_id=$1 AND role='admin'", [this.config.tenantId]);
-      if (member.role === 'admin' && role === 'reviewer' && admins.rows[0]!.n <= 1) throw new Error('cannot demote the last tenant administrator');
+      if (member.role === 'admin' && role !== 'admin' && admins.rows[0]!.n <= 1) throw new Error('cannot demote the last tenant administrator');
       await client.query('UPDATE memberships SET role=$1 WHERE tenant_id=$2 AND user_id=$3', [role, this.config.tenantId, member.userId]);
       await client.query("INSERT INTO audit_events(tenant_id,user_id,action,detail) VALUES($1,$2,'membership.role_changed',$3)",
         [this.config.tenantId, member.userId, { previousRole: member.role, role, actor: 'operator' }]);
@@ -89,6 +89,11 @@ export class StatefulAuthService {
 
   async logout(session: string | undefined): Promise<void> {
     if (session) await this.store.pool.query('UPDATE sessions SET revoked_at=now() WHERE token_hash=$1', [sha256(session)]);
+  }
+
+  async recordAccessAudit(principal: Principal, detail: Record<string, unknown>): Promise<void> {
+    await this.store.pool.query("INSERT INTO audit_events(tenant_id,user_id,action,detail) VALUES($1,$2,'access.authorized',$3)",
+      [principal.tenantId, principal.userId, detail]);
   }
   cookie(token: string): string { return `cursus_session=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=604800${this.config.secureCookies ? '; Secure' : ''}`; }
   clearCookie(): string { return `cursus_session=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0${this.config.secureCookies ? '; Secure' : ''}`; }

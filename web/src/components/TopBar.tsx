@@ -8,7 +8,7 @@ import { useI18n, useT } from '@/i18n';
 import type { DaySummary, Objective, Plan, Scenario } from '@/types';
 import type { JobView } from '@/App';
 import { WorkspaceNameContext } from '@/workspace';
-import { useCanEdit } from '@/permissions';
+import { usePermission } from '@/permissions';
 
 /* Localize the planning-day label from its ISO date (e.g. "kedd, 2026. május 6."
  * in Hungarian) rather than using the backend's fixed English label. */
@@ -55,7 +55,8 @@ export function TopBar({
 }) {
   const { lang, setLang } = useI18n();
   const t = useT();
-  const canEdit = useCanEdit();
+  const canEdit = usePermission('optimization.submit');
+  const canCancel = usePermission('optimization.cancel');
   const workspaceName = useContext(WorkspaceNameContext);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [exportOpen, setExportOpen] = useState(false);
@@ -192,11 +193,11 @@ export function TopBar({
               {isReplan ? <Repeat className="h-4 w-4" /> : <Play className="h-4 w-4" />} {isReplan ? t('topbar.replan') : t('topbar.optimize')}
             </Button>
           )}
-          <Button variant="graphite" size="icon" aria-label={t('topbar.cancel')} onClick={onCancel} title={t('topbar.cancel')}
+          {canCancel && <Button variant="graphite" size="icon" aria-label={t('topbar.cancel')} onClick={onCancel} title={t('topbar.cancel')}
             disabled={!solving} aria-hidden={!solving}
             className={`h-8 w-8 shrink-0 border border-white/15 ${solving ? '' : 'invisible'}`}>
             <X className="h-4 w-4" />
-          </Button>
+          </Button>}
         </div> : <span className="px-2 text-xs text-graphite-foreground/80">{t('account.readOnly')}</span>}
 
         {/* Export menu */}

@@ -4,7 +4,7 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { Button } from '@/components/ui/button';
 import { hhmm } from '@/lib/format';
 import { useT } from '@/i18n';
-import { useCanEdit } from '@/permissions';
+import { usePermission } from '@/permissions';
 import type { Plan, Scenario, ScenarioEdit, VehicleOverride } from '@/types';
 
 /* The staged-edit stack: every manual change (remove vehicle, pin/forbid an
@@ -16,7 +16,7 @@ export function ChangesDialog({ open, onOpenChange, plan, scenario, dirty, solvi
   onUndo: (edit: ScenarioEdit) => void; onDiscardAll: () => void; onReplan: () => void;
 }) {
   const t = useT();
-  const canEdit = useCanEdit();
+  const canEdit = usePermission('scenario.edit');
   const refOf = (id: number): string => plan.vehicles.find((v) => v.id === id)?.ref ?? `#${id}`;
   const custOf = (orderNo: string): string => {
     for (const v of plan.vehicles) for (const tr of v.trips) for (const s of tr.stops) if (s.orderNo === orderNo) return s.customer ?? orderNo;
@@ -112,7 +112,7 @@ function Group({ title, icon, children }: { title: string; icon: React.ReactNode
 }
 
 function Row({ label, detail, onUndo }: { label: string; detail?: string; onUndo: () => void }) {
-  const canEdit = useCanEdit();
+  const canEdit = usePermission('scenario.edit');
   return (
     <div className="flex items-center gap-2 rounded border border-divider px-2 py-1.5 text-xs">
       <span className="min-w-0 flex-1 truncate font-medium">{label}</span>

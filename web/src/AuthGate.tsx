@@ -4,7 +4,7 @@ import { Button } from '@/components/ui/button';
 import { AccountBar, type AccountUser } from '@/components/AccountBar';
 import { WorkspaceNameContext } from '@/workspace';
 import { useI18n } from '@/i18n';
-import { RoleContext } from '@/permissions';
+import { RoleContext, PermissionsContext } from '@/permissions';
 
 export function AuthGate({ children }: { children: ReactNode }) {
   const { lang, setLang, t } = useI18n();
@@ -51,8 +51,10 @@ export function AuthGate({ children }: { children: ReactNode }) {
 
   if (user) return <div className="flex h-full min-h-0 flex-col overflow-hidden">
     <WorkspaceNameContext.Provider value={user.tenantName?.trim() || null}>
-      <RoleContext.Provider value={(user.effectiveRole || user.role) === 'admin' ? 'admin' : 'reviewer'}>
+      <RoleContext.Provider value={user.effectiveRole || user.role}>
+        <PermissionsContext.Provider value={user.permissions ?? null}>
         <div data-testid="workspace-content" className="min-h-0 min-w-0 flex-1 overflow-hidden">{children}</div>
+        </PermissionsContext.Provider>
       </RoleContext.Provider>
     </WorkspaceNameContext.Provider>
     <AccountBar user={user} signingOut={signingOut} error={logoutError} onSignOut={() => void logout()} />

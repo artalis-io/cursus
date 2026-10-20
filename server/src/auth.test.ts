@@ -13,8 +13,87 @@ import type { StatefulAuthService } from './state/auth.js';
 import Fastify from 'fastify';
 import Database from 'better-sqlite3';
 import { registerAccessControl } from './access-control.js';
-import { parseRoleAllowlist } from './roles.js';
+import { parseRoleAllowlist, hasPermission, permissions, type Role, type Permission } from './roles.js';
+import { routePermission } from './route-permissions.js';
 import type { Principal } from './auth.js';
+
+test('permission grants match an independent specification, not production-derived expectations', () => {
+  const expected: Record<Role, string[]> = {
+    reviewer: ['workspace.read', 'workspace.export'],
+    planner: ['workspace.read', 'workspace.export', 'scenario.create', 'scenario.rename', 'scenario.edit',
+      'scenario.import', 'plan.evaluate', 'optimization.submit', 'optimization.cancel', 'analysis.generate'],
+    admin: ['workspace.read', 'workspace.export', 'scenario.create', 'scenario.rename', 'scenario.edit', 'scenario.import',
+      'scenario.delete', 'plan.evaluate', 'optimization.submit', 'optimization.cancel', 'analysis.generate',
+      'dataset.upload', 'dataset.convert', 'dataset.validate', 'dataset.admit', 'dataset.delete', 'role.preview'],
+  };
+  for (const role of ['admin', 'planner', 'reviewer'] as const)
+    assert.deepEqual(permissions.filter(p => hasPermission(role, p)).sort(), expected[role].sort());
+  for (const role of [null, undefined, 'owner', 'ADMIN'])
+    for (const permission of permissions) assert.equal(hasPermission(role, permission), false);
+  assert.equal(parseRoleAllowlist('{"planners":["planner@example.test"]}').get('planner@example.test'), 'planner');
+});
+
+test('unclassified routes fail registration, including GET; public exceptions are method-specific', async () => {
+  for (const method of ['GET', 'POST', 'DELETE'] as const) {
+    const app = Fastify(); registerAccessControl(app);
+    assert.throws(() => app.route({ method, url: '/api/new-feature', handler: async () => ({}) }), /Unclassified/);
+    await app.close();
+  }
+  assert.equal(routePermission('POST', '/api/auth/me'), undefined);
+  assert.equal(routePermission('GET', '/api/import/admit'), undefined);
+});
+
+test('an unavailable audit store prevents authorized business work from executing', async () => {
+  const app = Fastify(); let touched = false;
+  registerAccessControl(app, { tenantId: 't', publicOrigin: 'https://cursus.example.test',
+    authenticate: () => ({ userId: 'u', email: 'p@example.test', tenantId: 't', role: 'planner' }),
+    audit: () => { throw Error('audit unavailable'); } });
+  app.post('/api/scenarios', async () => { touched = true; return {}; });
+  try {
+    assert.equal((await app.inject({ method: 'POST', url: '/api/scenarios', headers: { origin: 'https://cursus.example.test' } })).statusCode, 500);
+    assert.equal(touched, false);
+  } finally { await app.close(); }
+});
+
+test('Planner API permission matrix blocks native work, object writes and shared deletion before handlers', async () => {
+  for (const asyncAuth of [false, true]) {
+    const app = Fastify(); const touched: string[] = [], audited: Record<string, unknown>[] = [];
+    let role: Role = 'planner';
+    registerAccessControl(app, { tenantId: 't', publicOrigin: 'https://cursus.example.test',
+      authenticate: () => { const p = { userId: 'u', email: 'p@example.test', tenantId: 't', role }; return asyncAuth ? Promise.resolve(p) : p; },
+      audit: (_p, detail) => { audited.push(detail); } });
+    const cases: [string, string, Permission, boolean][] = [
+      ['POST', '/api/scenarios', 'scenario.create', true], ['POST', '/api/scenarios/:id/edit', 'scenario.edit', true],
+      ['POST', '/api/scenarios/:id/edits', 'scenario.edit', true], ['POST', '/api/scenarios/:id/rename', 'scenario.rename', true],
+      ['POST', '/api/scenarios/import', 'scenario.import', true], ['POST', '/api/scenarios/:id/solve', 'optimization.submit', true],
+      ['POST', '/api/plans/:id/evaluate', 'plan.evaluate', true], ['DELETE', '/api/jobs/:id', 'optimization.cancel', true],
+      ['POST', '/api/plans/:id/narrate', 'analysis.generate', true], ['POST', '/api/compare/narrate', 'analysis.generate', true],
+      ['DELETE', '/api/scenarios/:id', 'scenario.delete', false], ['DELETE', '/api/import/datasets/:id', 'dataset.delete', false],
+      ['POST', '/api/import/upload', 'dataset.upload', false], ['POST', '/api/import/preview', 'dataset.upload', false],
+      ['POST', '/api/import/geocode', 'dataset.convert', false], ['POST', '/api/import/admit', 'dataset.admit', false],
+      ['POST', '/api/import/datasets/:id/validate', 'dataset.validate', false],
+      ['POST', '/api/import/datasets/:id/admit', 'dataset.admit', false], ['POST', '/api/import/datasets/:id/convert', 'dataset.convert', false],
+    ];
+    for (const [method, url] of cases) app.route({ method: method as 'POST' | 'DELETE', url,
+      handler: async () => { touched.push(`${method} ${url}`); return { ok: true }; } });
+    try {
+      for (const [method, route, permission, allowed] of cases) {
+        assert.equal(routePermission(method, route), permission);
+        const before = touched.length;
+        const response = await app.inject({ method: method as 'POST' | 'DELETE', url: route.replace(':id', 'id'),
+          headers: { origin: 'https://cursus.example.test', 'x-role': 'admin' } });
+        assert.equal(response.statusCode, allowed ? 200 : 403, route);
+        assert.equal(touched.length, before + Number(allowed));
+      }
+      assert.equal(audited.length, cases.filter(c => c[3]).length);
+      assert.ok(audited.every(e => e.role === 'planner' && e.effectiveRole === 'planner'));
+      role = 'reviewer';
+      assert.equal((await app.inject({ method: 'POST', url: '/api/scenarios', headers: { origin: 'https://cursus.example.test' } })).statusCode, 403);
+      role = 'admin';
+      assert.equal((await app.inject({ method: 'DELETE', url: '/api/scenarios/id', headers: { origin: 'https://cursus.example.test' } })).statusCode, 200);
+    } finally { await app.close(); }
+  }
+});
 
 test('Admin Reviewer preview is read-only, reversible, session-bound and cannot elevate Reviewers', async () => {
   for (const asyncAuth of [false, true]) {
@@ -24,7 +103,7 @@ test('Admin Reviewer preview is read-only, reversible, session-bound and cannot 
       const principal = token ? { userId: 'u', email: 'admin@example.test', tenantId: 'tenant', role } : null;
       return asyncAuth ? Promise.resolve(principal) : principal;
     } });
-    app.post('/api/write', async () => ({ ok: true }));
+    app.post('/api/write', { config: { permission: 'scenario.edit' } }, async () => ({ ok: true }));
     const headers = { origin: 'https://cursus.example.test', cookie: 'cursus_session=one' };
     try {
       const enable = await app.inject({ method: 'POST', url: '/api/auth/view-as', headers, payload: { role: 'reviewer' } });
@@ -59,9 +138,9 @@ test('both sync and async runtimes deny all Reviewer mutation methods before han
     let principal: Principal | null = { userId: 'u', email: 'reader@example.test', tenantId: 'tenant', role: 'reviewer' };
     registerAccessControl(app, { tenantId: 'tenant', publicOrigin: 'https://cursus.example.test',
       authenticate: () => asyncAuth ? Promise.resolve(principal) : principal });
-    app.get('/api/fixture', async () => ({ readable: true }));
+    app.get('/api/fixture', { config: { permission: 'workspace.read' } }, async () => ({ readable: true }));
     for (const method of ['POST', 'PUT', 'PATCH', 'DELETE'] as const)
-      app.route({ method, url: '/api/fixture', handler: async () => { mutations++; return { changed: true }; } });
+      app.route({ method, url: '/api/fixture', config: { permission: 'scenario.edit' }, handler: async () => { mutations++; return { changed: true }; } });
     try {
       assert.equal((await app.inject('/api/fixture')).statusCode, 200);
       assert.equal((await app.inject({ method: 'HEAD', url: '/api/fixture' })).statusCode, 200);
@@ -100,7 +179,7 @@ test('stateful Reviewer API rejects edits, uploads, compute and future writes wi
 test('SQLite upgrade preserves sessions and reads role changes without login elevation', async () => {
   const root = mkdtempSync(join(tmpdir(), 'cursus-reviewer-'));
   const allow = join(root, 'allowed'), dbPath = join(root, 'auth.sqlite'), key = join(root, 'resend');
-  writeFileSync(allow, JSON.stringify({ admins: ['one@example.test', 'two@example.test'], reviewers: ['reader@example.test'] }));
+  writeFileSync(allow, JSON.stringify({ admins: ['one@example.test', 'two@example.test'], planners: ['planner@example.test'], reviewers: ['reader@example.test'] }));
   writeFileSync(key, 'test-key');
   const cfg = { databasePath: dbPath, allowedEmailsFile: allow, resendApiKeyFile: key, publicOrigin: 'https://cursus.example.test',
     from: 'Cursus <login@example.test>', tenantId: 't', tenantName: 'Tenant', secureCookies: true };
@@ -115,17 +194,24 @@ test('SQLite upgrade preserves sessions and reads role changes without login ele
   try {
     const one = await login('one@example.test'); await login('two@example.test');
     const reader = await login('reader@example.test');
+    const planner = await login('planner@example.test');
+    assert.equal(auth.authenticate(planner)?.role, 'planner');
+    auth.setRole('planner@example.test', 'reviewer');
+    assert.equal(auth.authenticate(planner)?.role, 'reviewer');
+    await login('planner@example.test');
+    assert.equal(auth.authenticate(planner)?.role, 'reviewer');
     assert.equal(auth.authenticate(reader)?.role, 'reviewer');
     auth.setRole('one@example.test', 'reviewer');
     assert.equal(auth.authenticate(one)?.role, 'reviewer');
     await login('one@example.test');
     assert.equal(auth.authenticate(one)?.role, 'reviewer', 'admin bootstrap config never elevates an existing membership');
     assert.throws(() => auth.setRole('two@example.test', 'reviewer'), /last tenant administrator/);
+    assert.throws(() => auth.setRole('two@example.test', 'planner'), /last tenant administrator/);
     assert.throws(() => auth.setRole('missing@example.test', 'reviewer'), /existing tenant membership/);
     auth.setRole('one@example.test', 'admin');
     auth.close();
     const db = new Database(dbPath);
-    db.exec("DELETE FROM memberships WHERE role='reviewer'; ALTER TABLE memberships RENAME TO previous_memberships; CREATE TABLE memberships(tenant_id TEXT NOT NULL REFERENCES tenants(id),user_id TEXT NOT NULL REFERENCES users(id),role TEXT NOT NULL CHECK(role IN ('admin')),created_at INTEGER NOT NULL,PRIMARY KEY(tenant_id,user_id)); INSERT INTO memberships SELECT * FROM previous_memberships; DROP TABLE previous_memberships; DELETE FROM schema_migrations WHERE version=2;");
+    db.exec("DELETE FROM memberships WHERE role='reviewer'; ALTER TABLE memberships RENAME TO previous_memberships; CREATE TABLE memberships(tenant_id TEXT NOT NULL REFERENCES tenants(id),user_id TEXT NOT NULL REFERENCES users(id),role TEXT NOT NULL CHECK(role IN ('admin')),created_at INTEGER NOT NULL,PRIMARY KEY(tenant_id,user_id)); INSERT INTO memberships SELECT * FROM previous_memberships; DROP TABLE previous_memberships; DELETE FROM schema_migrations WHERE version>=2;");
     db.close();
     auth = new AuthService(cfg);
     assert.equal(auth.authenticate(one)?.role, 'admin', 'v1 migration preserves existing sessions and memberships');

@@ -148,6 +148,12 @@ test('approved exceptions remain visible and cannot be injected through scenario
 
 test('Admin can preview Reviewer with enforced read-only API and return without changing membership', async ({ page }) => {
   await login(page);
+  await page.getByRole('button', { name: 'View as Planner', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Return to Admin', exact: true })).toBeVisible();
+  await expect(page.getByRole('status')).toContainText('Viewing as Planner');
+  expect((await get<{ effectiveRole: string }>(page.request, '/api/auth/me')).effectiveRole).toBe('planner');
+  expect((await page.request.post('/api/import/upload', { headers: { origin: new URL(page.url()).origin }, data: {} })).status()).toBe(403);
+  await page.getByRole('button', { name: 'Return to Admin', exact: true }).click();
   await page.getByRole('button', { name: 'View as Reviewer', exact: true }).click();
   await expect(page.getByRole('button', { name: 'Return to Admin', exact: true })).toBeVisible();
   await expect(page.getByText('Read-only access', { exact: true })).toBeVisible();
@@ -161,6 +167,41 @@ test('Admin can preview Reviewer with enforced read-only API and return without 
   await page.getByRole('button', { name: 'Return to Admin', exact: true }).click();
   await expect(page.getByRole('button', { name: 'View as Reviewer', exact: true })).toBeVisible();
   expect((await get<{ effectiveRole: string }>(page.request, '/api/auth/me')).effectiveRole).toBe('admin');
+});
+
+test('Planner can manage scenario edits but cannot administer shared data or elevate access', async ({ page }) => {
+  await login(page, 'planner@acceptance.example.test');
+  const me = await get<{ role: string; permissions: string[] }>(page.request, '/api/auth/me');
+  expect(me.role).toBe('planner'); expect(me.permissions).toContain('scenario.edit');
+  expect(me.permissions).not.toContain('dataset.upload');
+  await expect(page.getByRole('contentinfo')).toContainText('Planner');
+  await expect(page.getByRole('button', { name: /^View as / })).toHaveCount(0);
+  await page.getByRole('button', { name: 'Data', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Upload', exact: true })).toHaveCount(0);
+  await page.keyboard.press('Escape');
+  const plan = await baseline(page);
+  const response = await page.request.post('/api/scenarios', { headers: { origin: new URL(page.url()).origin }, data: { from: plan.scenarioId, label: 'Planner copy' } });
+  expect(response.status()).toBe(201);
+  const scenario = await response.json() as Scenario;
+  const renamed = await page.request.post(`/api/scenarios/${scenario.id}/rename`, { headers: { origin: new URL(page.url()).origin }, data: { label: 'Planner renamed' } });
+  expect(renamed.status()).toBe(200);
+  const bundle = await get<unknown>(page.request, `/api/scenarios/${scenario.id}/export`);
+  expect((await page.request.post('/api/scenarios/import', { headers: { origin: new URL(page.url()).origin }, data: bundle })).status()).toBe(200);
+  await page.getByRole('button', { name: 'Scenarios', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Rename', exact: true }).first()).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Delete', exact: true })).toHaveCount(0);
+  await page.keyboard.press('Escape');
+  for (const origin of ['', peer]) {
+    for (const [method, path] of [['POST', '/api/import/upload'], ['POST', '/api/import/admit'],
+      ['POST', '/api/import/datasets/anything/convert'], ['POST', '/api/auth/view-as'],
+      ['DELETE', `/api/scenarios/${scenario.id}`], ['DELETE', '/api/import/datasets/anything']]) {
+      const denied = await page.request.fetch(`${origin}${path}`, { method, headers: { origin: new URL(page.url()).origin }, data: { role: 'admin' } });
+      expect(denied.status(), path).toBe(403);
+    }
+  }
+  expect((await get<Scenario>(page.request, `${peer}/api/scenarios/${scenario.id}`)).label).toBe('Planner renamed');
+  await page.getByRole('group', { name: 'Language', exact: true }).getByRole('button', { name: 'HU', exact: true }).click();
+  await expect(page.getByRole('contentinfo')).toContainText('Tervező');
 });
 
 test('Reviewer can inspect and export but cannot edit, upload, compute or drag stops', async ({ page }) => {
@@ -371,8 +412,9 @@ test('account bar shows image provenance, fits desktop and mobile, and revokes t
   await expect(page.getByRole('heading', { name: 'Continue to Cursus' })).toBeVisible();
 });
 
-test('reorder requires recomputed preview and a correct native replan with peer export', async ({ page }) => {
-  await login(page); await shortBudget(page);
+for (const role of ['admin', 'planner'] as const) {
+test(`${role}: reorder requires recomputed preview and a correct native replan with peer export`, async ({ page }) => {
+  await login(page, `${role}@acceptance.example.test`); await shortBudget(page);
   const base = await baseline(page);
   const vehicle = base.vehicles.find(v => v.trips[0]?.stops.length >= 2)!;
   await page.locator('aside').first().getByText(vehicle.ref, { exact: true }).click();
@@ -388,8 +430,8 @@ test('reorder requires recomputed preview and a correct native replan with peer 
   expect(stops).toEqual([original[1], original[0], ...original.slice(2)]);
 });
 
-test('excluding a vehicle preserves service and stable identities through the real worker', async ({ page }) => {
-  await login(page); await shortBudget(page);
+test(`${role}: excluding a vehicle preserves service and stable identities through the real worker`, async ({ page }) => {
+  await login(page, `${role}@acceptance.example.test`); await shortBudget(page);
   const vehicle = (await baseline(page)).vehicles[0]!;
   await page.locator('aside').first().getByText(vehicle.ref, { exact: true }).click();
   await page.getByRole('button', { name: `Mark ${vehicle.ref} unavailable` }).click();
@@ -397,8 +439,8 @@ test('excluding a vehicle preserves service and stable identities through the re
   expect(plan.vehicles.some(v => v.id === vehicle.id || v.ref === vehicle.ref)).toBe(false);
 });
 
-test('locking a route preserves its vehicle and exact stop order', async ({ page }) => {
-  await login(page); await shortBudget(page);
+test(`${role}: locking a route preserves its vehicle and exact stop order`, async ({ page }) => {
+  await login(page, `${role}@acceptance.example.test`); await shortBudget(page);
   const vehicle = (await baseline(page)).vehicles[0]!;
   const original = vehicle.trips.flatMap(t => t.stops.map(s => s.orderNo));
   await page.locator('aside').first().getByText(vehicle.ref, { exact: true }).click();
@@ -406,6 +448,7 @@ test('locking a route preserves its vehicle and exact stop order', async ({ page
   const plan = await finishSolve(page, () => page.getByRole('button', { name: 'Replan', exact: true }).click());
   expect(plan.vehicles.find(v => v.id === vehicle.id)!.trips.flatMap(t => t.stops.map(s => s.orderNo))).toEqual(original);
 });
+}
 
 test('an immediate Replan waits for a delayed real edit response', async ({ page }) => {
   await login(page); await shortBudget(page);

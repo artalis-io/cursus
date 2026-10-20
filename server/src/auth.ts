@@ -74,9 +74,26 @@ export class AuthService {
           INSERT INTO schema_migrations(version) VALUES(2);`);
       })();
     }
+    if (!this.db.prepare('SELECT 1 FROM schema_migrations WHERE version=3').get()) {
+      this.db.transaction(() => {
+        this.db.exec(`CREATE TABLE memberships_v3(
+          tenant_id TEXT NOT NULL REFERENCES tenants(id), user_id TEXT NOT NULL REFERENCES users(id),
+          role TEXT NOT NULL CHECK(role IN ('admin','planner','reviewer')), created_at INTEGER NOT NULL,
+          PRIMARY KEY(tenant_id,user_id));
+          INSERT INTO memberships_v3 SELECT * FROM memberships;
+          DROP TABLE memberships;
+          ALTER TABLE memberships_v3 RENAME TO memberships;
+          INSERT INTO schema_migrations(version) VALUES(3);`);
+      })();
+    }
   }
 
   isAllowed(raw: string): boolean { return this.allowed.has(normalizeEmail(raw)); }
+
+  recordAccessAudit(principal: Principal, detail: Record<string, unknown>): void {
+    this.db.prepare('INSERT INTO audit_events(tenant_id,user_id,action,created_at,detail_json) VALUES(?,?,?,?,?)')
+      .run(principal.tenantId, principal.userId, 'access.authorized', now(), JSON.stringify(detail));
+  }
 
   async requestMagicLink(raw: string): Promise<void> {
     const email = normalizeEmail(raw);
@@ -145,7 +162,7 @@ export class AuthService {
         WHERE m.tenant_id=? AND u.email=?`).get(this.config.tenantId, normalizeEmail(email)) as { userId: string; role: Role } | undefined;
       if (!member) throw new Error('existing tenant membership required');
       if (member.role === role) return;
-      if (member.role === 'admin' && role === 'reviewer' &&
+      if (member.role === 'admin' && role !== 'admin' &&
           (this.db.prepare("SELECT count(*) n FROM memberships WHERE tenant_id=? AND role='admin'").get(this.config.tenantId) as { n: number }).n <= 1)
         throw new Error('cannot demote the last tenant administrator');
       this.db.prepare('UPDATE memberships SET role=? WHERE tenant_id=? AND user_id=?').run(role, this.config.tenantId, member.userId);

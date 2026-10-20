@@ -6,11 +6,11 @@ import { Badge } from '@/components/ui/badge';
 import { api, type ImportSummary, type RawSample, type CanonicalSample } from '@/lib/api';
 import { OnboardPanel } from '@/components/OnboardPanel';
 import { useT, describeApiError } from '@/i18n';
-import { useCanEdit } from '@/permissions';
+import { usePermission } from '@/permissions';
 
 export function ImportDialog({ open, onOpenChange, onAdmitted, onDatasetsChanged }: { open: boolean; onOpenChange: (o: boolean) => void; onAdmitted?: (dayId: string) => void; onDatasetsChanged?: () => void }) {
   const t = useT();
-  const canEdit = useCanEdit();
+  const canEdit = usePermission('dataset.upload');
   const [mode, setMode] = useState<'provenance' | 'upload'>('provenance');
   const [summary, setSummary] = useState<ImportSummary | null>(null);
   const [rawFile, setRawFile] = useState('orders');

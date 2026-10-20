@@ -37,7 +37,7 @@ export class ScenarioRepository {
 
   async rename(id: string, label: string): Promise<Scenario> {
     const current = await this.get(id); if (!current) throw new Error('scenario not found');
-    const updated = { ...current, label };
+    const updated = { ...current, label, revision: current.revision + 1 };
     const revision = await this.store.updateScenario(this.tenantId, id, current.revision, updated);
     return { ...updated, revision };
   }
