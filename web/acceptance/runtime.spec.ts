@@ -137,7 +137,8 @@ test('chaos: open rename/upload dialogs lose their privileged controls immediate
     await page.getByRole('button', { name: 'Upload', exact: true }).click();
     await expect(page.locator('input[type=file]').first()).toBeAttached();
     chaosRole('planner'); await page.evaluate(() => window.dispatchEvent(new Event('focus')));
-    await expect(page.getByRole('contentinfo').getByText('Planner', { exact: true })).toBeVisible();
+    // Radix marks the background aria-hidden while the dialog is open.
+    await expect(page.locator('footer').getByText('Planner', { exact: true })).toBeVisible();
     await expect(page.locator('input[type=file]')).toHaveCount(0);
     await page.keyboard.press('Escape');
     const base = await baseline(page);
