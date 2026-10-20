@@ -66,10 +66,7 @@ export function CompareDialog({ open, onOpenChange, basePlanId, revisedPlanId, s
               <div className="flex items-start gap-2 rounded-md border border-warning/40 bg-warning/10 p-2.5 text-sm text-warning">
                 <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0" />
                 <span>
-                  {cmp.deltas.servedOrders < 0 ? t('compare.fewerServed', {
-                    n: Math.abs(cmp.deltas.servedOrders),
-                    save: cmp.deltas.totalDistanceKm < 0 ? t('compare.saveFragment', { km: km(Math.abs(cmp.deltas.totalDistanceKm)) }) : '',
-                  }) : t('readiness.lostService')}
+                  {t('readiness.lostService')}
                 </span>
               </div>
             )}

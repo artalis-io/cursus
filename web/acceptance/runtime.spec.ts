@@ -710,10 +710,12 @@ test('Reviewer can review snapshot readiness, baseline metrics and Hungarian det
   await expect(panel.getByRole('region', { name: 'Comparison with day baseline' })).toContainText(plan.id);
   await expect(panel).toContainText('not necessarily the original handwritten plan');
   await expect(panel.getByRole('button')).toHaveCount(0);
+  await page.screenshot({ path: test.info().outputPath('readiness-en.png'), fullPage: true });
   await page.getByRole('button', { name: 'HU', exact: true }).click();
   await expect(panel).toHaveCount(0);
   const magyar = page.locator('details[aria-label="Indítás előtti ellenőrzés"]');
   await expect(magyar.getByText('Jármű-össztömeg (GVW)', { exact: true })).toBeVisible();
+  await page.screenshot({ path: test.info().outputPath('readiness-hu.png'), fullPage: true });
   for (const width of [375, 1440]) {
     await page.setViewportSize({ width, height: 900 });
     expect(await magyar.evaluate(el => el.scrollWidth <= el.clientWidth + 1)).toBe(true);
@@ -743,6 +745,9 @@ test('native reduced-fleet result reports unassigned orders without claiming eff
   }, { timeout: 60000 }).toBe('completed');
   const revised = await get<Plan>(page.request, `${peer}/api/plans/${job!.planId}`);
   expect(revised.unassigned.some(order => order.orderNo === 'PUBLIC-1')).toBe(true);
+  const delta = await get<{ deltas: { costTotal: number } }>(page.request,
+    `/api/compare?base=${(await baseline(page)).id}&revised=${revised.id}`);
+  expect(delta.deltas.costTotal).toBeLessThan(0); // exercises the former false "saved" branch
   // Open through the real history UI, including its real scenario context.
   await page.getByRole('button', { name: 'Plans', exact: true }).click();
   const history = page.getByRole('dialog');
@@ -755,6 +760,10 @@ test('native reduced-fleet result reports unassigned orders without claiming eff
   await expect(coverage).toContainText('PUBLIC-1');
   await expect(coverage).toContainText('Unassigned orders are reported by Surge');
   await expect(panel).toContainText('Lower distance or cost must not be interpreted as efficiency savings');
+  await page.getByRole('button', { name: 'Compare', exact: true }).click();
+  const comparison = page.getByRole('dialog');
+  await expect(comparison).toContainText('Lower distance or cost must not be interpreted as efficiency savings');
+  await expect(comparison.getByText(/% saved/)).toHaveCount(0);
 });
 
 test('restart retains authentication, plans, and exports while the peer stays ready', async ({ page }) => {

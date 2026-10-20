@@ -11,6 +11,8 @@ type Dict = Record<string, string>;
 
 const en: Dict = {
   'readiness.title': 'Dispatch readiness', 'readiness.details': 'Review details',
+  'readiness.validationUnconfirmed': 'Backend validation has not confirmed this plan as valid.',
+  'readiness.advisories': 'Reported advisories also require review in Issues.',
   'readiness.passed': 'Snapshot checks passed', 'readiness.blocked': 'Action required', 'readiness.review': 'Review required',
   'readiness.scope': 'Review aid, not dispatch approval. Checks refer to the displayed plan, not a pending route preview or a new solve.',
   'readiness.coverage': 'Coverage', 'readiness.coverageCount': '{served}/{total} orders served',
@@ -259,6 +261,8 @@ const en: Dict = {
 
 const hu: Dict = {
   'readiness.title': 'Indítás előtti ellenőrzés', 'readiness.details': 'Részletek áttekintése',
+  'readiness.validationUnconfirmed': 'A háttérrendszer validációja nem igazolta a terv érvényességét.',
+  'readiness.advisories': 'A jelentett figyelmeztetéseket is ellenőrizni kell a Problémák ablakban.',
   'readiness.passed': 'A terv ellenőrzése sikeres', 'readiness.blocked': 'Beavatkozás szükséges', 'readiness.review': 'Felülvizsgálat szükséges',
   'readiness.scope': 'Döntéstámogató áttekintés, nem indítási engedély. Az ellenőrzés a megjelenített tervre vonatkozik, nem az útvonal-előnézetre vagy a folyamatban lévő optimalizálásra.',
   'readiness.coverage': 'Kiszolgálás', 'readiness.coverageCount': '{served}/{total} rendelés kiszolgálva',

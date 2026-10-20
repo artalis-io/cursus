@@ -1,4 +1,4 @@
-import { ClipboardCheck } from 'lucide-react';
+import { ChevronDown, ClipboardCheck } from 'lucide-react';
 import { useT } from '@/i18n';
 import { km, money } from '@/lib/format';
 import { reviewComparison, reviewReadiness } from '@/lib/readiness';
@@ -12,13 +12,14 @@ export function ReadinessPanel({ plan, baseline, scenario, pending }: { plan: Pl
   const comparison = reviewComparison(baseline, plan);
   const tone = review.status === 'passed' ? 'text-primary' : 'text-warning';
   return (
-    <details className="shrink-0 border-b border-divider bg-card" aria-label={t('readiness.title')}>
+    <details className="group shrink-0 border-b border-divider bg-card" aria-label={t('readiness.title')}>
       <summary className="flex cursor-pointer flex-wrap items-center gap-x-3 gap-y-1 px-4 py-2 text-xs focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary">
         <ClipboardCheck className="h-4 w-4 shrink-0" />
         <span className="font-semibold">{t('readiness.title')}</span>
         <span className={`font-medium ${tone}`}>{t(`readiness.${review.status}`)}</span>
         <span className="text-muted-foreground">{t('readiness.coverageCount', { served: plan.stats.servedOrders, total: plan.stats.totalOrders })} · {t(review.fresh ? 'readiness.current' : 'readiness.stale')}</span>
         <span className="ml-auto text-muted-foreground">{t('readiness.details')}</span>
+        <ChevronDown aria-hidden className="h-3.5 w-3.5 shrink-0 transition-transform group-open:rotate-180" />
       </summary>
       <div className="max-h-[48vh] space-y-4 overflow-y-auto border-t border-divider px-4 py-3 text-xs">
         <p className="text-muted-foreground">{t('readiness.scope')}</p>
@@ -38,6 +39,8 @@ export function ReadinessPanel({ plan, baseline, scenario, pending }: { plan: Pl
             <h3 className="font-semibold">{t('readiness.constraints')}</h3>
             <dl className="space-y-2">{review.checks.map(check => <div key={check.key} className="flex justify-between gap-3"><dt>{t(`readiness.${check.key}`)}</dt><dd className={check.state === 'passed' ? 'text-primary' : check.state === 'notApplicable' ? 'text-muted-foreground' : 'text-warning'}>{t(`readiness.check.${check.state}`)}{check.failures > 0 ? ` · ${check.failures}` : ''}</dd></div>)}</dl>
             <p className="text-muted-foreground">{t('readiness.hardCount', { n: review.hardViolations })}</p>
+            {plan.provenance?.validation?.valid !== true && <p className="text-warning">{t('readiness.validationUnconfirmed')}</p>}
+            {!!plan.provenance?.validation?.violations?.some(v => v.soft) && <p className="text-warning">{t('readiness.advisories')}</p>}
             <p className="text-muted-foreground">{t('readiness.checkScope')}</p>
           </section>
           <section aria-label={t('issues.approvedExceptions')} className="min-w-0 space-y-2">
