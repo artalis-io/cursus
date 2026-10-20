@@ -4,6 +4,7 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { Button } from '@/components/ui/button';
 import { hhmm } from '@/lib/format';
 import { useT } from '@/i18n';
+import { usePermission } from '@/permissions';
 import type { Plan, Scenario, ScenarioEdit, VehicleOverride } from '@/types';
 
 /* The staged-edit stack: every manual change (remove vehicle, pin/forbid an
@@ -15,6 +16,7 @@ export function ChangesDialog({ open, onOpenChange, plan, scenario, dirty, solvi
   onUndo: (edit: ScenarioEdit) => void; onDiscardAll: () => void; onReplan: () => void;
 }) {
   const t = useT();
+  const canEdit = usePermission('scenario.edit');
   const refOf = (id: number): string => plan.vehicles.find((v) => v.id === id)?.ref ?? `#${id}`;
   const custOf = (orderNo: string): string => {
     for (const v of plan.vehicles) for (const tr of v.trips) for (const s of tr.stops) if (s.orderNo === orderNo) return s.customer ?? orderNo;
@@ -74,7 +76,7 @@ export function ChangesDialog({ open, onOpenChange, plan, scenario, dirty, solvi
 
         <div className="mt-2 flex items-center gap-2 border-t border-divider pt-3">
           {!dirty && total > 0 && <span className="text-[11px] text-muted-foreground">{t('changes.applied')}</span>}
-          <div className="ml-auto flex gap-2">
+          {canEdit && <div className="ml-auto flex gap-2">
             {total > 0 && (
               <Button variant="outline" size="sm" onClick={onDiscardAll} disabled={solving}>
                 <RotateCcw className="h-4 w-4" /> {t('changes.discard')}
@@ -83,7 +85,7 @@ export function ChangesDialog({ open, onOpenChange, plan, scenario, dirty, solvi
             <Button size="sm" onClick={onReplan} disabled={solving || total === 0} className={dirty ? 'ring-2 ring-warning/50' : ''}>
               <Repeat className="h-4 w-4" /> {t('topbar.replan')}
             </Button>
-          </div>
+          </div>}
         </div>
       </DialogContent>
     </Dialog>
@@ -110,13 +112,14 @@ function Group({ title, icon, children }: { title: string; icon: React.ReactNode
 }
 
 function Row({ label, detail, onUndo }: { label: string; detail?: string; onUndo: () => void }) {
+  const canEdit = usePermission('scenario.edit');
   return (
     <div className="flex items-center gap-2 rounded border border-divider px-2 py-1.5 text-xs">
       <span className="min-w-0 flex-1 truncate font-medium">{label}</span>
       {detail && <span className="tnum shrink-0 text-muted-foreground">{detail}</span>}
-      <button type="button" onClick={onUndo} aria-label="Undo" className="shrink-0 rounded p-0.5 text-muted-foreground hover:bg-accent hover:text-foreground">
+      {canEdit && <button type="button" onClick={onUndo} aria-label="Undo" className="shrink-0 rounded p-0.5 text-muted-foreground hover:bg-accent hover:text-foreground">
         <X className="h-3.5 w-3.5" />
-      </button>
+      </button>}
     </div>
   );
 }

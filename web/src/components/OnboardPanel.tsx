@@ -10,6 +10,7 @@ import { cartaStyle } from '@/map/cartaStyle';
 import { Input } from '@/components/ui/input';
 import { api, pollJob, type Entity, type CanonicalField, type UploadResult, type OnboardPreview, type GeocodeResult, type GeoTier, type AdmitResult, type DatasetSummary } from '@/lib/api';
 import { useT, describeApiError } from '@/i18n';
+import { usePermission } from '@/permissions';
 
 const TIER_COLOR: Record<GeoTier, string> = { GREEN: '#16a34a', YELLOW: '#ca8a04', APPROX: '#ea580c', RED: '#dc2626' };
 
@@ -18,6 +19,7 @@ const TIER_COLOR: Record<GeoTier, string> = { GREEN: '#16a34a', YELLOW: '#ca8a04
  * a dataset) arrives in M3. */
 export function OnboardPanel({ onAdmitted, onDatasetsChanged }: { onAdmitted?: (firstDayId: string) => void; onDatasetsChanged?: () => void }) {
   const t = useT();
+  const canDelete = usePermission('dataset.delete');
   const [catalog, setCatalog] = useState<Record<Entity, CanonicalField[]> | null>(null);
   const [datasets, setDatasets] = useState<DatasetSummary[] | null>(null);
   const refreshDatasets = useCallback(() => {
@@ -108,6 +110,7 @@ export function OnboardPanel({ onAdmitted, onDatasetsChanged }: { onAdmitted?: (
     } finally { setBusy(null); setAdmitStage(null); }
   }
   async function deleteDataset(id: string, datasetLabel: string) {
+    if (!canDelete) return;
     if (!window.confirm(t('onboard.deleteConfirm', { label: datasetLabel }))) return;
     try { await api.onboardDeleteDataset(id); refreshDatasets(); onDatasetsChanged?.(); }
     catch (e) { setErr(describeApiError(e, t)); }
@@ -127,10 +130,10 @@ export function OnboardPanel({ onAdmitted, onDatasetsChanged }: { onAdmitted?: (
                 <div key={ds.id} className="flex items-center gap-2 rounded border border-divider bg-card px-2 py-1 text-[11px]">
                   <span className="min-w-0 flex-1 truncate font-medium">{ds.label}</span>
                   <span className="tnum shrink-0 text-muted-foreground">{t('onboard.dsSummary', { d: ds.days.length, n: ds.totalOrders })}</span>
-                  <button type="button" onClick={() => void deleteDataset(ds.id, ds.label)} aria-label={t('onboard.delete')} title={t('onboard.delete')}
+                  {canDelete && <button type="button" onClick={() => void deleteDataset(ds.id, ds.label)} aria-label={t('onboard.delete')} title={t('onboard.delete')}
                     className="shrink-0 rounded p-0.5 text-muted-foreground hover:bg-destructive/10 hover:text-destructive">
                     <Trash2 className="h-3.5 w-3.5" />
-                  </button>
+                  </button>}
                 </div>
               ))}
             </div>

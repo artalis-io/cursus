@@ -55,8 +55,10 @@ sender with `CURSUS_AUTH_FROM` and the external HTTPS URL with
 
 Magic-link challenges are hashed, expire after ten minutes and are one-use.
 Sessions are revocable, expire after seven days, and use Secure, HttpOnly,
-SameSite cookies. The initial allowlisted users receive admin membership in the
-single configured tenant. SQLite runs in WAL mode; back up the database along
+SameSite cookies. Plain allowlists bootstrap Admin membership; explicit JSON
+allowlists also support read-only Reviewer membership. See [Access roles](../README.md#access-roles)
+for the role matrix, private configuration, migration and audited operator command.
+Existing roles are never elevated at login. SQLite runs in WAL mode; back up the database along
 with the rest of `CURSUS_DATA_PATH`.
 
 This release intentionally supports one configured tenant. Identity,

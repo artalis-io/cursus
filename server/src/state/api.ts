@@ -28,6 +28,13 @@ import { comparePlans } from '../plan/compare.js';
 import { evaluateTrip } from '../plan/evaluate.js';
 import { loadDay, loadVehicleInfo } from '../data/dataset.js';
 import { loadConvertedDay, type ConvertedManifest } from './conversion.js';
+import { registerAccessControl, viewIdentity } from '../access-control.js';
+import { isRole, rolePermissions } from '../roles.js';
+
+// Do not advertise legacy-only endpoints as usable controls in this runtime.
+function statefulPermissions(role: string) {
+  return isRole(role) ? rolePermissions[role].filter(p => p !== 'optimization.cancel' && p !== 'analysis.generate' && p !== 'dataset.delete') : [];
+}
 
 export interface StatefulApiOptions { store: StatefulStore; tenantId: string; tenantName: string; auth?: StatefulAuthService; publicOrigin?: string; objects?: ObjectStore; maxUploadBytes?: number }
 
@@ -35,6 +42,9 @@ export interface StatefulApiOptions { store: StatefulStore; tenantId: string; te
  * cutover, by the production entry point. Every repository is tenant-bound. */
 export async function createStatefulApi(options: StatefulApiOptions): Promise<FastifyInstance> {
   const app = Fastify({ logger: false });
+  registerAccessControl(app, options.auth ? { authenticate: token => options.auth!.authenticate(token),
+    audit: (principal, detail) => options.auth!.recordAccessAudit(principal, detail),
+    tenantId: options.tenantId, publicOrigin: options.publicOrigin ?? '' } : undefined);
   registerMagicLinkFormParser(app);
   registerWorkspaceBranding(app, options.tenantName);
   await options.store.ensureTenant(options.tenantId, options.tenantName);
@@ -42,17 +52,6 @@ export async function createStatefulApi(options: StatefulApiOptions): Promise<Fa
   const scenarios = new ScenarioRepository(options.store, options.tenantId);
   const datasets = options.objects ? new DatasetRepository(options.store, options.objects, options.tenantId) : null;
   if (datasets) await app.register(fastifyMultipart, { limits: { files: 1, fileSize: options.maxUploadBytes ?? 25 * 1024 * 1024 } });
-  app.addHook('onRequest', async (req, reply) => {
-    // The SPA shell and its static assets must remain public so an
-    // unauthenticated browser can render the magic-link login screen.
-    const path = req.url.split('?', 1)[0]!;
-    const protectedPath = path.startsWith('/api/') || path === '/tiles.vector.json' || path.startsWith('/tiles/');
-    if (!options.auth || !protectedPath || path.startsWith('/api/health') || path.startsWith('/api/auth/')) return;
-    const principal = await options.auth.authenticate(cookieValue(req.headers.cookie, 'cursus_session'));
-    if (!principal || principal.tenantId !== options.tenantId) return reply.code(401).send({ error: 'authentication required' });
-    if (!['GET', 'HEAD', 'OPTIONS'].includes(req.method) && req.headers.origin !== options.publicOrigin)
-      return reply.code(403).send({ error: 'invalid request origin' });
-  });
   app.get('/api/health', async () => ({ status: 'ok', service: 'cursus-api', runtime: 'stateful' }));
   app.get('/health/ready', async (_req, reply) => {
     try {
@@ -81,10 +80,11 @@ export async function createStatefulApi(options: StatefulApiOptions): Promise<Fa
   });
   app.get('/api/auth/me', async (req, reply) => {
     reply.header('Cache-Control', 'private, no-store');
-    if (!options.auth) return { email: 'local@cursus', tenantId: options.tenantId, tenantName: options.tenantName, role: 'admin', build: buildInfo };
+    if (!options.auth) return { email: 'local@cursus', tenantId: options.tenantId, tenantName: options.tenantName, role: 'admin', permissions: statefulPermissions('admin').filter(p => p !== 'role.preview'), build: buildInfo };
     const principal = await options.auth.authenticate(cookieValue(req.headers.cookie, 'cursus_session'));
-    if (!principal) return reply.code(401).send({ error: 'authentication required' });
-    return { ...principal, tenantName: await options.store.getTenantName(principal.tenantId), build: buildInfo };
+    if (!principal || principal.tenantId !== options.tenantId) return reply.code(401).send({ error: 'authentication required' });
+    const identity = viewIdentity(principal, req.headers.cookie);
+    return { ...identity, permissions: statefulPermissions(identity.effectiveRole), tenantName: await options.store.getTenantName(principal.tenantId), build: buildInfo };
   });
   app.post('/api/auth/logout', async (req, reply) => {
     if (options.auth && req.headers.origin !== options.publicOrigin) return reply.code(403).send({ error: 'invalid request origin' });
@@ -104,6 +104,18 @@ export async function createStatefulApi(options: StatefulApiOptions): Promise<Fa
   app.post<{ Params: { id: string }; Body: { edit?: ScenarioEdit } }>('/api/scenarios/:id/edit', async (req, reply) => {
     const invalid = validateScenarioEdit(req.body?.edit); if (invalid) return reply.code(400).send({ error: invalid });
     try { return await scenarios.edit(req.params.id, [req.body.edit!]); } catch (error) { return reply.code((error as Error).message === 'scenario not found' ? 404 : 409).send({ error: (error as Error).message }); }
+  });
+  app.post<{ Params: { id: string }; Body: { edits?: unknown; label?: unknown } }>('/api/scenarios/:id/edits', async (req, reply) => {
+    const edits = req.body?.edits;
+    if (!Array.isArray(edits) || edits.length === 0 || edits.length > 1000)
+      return reply.code(400).send({ error: 'edits must be a non-empty array (<=1000)' });
+    // Validate the complete batch before copying a scenario or persisting any
+    // operation. Unknown operations cannot smuggle administration into edits.
+    for (const edit of edits) { const invalid = validateScenarioEdit(edit); if (invalid) return reply.code(400).send({ error: invalid }); }
+    if (req.body.label != null && (typeof req.body.label !== 'string' || req.body.label.length > 120))
+      return reply.code(400).send({ error: 'invalid label' });
+    try { return await scenarios.edit(req.params.id, edits as ScenarioEdit[]); }
+    catch (error) { return reply.code((error as Error).message === 'scenario not found' ? 404 : 409).send({ error: (error as Error).message }); }
   });
   app.post<{ Params: { id: string }; Body: { label?: string } }>('/api/scenarios/:id/rename', async (req, reply) => {
     const label = req.body?.label?.trim(); if (!label || label.length > 120) return reply.code(400).send({ error: 'label required (<=120 chars)' });

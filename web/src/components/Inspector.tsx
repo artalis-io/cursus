@@ -11,6 +11,7 @@ import { api } from '@/lib/api';
 import { useT } from '@/i18n';
 import { useEffect, useRef, useState } from 'react';
 import type { Plan, Scenario, Selection, Vehicle, Trip, Stop, ValidationViolation, VehicleConstraintPatch } from '@/types';
+import { usePermission } from '@/permissions';
 
 function Field({ label, value, warn }: { label: string; value: string; warn?: boolean }) {
   return (
@@ -467,6 +468,7 @@ export function Inspector({ plan, scenario, selection, onSelect, onBack, onForwa
   onClearSequence?: (vehicleId: number) => void;
 }) {
   const t = useT();
+  const canEdit = usePermission('scenario.edit');
   const overrideCount = scenario.pins.length + scenario.forbids.length;
   const currency = plan.cost?.currency ?? 'HUF';
   const nav = { onBack, onForward, canGoBack, canGoForward };
@@ -485,7 +487,7 @@ export function Inspector({ plan, scenario, selection, onSelect, onBack, onForwa
             <Badge variant="warning">{t('inspector.unassignedBadge')}</Badge>
             <p className="text-xs text-muted-foreground">{u.reason ?? t('inspector.unassignedReason')}</p>
             {/* Assign by hand: pin this unassigned order to a chosen vehicle, applied on Replan. */}
-            <div className="space-y-2 rounded-md border border-divider bg-muted/30 p-2.5">
+            {canEdit && <div className="space-y-2 rounded-md border border-divider bg-muted/30 p-2.5">
               <div className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">{t('inspector.assignByHand')}</div>
               {pin ? (
                 <div className="flex items-center justify-between gap-2">
@@ -500,7 +502,7 @@ export function Inspector({ plan, scenario, selection, onSelect, onBack, onForwa
                 </select>
               )}
               <p className="text-[10px] text-muted-foreground">{t('inspector.overrideHint')}</p>
-            </div>
+            </div>}
           </div>
         ) : <Empty planId={plan.id} />}
       </Panel>
@@ -516,7 +518,7 @@ export function Inspector({ plan, scenario, selection, onSelect, onBack, onForwa
   const stop = selection?.kind === 'stop' && trip ? trip.stops.find((s) => s.seq === selection.seq) : undefined;
   // Reflect a staged reorder/lock in the stop list (the plan only updates on Replan).
   const stagedSeq = scenario.sequences.find((q) => q.vehicleId === vehicle.id);
-  const displayTrip = trip && stagedSeq ? reorderTripStops(trip, stagedSeq.orderNos) : trip;
+  const displayTrip = canEdit && trip && stagedSeq ? reorderTripStops(trip, stagedSeq.orderNos) : trip;
   // This trip is "pending" if a reorder (not a lock) changed its displayed order.
   const reorderPending = !!displayTrip && !!trip && !stagedSeq?.locked
     && displayTrip.stops.some((s, i) => s.orderNo !== trip.stops[i]?.orderNo);
@@ -547,9 +549,9 @@ export function Inspector({ plan, scenario, selection, onSelect, onBack, onForwa
           <div className="space-y-3 p-3">
             <TabsContent value="details" className="mt-0 space-y-3">
               {stop ? <StopDetail stop={stop} vehicle={vehicle} />
-                : trip && displayTrip ? <TripView planId={plan.id} trip={trip} displayTrip={displayTrip} reorderPending={reorderPending} vehicle={vehicle} currency={currency} canDrag={!solving}
+                : trip && displayTrip ? <TripView planId={plan.id} trip={trip} displayTrip={displayTrip} reorderPending={canEdit && reorderPending} vehicle={vehicle} currency={currency} canDrag={canEdit && !solving}
                     onSelectStop={(seq) => onSelect({ kind: 'stop', vehicleId: vehicle.id, tripIndex: trip.index, seq })}
-                    onResequence={onSetSequence ? (newOrderNos) => {
+                    onResequence={canEdit && onSetSequence ? (newOrderNos) => {
                       // the vehicle's full manual order = each trip's stops (in their
                       // displayed/staged order), with THIS trip set to the new order
                       const full = vehicle.trips.flatMap((tr) => (tr.index === trip.index
@@ -558,19 +560,19 @@ export function Inspector({ plan, scenario, selection, onSelect, onBack, onForwa
                       onSetSequence(vehicle.id, full);
                     } : undefined} />
                   : <VehicleSummary vehicle={vehicle} plan={plan} onSelectTrip={(i) => onSelect({ kind: 'trip', vehicleId: vehicle.id, tripIndex: i })} />}
-              {stop && (
+              {canEdit && stop && (
                 <AssignmentSection plan={plan} scenario={scenario} orderNo={stop.orderNo} currentVehicleId={vehicle.id}
                   onPin={onPin} onUnpin={onUnpin} onForbid={onForbid} disabled={solving} />
               )}
               <Separator />
               <ValidationRow plan={plan} vehicle={vehicle} />
-              {!stop && !trip && (
+              {canEdit && !stop && !trip && (
                 <ConstraintsEditor vehicle={vehicle}
                   override={scenario.vehicleOverrides.find((o) => o.vehicleId === vehicle.id)}
                   onSet={(patch) => onSetConstraint(vehicle.id, patch)} onClear={() => onClearConstraint(vehicle.id)} disabled={solving} />
               )}
               {/* Lock-and-resolve: freeze this vehicle's route; the rest re-solves around it. */}
-              {!stop && !trip && onSetSequence && onClearSequence && vehicle.trips.some((tr) => tr.stops.length > 0) && (
+              {canEdit && !stop && !trip && onSetSequence && onClearSequence && vehicle.trips.some((tr) => tr.stops.length > 0) && (
                 scenario.sequences.some((q) => q.vehicleId === vehicle.id && q.locked) ? (
                   <button type="button" disabled={solving} onClick={() => onClearSequence(vehicle.id)}
                     className="flex w-full items-center justify-center gap-1.5 rounded border border-primary/50 bg-primary/5 px-2 py-1 text-[11px] font-medium text-primary hover:bg-primary/10 disabled:opacity-40">
@@ -584,13 +586,13 @@ export function Inspector({ plan, scenario, selection, onSelect, onBack, onForwa
                   </button>
                 )
               )}
-              {overrideCount > 0 && (
+              {canEdit && overrideCount > 0 && (
                 <button type="button" onClick={onClearOverrides}
                   className="flex w-full items-center justify-center gap-1.5 rounded border border-divider px-2 py-1 text-[11px] text-muted-foreground hover:bg-accent">
                   <X className="h-3 w-3" /> {t('inspector.clearOverrides')} ({overrideCount})
                 </button>
               )}
-              {scenario.removedVehicleIds.includes(vehicle.id) ? (
+              {canEdit && (scenario.removedVehicleIds.includes(vehicle.id) ? (
                 <button type="button" disabled={solving} onClick={() => onRestoreVehicle(vehicle.id)}
                   className="flex w-full items-center justify-center gap-1.5 rounded border border-divider px-2 py-1.5 text-xs font-medium text-muted-foreground hover:bg-accent disabled:opacity-40">
                   <RotateCcw className="h-3.5 w-3.5" /> {t('fleet.restore')}
@@ -600,7 +602,7 @@ export function Inspector({ plan, scenario, selection, onSelect, onBack, onForwa
                   className="flex w-full items-center justify-center gap-1.5 rounded border border-warning/40 px-2 py-1.5 text-xs font-medium text-warning hover:bg-warning/10 disabled:opacity-40">
                   <Ban className="h-3.5 w-3.5" /> {t('inspector.markUnavailable', { ref: vehicle.ref })}
                 </button>
-              )}
+              ))}
             </TabsContent>
             <TabsContent value="load" className="mt-0">
               <LoadTab vehicle={vehicle} />

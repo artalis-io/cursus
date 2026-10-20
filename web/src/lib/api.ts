@@ -21,6 +21,7 @@ function classify(status: number): ApiErrorCode {
 }
 async function handle<T>(r: Response, url: string): Promise<T> {
   if (r.ok) return (await r.json()) as T;
+  if (r.status === 401 || r.status === 403) window.dispatchEvent(new Event('cursus:refresh-auth'));
   const code = classify(r.status);
   let serverMessage: string | undefined;
   try { serverMessage = ((await r.json()) as { error?: string }).error; } catch { /* non-JSON body */ }

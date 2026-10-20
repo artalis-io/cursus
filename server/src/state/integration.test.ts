@@ -173,6 +173,114 @@ integration('PostgreSQL magic links persist sessions and queue email atomically'
   await a.pool.query("UPDATE email_outbox SET state='sent',sent_at=now() WHERE tenant_id=$1 AND payload->'to'->>0='admin@example.test'", [tenant]);
 });
 
+integration('schema-2 upgrade preserves memberships and sessions under concurrent migration', async () => {
+  const members = (await a.pool.query('SELECT * FROM memberships ORDER BY tenant_id,user_id')).rows;
+  const sessions = (await a.pool.query('SELECT * FROM sessions ORDER BY token_hash')).rows;
+  // This is the disposable integration database, never a production endpoint.
+  await a.tx(async client => {
+    await client.query('ALTER TABLE memberships DROP CONSTRAINT memberships_role_check');
+    await client.query("ALTER TABLE memberships ADD CONSTRAINT memberships_role_check CHECK(role IN ('admin','reviewer'))");
+    await client.query('DELETE FROM schema_migrations WHERE version=3');
+  });
+  await Promise.all([a.migrate(), b.migrate()]);
+  assert.deepEqual((await a.pool.query('SELECT * FROM memberships ORDER BY tenant_id,user_id')).rows, members);
+  assert.deepEqual((await b.pool.query('SELECT * FROM sessions ORDER BY token_hash')).rows, sessions);
+  assert.deepEqual((await a.pool.query('SELECT version FROM schema_migrations ORDER BY version')).rows.map(r => r.version), [1, 2, 3]);
+});
+
+integration('Admin, Planner and Reviewer sessions enforce tenant-scoped permissions on both replicas', async () => {
+  const id = `roles-${randomUUID()}`, dir = await mkdtemp(join(tmpdir(), 'cursus-roles-'));
+  const allow = join(dir, 'allowed');
+  await writeFile(allow, JSON.stringify({ admins: ['one@example.test', 'two@example.test'], planners: ['planner@example.test'], reviewers: ['reader@example.test'] }), { mode: 0o600 });
+  const cfg = { allowedEmailsFile: allow, publicOrigin: 'https://cursus.example.test', from: 'login@example.test',
+    tenantId: id, tenantName: 'Role integration', secureCookies: true };
+  const authA = new StatefulAuthService(a, cfg), authB = new StatefulAuthService(b, cfg);
+  await authA.initialize();
+  const apps = await Promise.all([a, b].map((store, i) => createStatefulApi({ store, auth: i ? authB : authA,
+    tenantId: id, tenantName: cfg.tenantName, publicOrigin: cfg.publicOrigin })));
+  const login = async (email: string) => {
+    await authA.requestMagicLink(email);
+    const { rows } = await a.pool.query<{ payload: { html: string } }>(`SELECT payload FROM email_outbox
+      WHERE tenant_id=$1 AND payload->'to'->>0=$2 ORDER BY created_at DESC LIMIT 1`, [id, email]);
+    const token = decodeURIComponent(rows[0]!.payload.html.match(/token=([^"<]+)/)![1]!);
+    const session = await authB.consumeMagicLink(token); assert.ok(session); return session;
+  };
+  try {
+    const scenario = await new ScenarioRepository(a, id).ensureBase('roles-day', 'Role test');
+    const admin = await login('one@example.test'); await login('two@example.test');
+    const reader = await login('reader@example.test');
+    const readHeaders = { cookie: `cursus_session=${reader}`, origin: cfg.publicOrigin };
+    for (const app of apps) {
+      assert.equal((await app.inject({ url: '/api/auth/me', headers: readHeaders })).json().role, 'reviewer');
+      assert.equal((await app.inject({ url: `/api/scenarios/${scenario.id}`, headers: readHeaders })).statusCode, 200);
+      assert.equal((await app.inject({ url: `/api/scenarios/${scenario.id}/export`, headers: readHeaders })).statusCode, 200);
+      for (const url of [`/api/scenarios/${scenario.id}/edit`, `/api/scenarios/${scenario.id}/solve`, '/api/import/upload'])
+        assert.equal((await app.inject({ method: 'POST', url, headers: readHeaders, payload: { edit: { op: 'removeVehicle', vehicleId: 1 }, role: 'admin' } })).statusCode, 403);
+      assert.equal((await app.inject({ method: 'DELETE', url: `/api/scenarios/${scenario.id}`, headers: readHeaders })).statusCode, 403);
+    }
+    assert.equal((await a.listScenarios(id)).length, 1);
+    assert.equal((await a.pool.query('SELECT count(*)::int n FROM jobs WHERE tenant_id=$1', [id])).rows[0].n, 0);
+    await authB.setRole('one@example.test', 'reviewer');
+    for (const app of apps) {
+      const headers = { cookie: `cursus_session=${admin}`, origin: cfg.publicOrigin };
+      assert.equal((await app.inject({ url: '/api/auth/me', headers })).json().role, 'reviewer');
+      assert.equal((await app.inject({ method: 'POST', url: '/api/scenarios', headers, payload: { from: scenario.id } })).statusCode, 403);
+    }
+    await login('one@example.test');
+    assert.equal((await authA.authenticate(admin))?.role, 'reviewer', 'new login must not undo a demotion');
+    await assert.rejects(authA.setRole('two@example.test', 'reviewer'), /last tenant administrator/);
+    await assert.rejects(authA.setRole('two@example.test', 'planner'), /last tenant administrator/);
+    const planner = await login('planner@example.test');
+    const plannerHeaders = { cookie: `cursus_session=${planner}`, origin: cfg.publicOrigin };
+    const objectCount = (await a.pool.query('SELECT count(*)::int n FROM objects WHERE tenant_id=$1', [id])).rows[0].n;
+    const jobCount = (await a.pool.query('SELECT count(*)::int n FROM jobs WHERE tenant_id=$1', [id])).rows[0].n;
+    for (const app of apps) {
+      const me = (await app.inject({ url: '/api/auth/me', headers: plannerHeaders })).json();
+      assert.equal(me.role, 'planner'); assert.ok(me.permissions.includes('scenario.edit'));
+      assert.ok(!me.permissions.includes('dataset.upload')); assert.ok(!me.permissions.includes('optimization.cancel'));
+      const created = await app.inject({ method: 'POST', url: '/api/scenarios', headers: plannerHeaders, payload: { from: scenario.id } });
+      assert.equal(created.statusCode, 201);
+      const copy = created.json();
+      const beforeBatch = await a.getScenario(id, copy.id);
+      assert.equal((await app.inject({ method: 'POST', url: `/api/scenarios/${copy.id}/edits`, headers: plannerHeaders,
+        payload: { edits: [{ op: 'removeVehicle', vehicleId: 99 }, { op: 'admitDataset', datasetId: 'no' }] } })).statusCode, 400);
+      assert.deepEqual(await a.getScenario(id, copy.id), beforeBatch, 'an invalid batch must not partially edit authoritative state');
+      assert.equal((await app.inject({ method: 'POST', url: `/api/scenarios/${copy.id}/edits`, headers: plannerHeaders,
+        payload: { edits: [{ op: 'removeVehicle', vehicleId: 2 }, { op: 'restoreVehicle', vehicleId: 2 }] } })).statusCode, 200);
+      assert.equal((await app.inject({ method: 'POST', url: `/api/scenarios/${copy.id}/rename`, headers: plannerHeaders, payload: { label: 'Planner revised' } })).statusCode, 200);
+      assert.equal((await app.inject({ method: 'POST', url: `/api/scenarios/${copy.id}/edit`, headers: plannerHeaders, payload: { edit: { op: 'removeVehicle', vehicleId: 1 } } })).statusCode, 200);
+      assert.equal((await app.inject({ method: 'DELETE', url: `/api/scenarios/${copy.id}`, headers: plannerHeaders })).statusCode, 403);
+      for (const path of ['/api/import/upload', '/api/import/preview', '/api/import/geocode', '/api/import/admit',
+        '/api/import/datasets/anything/validate', '/api/import/datasets/anything/admit', '/api/import/datasets/anything/convert', '/api/auth/view-as'])
+        assert.equal((await app.inject({ method: 'POST', url: path, headers: plannerHeaders, payload: { role: 'admin' } })).statusCode, 403, path);
+      assert.equal((await app.inject({ method: 'DELETE', url: '/api/import/datasets/anything', headers: plannerHeaders })).statusCode, 403);
+      assert.equal((await app.inject({ url: `/api/scenarios/${copy.id}/export`, headers: plannerHeaders })).statusCode, 200);
+    }
+    assert.equal((await a.pool.query('SELECT count(*)::int n FROM objects WHERE tenant_id=$1', [id])).rows[0].n, objectCount);
+    assert.equal((await a.pool.query('SELECT count(*)::int n FROM jobs WHERE tenant_id=$1', [id])).rows[0].n, jobCount);
+    const audit = await a.pool.query("SELECT detail FROM audit_events WHERE tenant_id=$1 AND action='access.authorized'", [id]);
+    assert.ok(audit.rows.some(r => r.detail.role === 'planner' && r.detail.permission === 'scenario.edit'));
+    await authA.setRole('planner@example.test', 'reviewer');
+    for (const app of apps) assert.equal((await app.inject({ method: 'POST', url: '/api/scenarios', headers: plannerHeaders, payload: { from: scenario.id } })).statusCode, 403);
+    await login('planner@example.test');
+    assert.equal((await authB.authenticate(planner))?.role, 'reviewer');
+    await authA.setRole('reader@example.test', 'admin');
+    assert.equal((await authB.authenticate(reader))?.role, 'admin');
+    const headers = { cookie: `cursus_session=${reader}`, origin: cfg.publicOrigin };
+    assert.equal((await apps[1]!.inject({ method: 'POST', url: '/api/scenarios', headers, payload: { from: scenario.id } })).statusCode, 201);
+    const foreign = await createStatefulApi({ store: a, auth: authA, tenantId: tenant, tenantName: 'Other tenant' });
+    try { assert.equal((await foreign.inject({ url: '/api/scenarios', headers })).statusCode, 401); }
+    finally { await foreign.close(); }
+    assert.equal((await apps[0]!.inject({ method: 'POST', url: '/api/auth/logout', headers: readHeaders })).statusCode, 200);
+    assert.equal(await authB.authenticate(reader), null);
+  } finally {
+    await Promise.all(apps.map(app => app.close()));
+    // These test messages were never delivered. Retire only this fixture's
+    // intents so later global outbox-claim tests cannot consume them.
+    await a.pool.query("UPDATE email_outbox SET state='sent',sent_at=now() WHERE tenant_id=$1", [id]);
+  }
+});
+
 integration('provider acceptance followed by crash retries with one stable idempotency key', async () => {
   const mailTenant = `mail-${randomUUID()}`; await a.ensureTenant(mailTenant, 'Mail');
   const key = `ambiguous/${randomUUID()}`;

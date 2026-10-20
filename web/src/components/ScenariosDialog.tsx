@@ -8,6 +8,7 @@ import { km, money } from '@/lib/format';
 import { api, type ScenarioSummary } from '@/lib/api';
 import { useT, describeApiError } from '@/i18n';
 import type { Scenario } from '@/types';
+import { usePermission } from '@/permissions';
 
 /* The what-if workspace: the day's scenarios (base + edited copies) with their
  * latest result. Rename to tell them apart, open to switch to one, delete
@@ -17,6 +18,9 @@ export function ScenariosDialog({ open, onOpenChange, dayId, currentScenarioId, 
   onOpen: (planId: string) => void; onImport: (s: Scenario) => void;
 }) {
   const t = useT();
+  const canRename = usePermission('scenario.rename');
+  const canDelete = usePermission('scenario.delete');
+  const canImport = usePermission('scenario.import');
   const [list, setList] = useState<ScenarioSummary[] | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [sel, setSel] = useState<Set<string>>(new Set());
@@ -36,11 +40,13 @@ export function ScenariosDialog({ open, onOpenChange, dayId, currentScenarioId, 
 
   const toggleSel = (id: string) => setSel((prev) => { const n = new Set(prev); if (n.has(id)) n.delete(id); else if (n.size < 3) n.add(id); return n; });
   const rename = async (id: string) => {
+    if (!canRename) return;
     const label = editLabel.trim(); setEditing(null);
     if (!label) return;
     try { await api.renameScenario(id, label); refresh(); } catch (e) { setErr(describeApiError(e, t)); }
   };
   const del = async (id: string) => {
+    if (!canDelete) return;
     if (!window.confirm(t('scenarios.deleteConfirm'))) return;
     try { await api.deleteScenario(id); setSel((p) => { const n = new Set(p); n.delete(id); return n; }); refresh(); }
     catch (e) { setErr(describeApiError(e, t)); }
@@ -55,6 +61,7 @@ export function ScenariosDialog({ open, onOpenChange, dayId, currentScenarioId, 
     } catch (e) { setErr(describeApiError(e, t)); }
   };
   const importFile = async (file: File) => {
+    if (!canImport) return;
     try {
       const bundle = JSON.parse(await file.text());
       const s = await api.importScenario(bundle);
@@ -71,10 +78,10 @@ export function ScenariosDialog({ open, onOpenChange, dayId, currentScenarioId, 
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <GitBranch className="h-4 w-4" /> {t('scenarios.title')}
-            <label className="ml-auto mr-6 inline-flex cursor-pointer items-center gap-1 rounded border border-divider px-2 py-0.5 text-[11px] font-normal text-muted-foreground hover:bg-accent">
+            {canImport && <label className="ml-auto mr-6 inline-flex cursor-pointer items-center gap-1 rounded border border-divider px-2 py-0.5 text-[11px] font-normal text-muted-foreground hover:bg-accent">
               <Upload className="h-3 w-3" /> {t('scenarios.import')}
               <input type="file" accept="application/json,.json" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) void importFile(f); e.target.value = ''; }} />
-            </label>
+            </label>}
           </DialogTitle>
         </DialogHeader>
         {err && <p className="rounded border border-destructive/40 bg-destructive/10 px-2 py-1 text-xs text-destructive">{err}</p>}
@@ -92,7 +99,7 @@ export function ScenariosDialog({ open, onOpenChange, dayId, currentScenarioId, 
                   <div key={s.id} className={`rounded-md border px-2.5 py-2 ${isCurrent ? 'border-ring ring-1 ring-ring' : 'border-divider'}`}>
                     <div className="flex items-center gap-2">
                       <input type="checkbox" checked={sel.has(s.id)} onChange={() => toggleSel(s.id)} disabled={!L} className="h-3.5 w-3.5 shrink-0" aria-label={t('scenarios.select')} />
-                      {editing === s.id ? (
+                      {canRename && editing === s.id ? (
                         <Input autoFocus value={editLabel} onChange={(e) => setEditLabel(e.target.value)}
                           onBlur={() => void rename(s.id)} onKeyDown={(e) => { if (e.key === 'Enter') void rename(s.id); if (e.key === 'Escape') setEditing(null); }}
                           className="h-6 flex-1 text-xs" />
@@ -101,14 +108,14 @@ export function ScenariosDialog({ open, onOpenChange, dayId, currentScenarioId, 
                       )}
                       {s.kind === 'base' && <Badge variant="outline" className="shrink-0 text-[9px]">{t('scenarios.base')}</Badge>}
                       {isCurrent && <Badge variant="default" className="shrink-0 bg-primary text-[9px]">{t('scenarios.current')}</Badge>}
-                      {s.kind === 'copy' && editing !== s.id && (
+                      {canRename && s.kind === 'copy' && editing !== s.id && (
                         <button type="button" onClick={() => { setEditing(s.id); setEditLabel(s.label); }} aria-label={t('scenarios.rename')} className="shrink-0 rounded p-0.5 text-muted-foreground hover:bg-accent hover:text-foreground"><Pencil className="h-3 w-3" /></button>
                       )}
                       {L && !isCurrent && (
                         <button type="button" onClick={() => { onOpen(L.planId); onOpenChange(false); }} aria-label={t('scenarios.open')} title={t('scenarios.open')} className="shrink-0 rounded p-0.5 text-muted-foreground hover:bg-accent hover:text-foreground"><FolderOpen className="h-3.5 w-3.5" /></button>
                       )}
                       <button type="button" onClick={() => void exportOne(s.id, s.label)} aria-label={t('scenarios.export')} title={t('scenarios.export')} className="shrink-0 rounded p-0.5 text-muted-foreground hover:bg-accent hover:text-foreground"><Download className="h-3.5 w-3.5" /></button>
-                      {s.kind === 'copy' && (
+                      {canDelete && s.kind === 'copy' && (
                         <button type="button" onClick={() => void del(s.id)} aria-label={t('scenarios.delete')} className="shrink-0 rounded p-0.5 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"><Trash2 className="h-3.5 w-3.5" /></button>
                       )}
                     </div>

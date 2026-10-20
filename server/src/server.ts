@@ -33,12 +33,13 @@ import { CATALOG, suggestMapping, type Entity } from './data/catalog.js';
 import { newUploadPath, uploadPath, sampleUpload, runIngestPreview, runGeocode, extFromName, type Mapping } from './data/onboard.js';
 import type { Plan } from './types.js';
 import { buildInfo } from './build-info.js';
+import { registerAccessControl, viewIdentity } from './access-control.js';
+import { rolePermissions } from './roles.js';
 
 const ENTITIES: Entity[] = ['orders', 'vehicles', 'routes'];
 
 const app = Fastify({ logger: { level: 'info' }, bodyLimit: 4 * 1024 * 1024 });
 registerMagicLinkFormParser(app);
-registerWorkspaceBranding(app, config.authTenantName);
 const auth = config.authRequired ? new AuthService({
   databasePath: config.authDatabase,
   allowedEmailsFile: config.authAllowedEmailsFile,
@@ -85,20 +86,11 @@ app.addHook('onRequest', (req, reply, done) => {
 
 // Browser sessions are tenant memberships, not bearer tokens in JavaScript.
 // Static assets, health and the login exchange stay public; application APIs
-// and map tiles require an active admin session when auth is enabled.
-app.addHook('onRequest', (req, reply, done) => {
-  if (!auth) return done();
-  const publicPath = req.url.startsWith('/api/health') || req.url.startsWith('/api/auth/');
-  const protectedPath = req.url.startsWith('/api/') || req.url.startsWith('/tiles');
-  if (publicPath || !protectedPath) return done();
-  const principal = auth.authenticate(cookieValue(req.headers.cookie, 'cursus_session'));
-  if (!principal) { reply.code(401).send({ error: 'authentication required' }); return; }
-  if (!['GET', 'HEAD', 'OPTIONS'].includes(req.method)) {
-    const origin = req.headers.origin;
-    if (origin !== config.authPublicOrigin) { reply.code(403).send({ error: 'invalid request origin' }); return; }
-  }
-  done();
-});
+// and map tiles require a tenant membership; mutations additionally require Admin.
+registerAccessControl(app, auth ? { authenticate: token => auth.authenticate(token),
+  audit: (principal, detail) => auth.recordAccessAudit(principal, detail),
+  tenantId: config.authTenantId, publicOrigin: config.authPublicOrigin } : undefined);
+registerWorkspaceBranding(app, config.authTenantName);
 
 // Per-IP rate limit. The API surface uses the standard bucket; the tile proxy
 // gets its own, more generous bucket (was unthrottled). Health is exempt.
@@ -178,10 +170,10 @@ app.post<{ Querystring: { token?: string } }>('/api/auth/verify', async (req, re
 });
 app.get('/api/auth/me', async (req, reply) => {
   reply.header('Cache-Control', 'private, no-store');
-  if (!auth) return { email: 'local@cursus', tenantId: 'local', tenantName: config.authTenantName, role: 'admin', build: buildInfo };
+  if (!auth) return { email: 'local@cursus', tenantId: 'local', tenantName: config.authTenantName, role: 'admin', permissions: rolePermissions.admin.filter(p => p !== 'role.preview'), build: buildInfo };
   const principal = auth.authenticate(cookieValue(req.headers.cookie, 'cursus_session'));
   if (!principal) return reply.code(401).send({ error: 'authentication required' });
-  return { ...principal, tenantName: config.authTenantName, build: buildInfo };
+  return { ...viewIdentity(principal, req.headers.cookie), tenantName: config.authTenantName, build: buildInfo };
 });
 app.post('/api/auth/logout', async (req, reply) => {
   if (auth && req.headers.origin !== config.authPublicOrigin) return reply.code(403).send({ error: 'invalid request origin' });

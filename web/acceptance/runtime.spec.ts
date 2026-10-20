@@ -16,12 +16,12 @@ async function get<T>(request: APIRequestContext, path: string): Promise<T> {
   expect(response.status(), path).toBe(200);
   return response.json() as Promise<T>;
 }
-async function login(page: Page): Promise<string> {
+async function login(page: Page, email = 'admin@acceptance.example.test'): Promise<string> {
   await page.addInitScript(() => { try { localStorage.setItem('otto.helpSeen', '1'); } catch { /* no storage on error documents */ } });
   await page.goto('/');
   await expect(page.getByRole('contentinfo', { name: 'Account and build' })).toHaveCount(0);
   await expect(page.getByRole('heading', { name: 'Continue to Cursus' })).toBeVisible();
-  await page.getByRole('textbox', { name: 'Work email' }).fill('admin@acceptance.example.test');
+  await page.getByRole('textbox', { name: 'Work email' }).fill(email);
   await page.getByRole('button', { name: /Email me a sign-in link/ }).click();
   await expect(page.getByRole('status')).toContainText('Check your inbox');
   // Delivery is disabled. Read the actual test-only outbox instead of mocking
@@ -36,6 +36,223 @@ async function login(page: Page): Promise<string> {
   await expect(page.getByText('Served / Total')).toBeVisible();
   return link;
 }
+
+function chaosRole(role: 'admin' | 'planner' | 'reviewer'): void {
+  dc('run', '--rm', '-T', '--entrypoint', 'node', 'fixture', '/app/server/dist/manage-role.js',
+    '--tenant', 'acceptance', '--email', 'planner@acceptance.example.test', '--role', role, '--approve');
+}
+async function chaosLogin(page: Page, role: 'admin' | 'planner' | 'reviewer' = 'planner') {
+  // Establish the other Admin through real authentication, even in an isolated
+  // test run; never weaken last-Admin protection to run a chaos fixture.
+  await login(page);
+  await page.getByRole('button', { name: 'Sign out', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Continue to Cursus' })).toBeVisible();
+  await login(page, 'planner@acceptance.example.test');
+  chaosRole(role);
+  await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+  await expect(page.getByRole('contentinfo').getByText(role === 'admin' ? 'Admin' : role === 'planner' ? 'Planner' : 'Reviewer', { exact: true })).toBeVisible();
+}
+function gate() {
+  let release!: () => void;
+  const wait = new Promise<void>(resolve => { release = resolve; });
+  return { wait, release: () => release() };
+}
+async function settleResponse(page: Page, response: import('@playwright/test').Response) {
+  await response.finished();
+  await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
+}
+
+test('chaos: a delayed Admin identity cannot undo a newer real Reviewer demotion', async ({ page }) => {
+  await chaosLogin(page, 'admin');
+  const held = gate(), captured = gate(); let first = true;
+  await page.route('**/api/auth/me', async route => {
+    if (!first) return route.continue();
+    first = false;
+    const response = await route.fetch(); captured.release(); await held.wait;
+    await route.fulfill({ response });
+  });
+  try {
+    await page.evaluate(() => window.dispatchEvent(new Event('focus'))); await captured.wait;
+    chaosRole('reviewer');
+    await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+    await expect(page.getByText('Read-only access', { exact: true })).toBeVisible();
+    const late = page.waitForResponse(r => r.url().endsWith('/api/auth/me'));
+    held.release(); await settleResponse(page, await late);
+    const base = await baseline(page);
+    expect((await page.request.post(`/api/scenarios/${base.scenarioId}/solve`, { headers: { origin: new URL(page.url()).origin }, data: {} })).status()).toBe(403);
+    expect(await page.getByText('Read-only access', { exact: true }).isVisible()).toBe(true);
+    expect(await page.getByRole('button', { name: /^(Optimize|Replan|View as Planner|View as Reviewer)$/ }).count()).toBe(0);
+  } finally { held.release(); chaosRole('planner'); }
+});
+
+test('chaos: late authenticated refresh cannot resurrect the workspace after real sign out', async ({ page }) => {
+  await chaosLogin(page, 'admin');
+  const held = gate(), captured = gate(); let first = true;
+  await page.route('**/api/auth/me', async route => {
+    if (!first) return route.continue();
+    first = false;
+    const response = await route.fetch(); captured.release(); await held.wait; await route.fulfill({ response });
+  });
+  try {
+    await page.evaluate(() => window.dispatchEvent(new Event('focus'))); await captured.wait;
+    await page.getByRole('button', { name: 'Sign out', exact: true }).click();
+    await expect(page.getByRole('heading', { name: 'Continue to Cursus' })).toBeVisible();
+    await page.evaluate(() => {
+      const state = window as typeof window & { chaosResurrected?: boolean };
+      state.chaosResurrected = false;
+      new MutationObserver(() => {
+        if (document.querySelector('[data-testid="workspace-content"]')) state.chaosResurrected = true;
+      }).observe(document.body, { childList: true, subtree: true });
+    });
+    const late = page.waitForResponse(r => r.url().endsWith('/api/auth/me'));
+    held.release(); await settleResponse(page, await late);
+    for (const origin of ['', peer]) expect((await page.request.get(`${origin}/api/days`)).status()).toBe(401);
+    expect(await page.getByRole('contentinfo').count()).toBe(0);
+    expect(await page.getByRole('heading', { name: 'Continue to Cursus' }).isVisible()).toBe(true);
+    expect(await page.evaluate(() => (window as typeof window & { chaosResurrected?: boolean }).chaosResurrected)).toBe(false);
+  } finally { held.release(); chaosRole('planner'); }
+});
+
+for (const transition of ['demoted', 'regranted', 'pending-replan'] as const) {
+test(`chaos: queued edits are dropped after permission transition (${transition}) even when the first real edit completes late`, async ({ page }) => {
+  await chaosLogin(page);
+  const vehicle = (await baseline(page)).vehicles[0]!;
+  await page.locator('aside').first().getByText(vehicle.ref, { exact: true }).click();
+  const held = gate(), captured = gate(); let edits = 0;
+  let solves = 0;
+  page.on('request', request => { if (request.method() === 'POST' && request.url().endsWith('/solve')) solves++; });
+  await page.route('**/api/scenarios/*/edit', async route => {
+    edits++;
+    const response = await route.fetch(); captured.release(); await held.wait; await route.fulfill({ response });
+  });
+  try {
+    const exclude = page.getByRole('button', { name: `Mark ${vehicle.ref} unavailable` });
+    await exclude.click(); await captured.wait;
+    await exclude.click(); // queue a second edit behind the held response
+    if (transition === 'pending-replan') await page.getByRole('button', { name: /^(Optimize|Replan)$/ }).click();
+    chaosRole('reviewer');
+    await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+    await expect(page.getByText('Read-only access', { exact: true })).toBeVisible();
+    if (transition === 'regranted') {
+      chaosRole('planner'); await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+      await expect(page.getByRole('contentinfo').getByText('Planner', { exact: true })).toBeVisible();
+    }
+    const late = page.waitForResponse(r => r.url().endsWith('/edit'));
+    held.release(); await settleResponse(page, await late);
+    // A read through the peer is a network barrier after the queued microtasks.
+    await get(page.request, `${peer}/api/scenarios`);
+    expect(edits).toBe(1);
+    expect(solves).toBe(0);
+    if (transition !== 'regranted') await expect(page.getByRole('button', { name: /Mark .* unavailable|Lock route|Unlock route/ })).toHaveCount(0);
+  } finally { held.release(); chaosRole('planner'); }
+});
+}
+
+test('chaos: open rename/upload dialogs lose their privileged controls immediately on demotion', async ({ page }) => {
+  await chaosLogin(page, 'admin');
+  try {
+    await page.getByRole('button', { name: 'Data', exact: true }).click();
+    await page.getByRole('tab', { name: 'Upload', exact: true }).click();
+    await expect(page.locator('input[type=file]').first()).toBeAttached();
+    chaosRole('planner'); await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+    // Radix marks the background aria-hidden while the dialog is open.
+    await expect(page.locator('footer').getByText('Planner', { exact: true })).toBeVisible();
+    await expect(page.locator('input[type=file]')).toHaveCount(0);
+    await page.keyboard.press('Escape');
+    const base = await baseline(page);
+    const copy = await (await page.request.post('/api/scenarios', { headers: { origin: new URL(page.url()).origin }, data: { from: base.scenarioId, label: 'Chaos original' } })).json() as Scenario;
+    await page.getByRole('button', { name: 'Scenarios', exact: true }).click();
+    const row = page.getByText('Chaos original', { exact: true }).locator('..');
+    await row.getByRole('button', { name: 'Rename', exact: true }).click();
+    await page.getByRole('dialog').getByRole('textbox').fill('Must not be committed');
+    chaosRole('reviewer'); await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+    await expect(page.getByRole('dialog').getByRole('textbox')).toHaveCount(0);
+    await expect(page.getByRole('button', { name: /Rename|Delete/ })).toHaveCount(0);
+    expect((await get<Scenario>(page.request, `${peer}/api/scenarios/${copy.id}`)).label).toBe('Chaos original');
+    await page.keyboard.press('Escape');
+    await page.reload(); await expect(page.getByText('Read-only access', { exact: true })).toBeVisible();
+  } finally { chaosRole('planner'); }
+});
+
+test('chaos: shared preview and logout cookies converge across tabs without membership changes', async ({ page, context }) => {
+  await chaosLogin(page, 'admin');
+  const other = await context.newPage();
+  try {
+    await other.goto('/'); await expect(other.getByRole('button', { name: 'View as Reviewer', exact: true })).toBeVisible();
+    for (const mode of ['Reviewer', 'Planner', 'Reviewer']) {
+      await page.getByRole('button', { name: `View as ${mode}`, exact: true }).click();
+      await expect(page.getByRole('button', { name: 'Return to Admin', exact: true })).toBeVisible();
+      await other.evaluate(() => window.dispatchEvent(new Event('focus')));
+      await expect(other.getByRole('status')).toContainText(`Viewing as ${mode}`);
+      expect((await get<{ role: string }>(other.request, `${peer}/api/auth/me`)).role).toBe('admin');
+      if (mode === 'Reviewer') await expect(other.getByRole('button', { name: /^(Optimize|Replan)$/ })).toHaveCount(0);
+      await page.getByRole('button', { name: 'Return to Admin', exact: true }).click();
+      await expect(page.getByRole('button', { name: 'View as Planner', exact: true })).toBeVisible();
+      await other.evaluate(() => window.dispatchEvent(new Event('focus')));
+      await expect(other.getByRole('button', { name: 'View as Planner', exact: true })).toBeVisible();
+    }
+    await page.getByRole('button', { name: 'Sign out', exact: true }).click();
+    await other.evaluate(() => window.dispatchEvent(new Event('focus')));
+    await expect(other.getByRole('heading', { name: 'Continue to Cursus' })).toBeVisible();
+    expect((await other.request.get(`${peer}/api/days`)).status()).toBe(401);
+  } finally { await other.close(); chaosRole('planner'); }
+});
+
+test('chaos: failed preview request remains recoverable and rapid double clicks do not elevate access', async ({ page }) => {
+  await chaosLogin(page, 'admin');
+  try {
+    await page.route('**/api/auth/view-as', route => route.fulfill({ status: 503, contentType: 'application/json', body: '{}' }), { times: 1 });
+    await page.getByRole('button', { name: 'View as Reviewer', exact: true }).click();
+    await expect(page.getByRole('alert')).toContainText('Could not change view');
+    await expect(page.getByRole('button', { name: 'View as Reviewer', exact: true })).toBeEnabled();
+    let previewRequests = 0;
+    page.on('request', request => { if (request.method() === 'POST' && request.url().endsWith('/api/auth/view-as')) previewRequests++; });
+    await page.getByRole('button', { name: 'View as Reviewer', exact: true }).evaluate(el => { (el as HTMLButtonElement).click(); (el as HTMLButtonElement).click(); });
+    await expect(page.getByRole('button', { name: 'Return to Admin', exact: true })).toBeVisible();
+    expect(previewRequests).toBe(1);
+    expect((await get<{ effectiveRole: string }>(page.request, '/api/auth/me')).effectiveRole).toBe('reviewer');
+    for (const width of [320, 375, 1440]) {
+      await page.setViewportSize({ width, height: 900 });
+      await expect(page.getByRole('button', { name: 'Return to Admin', exact: true })).toBeInViewport();
+      expect(await page.getByRole('contentinfo').evaluate(el => el.scrollWidth <= el.clientWidth)).toBe(true);
+    }
+    await page.getByRole('button', { name: 'Return to Admin', exact: true }).click();
+  } finally { chaosRole('planner'); }
+});
+
+test('chaos: client role tampering and mixed API verbs cannot mutate Reviewer state through either replica', async ({ page, context }) => {
+  await chaosLogin(page, 'reviewer');
+  try {
+    const base = await baseline(page);
+    const before = await get<Scenario>(page.request, `/api/scenarios/${base.scenarioId}`);
+    const scenariosBefore = await get<unknown[]>(page.request, '/api/scenarios');
+    await page.evaluate(() => { localStorage.setItem('role', 'admin'); localStorage.setItem('permissions', JSON.stringify(['scenario.edit', 'dataset.admit'])); });
+    await context.addCookies([{ name: 'cursus_view_as', value: 'admin', url: page.url() }]);
+    await page.reload(); await expect(page.getByText('Read-only access', { exact: true })).toBeVisible();
+    for (const origin of ['', peer]) {
+      for (const [method, path] of [
+        ['POST', `/api/scenarios/${base.scenarioId}/edit?role=admin`],
+        ['POST', `/api/scenarios/${base.scenarioId}/edits`],
+        ['POST', `/api/scenarios/${base.scenarioId}/solve`],
+        ['PATCH', `/api/scenarios/${base.scenarioId}`],
+        ['PUT', `/api/scenarios/${base.scenarioId}`],
+        ['DELETE', `/api/scenarios/${base.scenarioId}`],
+        ['POST', '/api/import/upload'], ['POST', '/api/import/datasets/no/convert'],
+      ]) {
+        const response = await page.request.fetch(`${origin}${path}`, { method,
+          headers: { origin: new URL(page.url()).origin, 'x-role': 'admin', 'x-tenant-id': 'foreign', 'x-http-method-override': 'GET' },
+          data: { role: 'admin', permissions: ['scenario.edit'], edit: { op: 'removeVehicle', vehicleId: base.vehicles[0]!.id } } });
+        expect(response.status(), `${method} ${path}`).toBe(403);
+      }
+      expect(await get<Scenario>(page.request, `${origin}/api/scenarios/${base.scenarioId}`)).toEqual(before);
+      expect(await get<unknown[]>(page.request, `${origin}/api/scenarios`)).toEqual(scenariosBefore);
+      expect((await page.request.get(`${origin}/api/plans/${base.id}/handoff.json`)).status()).toBe(200);
+    }
+    const identity = await get<{ role: string; effectiveRole: string }>(page.request, '/api/auth/me');
+    expect(identity.role).toBe('reviewer'); expect(identity.effectiveRole).toBe('reviewer');
+    await expect(page.getByRole('button', { name: /^(Optimize|Replan|View as Planner|View as Reviewer)$/ })).toHaveCount(0);
+  } finally { chaosRole('planner'); }
+});
 async function baseline(page: Page): Promise<Plan> {
   const days = await get<DaySummary[]>(page.request, '/api/days');
   expect(days).toHaveLength(2);
@@ -144,6 +361,129 @@ test('approved exceptions remain visible and cannot be injected through scenario
   expect(exported.edits.planningPolicyId).toBe('acceptance-approved-policy');
   const invalid = await page.request.post('/api/scenarios/import', { headers: { origin: new URL(page.url()).origin }, data: { ...exported, edits: { ...exported.edits, planningPolicyId: 'not-approved' } } });
   expect(invalid.status()).toBe(400);
+});
+
+test('Admin can preview Reviewer with enforced read-only API and return without changing membership', async ({ page }) => {
+  await login(page);
+  await page.getByRole('button', { name: 'View as Planner', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Return to Admin', exact: true })).toBeVisible();
+  await expect(page.getByRole('status')).toContainText('Viewing as Planner');
+  expect((await get<{ effectiveRole: string }>(page.request, '/api/auth/me')).effectiveRole).toBe('planner');
+  expect((await page.request.post('/api/import/upload', { headers: { origin: new URL(page.url()).origin }, data: {} })).status()).toBe(403);
+  await page.getByRole('button', { name: 'Return to Admin', exact: true }).click();
+  await page.getByRole('button', { name: 'View as Reviewer', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Return to Admin', exact: true })).toBeVisible();
+  await expect(page.getByText('Read-only access', { exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: /^(Optimize|Replan|Solve settings)$/ })).toHaveCount(0);
+  const identity = await get<{ role: string; effectiveRole: string }>(page.request, '/api/auth/me');
+  expect(identity.role).toBe('admin'); expect(identity.effectiveRole).toBe('reviewer');
+  const denied = await page.request.post('/api/solve', { headers: { origin: new URL(page.url()).origin }, data: {} });
+  expect(denied.status()).toBe(403);
+  await page.reload();
+  await expect(page.getByRole('button', { name: 'Return to Admin', exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Return to Admin', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'View as Reviewer', exact: true })).toBeVisible();
+  expect((await get<{ effectiveRole: string }>(page.request, '/api/auth/me')).effectiveRole).toBe('admin');
+});
+
+test('Planner can manage scenario edits but cannot administer shared data or elevate access', async ({ page }) => {
+  await login(page, 'planner@acceptance.example.test');
+  const me = await get<{ role: string; permissions: string[] }>(page.request, '/api/auth/me');
+  expect(me.role).toBe('planner'); expect(me.permissions).toContain('scenario.edit');
+  expect(me.permissions).not.toContain('dataset.upload');
+  await expect(page.getByRole('contentinfo')).toContainText('Planner');
+  await expect(page.getByRole('button', { name: /^View as / })).toHaveCount(0);
+  await page.getByRole('button', { name: 'Data', exact: true }).click();
+  await expect(page.getByRole('tab', { name: 'Upload', exact: true })).toHaveCount(0);
+  await page.keyboard.press('Escape');
+  const plan = await baseline(page);
+  const response = await page.request.post('/api/scenarios', { headers: { origin: new URL(page.url()).origin }, data: { from: plan.scenarioId, label: 'Planner copy' } });
+  expect(response.status()).toBe(201);
+  const scenario = await response.json() as Scenario;
+  const renamed = await page.request.post(`/api/scenarios/${scenario.id}/rename`, { headers: { origin: new URL(page.url()).origin }, data: { label: 'Planner renamed' } });
+  expect(renamed.status()).toBe(200);
+  const bundle = await get<unknown>(page.request, `/api/scenarios/${scenario.id}/export`);
+  expect((await page.request.post('/api/scenarios/import', { headers: { origin: new URL(page.url()).origin }, data: bundle })).status()).toBe(200);
+  await page.getByRole('button', { name: 'Scenarios', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Rename', exact: true }).first()).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Delete', exact: true })).toHaveCount(0);
+  await page.keyboard.press('Escape');
+  for (const origin of ['', peer]) {
+    for (const [method, path] of [['POST', '/api/import/upload'], ['POST', '/api/import/admit'],
+      ['POST', '/api/import/datasets/anything/convert'], ['POST', '/api/auth/view-as'],
+      ['DELETE', `/api/scenarios/${scenario.id}`], ['DELETE', '/api/import/datasets/anything']]) {
+      const denied = await page.request.fetch(`${origin}${path}`, { method, headers: { origin: new URL(page.url()).origin }, data: { role: 'admin' } });
+      expect(denied.status(), path).toBe(403);
+    }
+  }
+  expect((await get<Scenario>(page.request, `${peer}/api/scenarios/${scenario.id}`)).label).toBe('Planner renamed');
+  await page.getByRole('group', { name: 'Language', exact: true }).getByRole('button', { name: 'HU', exact: true }).click();
+  await expect(page.getByRole('contentinfo')).toContainText('Tervező');
+});
+
+test('Reviewer can inspect and export but cannot edit, upload, compute or drag stops', async ({ page }) => {
+  // Ensure a second, real Admin membership exists even when this test runs
+  // alone, so the operator command can safely demote the promoted Reviewer.
+  await login(page);
+  await page.getByRole('button', { name: 'Sign out', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Continue to Cursus' })).toBeVisible();
+  await login(page, 'reviewer@acceptance.example.test');
+  const principal = await get<{ role: string }>(page.request, '/api/auth/me');
+  expect(principal.role).toBe('reviewer');
+  await expect(page.getByRole('contentinfo')).toContainText('Reviewer');
+  await expect(page.getByText('Read-only access', { exact: true })).toBeVisible();
+  const mutations: string[] = [];
+  page.on('request', request => { if (!['GET', 'HEAD', 'OPTIONS'].includes(request.method())) mutations.push(request.url()); });
+  const plan = await baseline(page), vehicle = plan.vehicles[0]!;
+  await expect(page.getByRole('button', { name: /^(Optimize|Replan|Solve settings|Generate|Cancel)$/ })).toHaveCount(0);
+  await page.locator('aside').first().getByText(vehicle.ref, { exact: true }).click();
+  await expect(page.getByRole('button', { name: /Mark .* unavailable|Lock route|Unlock route/ })).toHaveCount(0);
+  await expect(page.locator('aside').last().locator('input[type=number]')).toHaveCount(0);
+  await page.locator('aside').first().getByRole('button', { name: 'Expand trips' }).first().click();
+  await page.locator('aside').first().getByRole('button', { name: /Trip 1/ }).first().click();
+  await expect(page.locator('[draggable=true]')).toHaveCount(0);
+  await expect(page.getByRole('button', { name: /Move .* (earlier|later)/ })).toHaveCount(0);
+  await page.getByRole('button', { name: 'Data', exact: true }).click();
+  await expect(page.getByRole('tab', { name: 'Upload', exact: true })).toHaveCount(0);
+  await expect(page.locator('input[type=file]')).toHaveCount(0);
+  await page.keyboard.press('Escape');
+  await page.getByRole('button', { name: 'Scenarios', exact: true }).click();
+  await expect(page.getByRole('button', { name: /Rename|Delete/ })).toHaveCount(0);
+  await expect(page.locator('input[type=file]')).toHaveCount(0);
+  await page.keyboard.press('Escape');
+  await page.getByRole('group', { name: 'Language', exact: true }).getByRole('button', { name: 'HU', exact: true }).click();
+  await expect(page.getByRole('contentinfo')).toContainText('Megtekintő');
+  await expect(page.getByText('Csak olvasási hozzáférés', { exact: true })).toBeVisible();
+  await page.getByRole('group', { name: 'Nyelv', exact: true }).getByRole('button', { name: 'EN', exact: true }).click();
+  expect(mutations).toEqual([]);
+  for (const suffix of ['export.csv', 'routes.csv', 'routesheet.html', 'handoff.json'])
+    expect((await page.request.get(`/api/plans/${plan.id}/${suffix}`)).status()).toBe(200);
+  for (const base of ['', peer]) {
+    for (const [method, path, data] of [
+      ['POST', `/api/scenarios/${plan.scenarioId}/edit`, { edit: { op: 'removeVehicle', vehicleId: vehicle.id }, role: 'admin' }],
+      ['POST', `/api/scenarios/${plan.scenarioId}/solve`, {}], ['POST', `/api/plans/${plan.id}/evaluate`, {}],
+      ['POST', '/api/import/upload', {}], ['POST', `/api/plans/${plan.id}/narrate`, {}],
+      ['DELETE', `/api/scenarios/${plan.scenarioId}`, undefined],
+    ] as const) {
+      const response = await page.request.fetch(`${base}${path}`, { method, data, headers: { origin: new URL(page.url()).origin } });
+      expect(response.status(), path).toBe(403);
+    }
+  }
+  expect((await get<Plan>(page.request, `/api/plans/${plan.id}`)).stats).toEqual(plan.stats);
+  const changeRole = (role: 'admin' | 'reviewer') => dc('run', '--rm', '-T', '--entrypoint', 'node', 'fixture',
+    '/app/server/dist/manage-role.js', '--tenant', 'acceptance', '--email', 'reviewer@acceptance.example.test', '--role', role, '--approve');
+  const initialIdentity = await get<{ userId: string }>(page.request, '/api/auth/me');
+  changeRole('admin');
+  await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+  await expect(page.getByRole('button', { name: 'Optimize', exact: true })).toBeVisible();
+  changeRole('reviewer');
+  await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+  await expect(page.getByRole('button', { name: 'Optimize', exact: true })).toHaveCount(0);
+  await expect(page.getByRole('contentinfo')).toContainText('Reviewer');
+  expect((await get<{ userId: string }>(page.request, `${peer}/api/auth/me`)).userId).toBe(initialIdentity.userId);
+  expect((await page.request.post(`/api/scenarios/${plan.scenarioId}/solve`, { headers: { origin: new URL(page.url()).origin }, data: {} })).status()).toBe(403);
+  await page.getByRole('button', { name: 'Sign out', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Continue to Cursus' })).toBeVisible();
 });
 
 test('a hard GVW access violation is visible and cannot be labelled Baseline OK', async ({ page }) => {
@@ -289,8 +629,9 @@ test('account bar shows image provenance, fits desktop and mobile, and revokes t
   await expect(page.getByRole('heading', { name: 'Continue to Cursus' })).toBeVisible();
 });
 
-test('reorder requires recomputed preview and a correct native replan with peer export', async ({ page }) => {
-  await login(page); await shortBudget(page);
+for (const role of ['admin', 'planner'] as const) {
+test(`${role}: reorder requires recomputed preview and a correct native replan with peer export`, async ({ page }) => {
+  await login(page, `${role}@acceptance.example.test`); await shortBudget(page);
   const base = await baseline(page);
   const vehicle = base.vehicles.find(v => v.trips[0]?.stops.length >= 2)!;
   await page.locator('aside').first().getByText(vehicle.ref, { exact: true }).click();
@@ -306,8 +647,8 @@ test('reorder requires recomputed preview and a correct native replan with peer 
   expect(stops).toEqual([original[1], original[0], ...original.slice(2)]);
 });
 
-test('excluding a vehicle preserves service and stable identities through the real worker', async ({ page }) => {
-  await login(page); await shortBudget(page);
+test(`${role}: excluding a vehicle preserves service and stable identities through the real worker`, async ({ page }) => {
+  await login(page, `${role}@acceptance.example.test`); await shortBudget(page);
   const vehicle = (await baseline(page)).vehicles[0]!;
   await page.locator('aside').first().getByText(vehicle.ref, { exact: true }).click();
   await page.getByRole('button', { name: `Mark ${vehicle.ref} unavailable` }).click();
@@ -315,8 +656,8 @@ test('excluding a vehicle preserves service and stable identities through the re
   expect(plan.vehicles.some(v => v.id === vehicle.id || v.ref === vehicle.ref)).toBe(false);
 });
 
-test('locking a route preserves its vehicle and exact stop order', async ({ page }) => {
-  await login(page); await shortBudget(page);
+test(`${role}: locking a route preserves its vehicle and exact stop order`, async ({ page }) => {
+  await login(page, `${role}@acceptance.example.test`); await shortBudget(page);
   const vehicle = (await baseline(page)).vehicles[0]!;
   const original = vehicle.trips.flatMap(t => t.stops.map(s => s.orderNo));
   await page.locator('aside').first().getByText(vehicle.ref, { exact: true }).click();
@@ -324,6 +665,7 @@ test('locking a route preserves its vehicle and exact stop order', async ({ page
   const plan = await finishSolve(page, () => page.getByRole('button', { name: 'Replan', exact: true }).click());
   expect(plan.vehicles.find(v => v.id === vehicle.id)!.trips.flatMap(t => t.stops.map(s => s.orderNo))).toEqual(original);
 });
+}
 
 test('an immediate Replan waits for a delayed real edit response', async ({ page }) => {
   await login(page); await shortBudget(page);

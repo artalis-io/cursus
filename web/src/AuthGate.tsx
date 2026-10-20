@@ -1,9 +1,10 @@
-import { useEffect, useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { ArrowRight, CheckCircle2, LoaderCircle, LockKeyhole, Mail, Route } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { AccountBar, type AccountUser } from '@/components/AccountBar';
 import { WorkspaceNameContext } from '@/workspace';
 import { useI18n } from '@/i18n';
+import { RoleContext, PermissionsContext } from '@/permissions';
 
 export function AuthGate({ children }: { children: ReactNode }) {
   const { lang, setLang, t } = useI18n();
@@ -15,32 +16,56 @@ export function AuthGate({ children }: { children: ReactNode }) {
   const [signingOut, setSigningOut] = useState(false);
   const [logoutError, setLogoutError] = useState(false);
   const [workspaceBrand, setWorkspaceBrand] = useState(false);
+  const authGeneration = useRef(0);
+  const logoutPending = useRef(false);
 
   useEffect(() => {
-    fetch('/api/auth/me').then(async (r) => setUser(r.ok ? await r.json() as AccountUser : null)).catch(() => setUser(null));
+    let alive = true;
+    const refresh = () => {
+      if (logoutPending.current) return;
+      const generation = ++authGeneration.current;
+      const current = () => alive && !logoutPending.current && generation === authGeneration.current;
+      void fetch('/api/auth/me', { cache: 'no-store' }).then(async r => {
+        if (r.ok) { const value = await r.json() as AccountUser; if (current()) setUser(value); }
+        else if (current()) setUser(user => r.status === 401 || user === undefined ? null : user);
+      }).catch(() => { if (current()) setUser(user => user === undefined ? null : user); });
+    };
+    refresh();
+    const timer = window.setInterval(refresh, 30_000);
+    window.addEventListener('focus', refresh);
+    window.addEventListener('cursus:refresh-auth', refresh);
     fetch('/api/auth/workspace').then(async (r) => {
       if (!r.ok) return;
       const data = await r.json() as { branding?: { name?: string; icon?: string } | null };
       setWorkspaceBrand(data.branding?.name === 'Gyermelyi' && data.branding.icon === '/api/auth/workspace/icon');
     }).catch(() => { /* Branding failure must never block sign-in. */ });
+    return () => { alive = false; window.clearInterval(timer); window.removeEventListener('focus', refresh); window.removeEventListener('cursus:refresh-auth', refresh); };
   }, []);
 
   if (user === undefined) return <div className="flex min-h-screen items-center justify-center bg-background text-muted-foreground">
     <LoaderCircle className="mr-2 h-4 w-4 animate-spin text-primary" /> {t('auth.loading')}
   </div>;
   async function logout() {
+    if (logoutPending.current) return;
+    logoutPending.current = true;
+    ++authGeneration.current; // Pending identities must not resurrect a session.
     setSigningOut(true); setLogoutError(false);
     try {
       const response = await fetch('/api/auth/logout', { method: 'POST' });
       if (!response.ok) throw new Error('Sign out failed');
+      ++authGeneration.current;
       setUser(null); setEmail(''); setSent(false);
     } catch { setLogoutError(true); }
-    finally { setSigningOut(false); }
+    finally { logoutPending.current = false; setSigningOut(false); }
   }
 
   if (user) return <div className="flex h-full min-h-0 flex-col overflow-hidden">
     <WorkspaceNameContext.Provider value={user.tenantName?.trim() || null}>
-      <div data-testid="workspace-content" className="min-h-0 min-w-0 flex-1 overflow-hidden">{children}</div>
+      <RoleContext.Provider value={user.effectiveRole || user.role}>
+        <PermissionsContext.Provider value={user.permissions ?? null}>
+        <div data-testid="workspace-content" className="min-h-0 min-w-0 flex-1 overflow-hidden">{children}</div>
+        </PermissionsContext.Provider>
+      </RoleContext.Provider>
     </WorkspaceNameContext.Provider>
     <AccountBar user={user} signingOut={signingOut} error={logoutError} onSignOut={() => void logout()} />
   </div>;

@@ -38,6 +38,10 @@ export class StatefulStore {
       await client.query('BEGIN');
       await client.query('SELECT pg_advisory_xact_lock($1)', [MIGRATION_LOCK]);
       await client.query(await readFile(migration, 'utf8'));
+      const reviewer = await client.query('SELECT 1 FROM schema_migrations WHERE version=2');
+      if (!reviewer.rowCount) await client.query(await readFile(resolve(here, '../../migrations/002_reviewer.sql'), 'utf8'));
+      const planner = await client.query('SELECT 1 FROM schema_migrations WHERE version=3');
+      if (!planner.rowCount) await client.query(await readFile(resolve(here, '../../migrations/003_planner.sql'), 'utf8'));
       await client.query('COMMIT');
     } catch (error) { await client.query('ROLLBACK'); throw error; }
     finally { client.release(); }
