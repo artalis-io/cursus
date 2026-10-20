@@ -38,11 +38,13 @@ export function ScenariosDialog({ open, onOpenChange, dayId, currentScenarioId, 
 
   const toggleSel = (id: string) => setSel((prev) => { const n = new Set(prev); if (n.has(id)) n.delete(id); else if (n.size < 3) n.add(id); return n; });
   const rename = async (id: string) => {
+    if (!canEdit) return;
     const label = editLabel.trim(); setEditing(null);
     if (!label) return;
     try { await api.renameScenario(id, label); refresh(); } catch (e) { setErr(describeApiError(e, t)); }
   };
   const del = async (id: string) => {
+    if (!canEdit) return;
     if (!window.confirm(t('scenarios.deleteConfirm'))) return;
     try { await api.deleteScenario(id); setSel((p) => { const n = new Set(p); n.delete(id); return n; }); refresh(); }
     catch (e) { setErr(describeApiError(e, t)); }
@@ -57,6 +59,7 @@ export function ScenariosDialog({ open, onOpenChange, dayId, currentScenarioId, 
     } catch (e) { setErr(describeApiError(e, t)); }
   };
   const importFile = async (file: File) => {
+    if (!canEdit) return;
     try {
       const bundle = JSON.parse(await file.text());
       const s = await api.importScenario(bundle);
@@ -94,7 +97,7 @@ export function ScenariosDialog({ open, onOpenChange, dayId, currentScenarioId, 
                   <div key={s.id} className={`rounded-md border px-2.5 py-2 ${isCurrent ? 'border-ring ring-1 ring-ring' : 'border-divider'}`}>
                     <div className="flex items-center gap-2">
                       <input type="checkbox" checked={sel.has(s.id)} onChange={() => toggleSel(s.id)} disabled={!L} className="h-3.5 w-3.5 shrink-0" aria-label={t('scenarios.select')} />
-                      {editing === s.id ? (
+                      {canEdit && editing === s.id ? (
                         <Input autoFocus value={editLabel} onChange={(e) => setEditLabel(e.target.value)}
                           onBlur={() => void rename(s.id)} onKeyDown={(e) => { if (e.key === 'Enter') void rename(s.id); if (e.key === 'Escape') setEditing(null); }}
                           className="h-6 flex-1 text-xs" />

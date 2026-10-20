@@ -34,6 +34,8 @@ tenant Admin. There is no browser/API self-promotion endpoint. Roles are checked
 against the database on every request; open UIs refresh identity on focus,
 periodically, and after an authorization rejection. Removing an address from
 the private allowlist takes effect after restarting the application replicas.
+Demotion blocks new requests; it does not cancel jobs previously authorized by
+an Admin or undo their completed writes.
 
 The Reviewer release adds PostgreSQL migration **002** (and a transactional
 SQLite upgrade), preserving existing Admins, sessions and application data.

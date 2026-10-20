@@ -22,6 +22,7 @@ export function AuthGate({ children }: { children: ReactNode }) {
     const refresh = () => { void fetch('/api/auth/me', { cache: 'no-store' }).then(async r => {
       if (r.ok) { const value = await r.json() as AccountUser; if (alive) setUser(value); }
       else if (r.status === 401 && alive) setUser(null);
+      else if (alive) setUser(current => current === undefined ? null : current);
     }).catch(() => { if (alive) setUser(current => current === undefined ? null : current); }); };
     refresh();
     const timer = window.setInterval(refresh, 30_000);

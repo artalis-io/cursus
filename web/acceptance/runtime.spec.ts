@@ -147,6 +147,11 @@ test('approved exceptions remain visible and cannot be injected through scenario
 });
 
 test('Reviewer can inspect and export but cannot edit, upload, compute or drag stops', async ({ page }) => {
+  // Ensure a second, real Admin membership exists even when this test runs
+  // alone, so the operator command can safely demote the promoted Reviewer.
+  await login(page);
+  await page.getByRole('button', { name: 'Sign out', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Continue to Cursus' })).toBeVisible();
   await login(page, 'reviewer@acceptance.example.test');
   const principal = await get<{ role: string }>(page.request, '/api/auth/me');
   expect(principal.role).toBe('reviewer');
@@ -171,6 +176,10 @@ test('Reviewer can inspect and export but cannot edit, upload, compute or drag s
   await expect(page.getByRole('button', { name: /Rename|Delete/ })).toHaveCount(0);
   await expect(page.locator('input[type=file]')).toHaveCount(0);
   await page.keyboard.press('Escape');
+  await page.getByRole('group', { name: 'Language', exact: true }).getByRole('button', { name: 'HU', exact: true }).click();
+  await expect(page.getByRole('contentinfo')).toContainText('Megtekintő');
+  await expect(page.getByText('Csak olvasási hozzáférés', { exact: true })).toBeVisible();
+  await page.getByRole('group', { name: 'Nyelv', exact: true }).getByRole('button', { name: 'EN', exact: true }).click();
   expect(mutations).toEqual([]);
   for (const suffix of ['export.csv', 'routes.csv', 'routesheet.html', 'handoff.json'])
     expect((await page.request.get(`/api/plans/${plan.id}/${suffix}`)).status()).toBe(200);
@@ -186,6 +195,18 @@ test('Reviewer can inspect and export but cannot edit, upload, compute or drag s
     }
   }
   expect((await get<Plan>(page.request, `/api/plans/${plan.id}`)).stats).toEqual(plan.stats);
+  const changeRole = (role: 'admin' | 'reviewer') => dc('run', '--rm', '-T', '--entrypoint', 'node', 'fixture',
+    '/app/server/dist/manage-role.js', '--tenant', 'acceptance', '--email', 'reviewer@acceptance.example.test', '--role', role, '--approve');
+  const initialIdentity = await get<{ userId: string }>(page.request, '/api/auth/me');
+  changeRole('admin');
+  await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+  await expect(page.getByRole('button', { name: 'Optimize', exact: true })).toBeVisible();
+  changeRole('reviewer');
+  await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+  await expect(page.getByRole('button', { name: 'Optimize', exact: true })).toHaveCount(0);
+  await expect(page.getByRole('contentinfo')).toContainText('Reviewer');
+  expect((await get<{ userId: string }>(page.request, `${peer}/api/auth/me`)).userId).toBe(initialIdentity.userId);
+  expect((await page.request.post(`/api/scenarios/${plan.scenarioId}/solve`, { headers: { origin: new URL(page.url()).origin }, data: {} })).status()).toBe(403);
   await page.getByRole('button', { name: 'Sign out', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'Continue to Cursus' })).toBeVisible();
 });
