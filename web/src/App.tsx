@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen } from 'lucide-react';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import { Button } from '@/components/ui/button';
@@ -128,6 +128,17 @@ export default function App() {
   const canSolve = usePermission('optimization.submit');
   const canCancel = usePermission('optimization.cancel');
   const canEvaluate = usePermission('plan.evaluate');
+  // Async callbacks can outlive the render that authorized them. Recheck at
+  // dispatch, and invalidate queued intents across revocation/regrant cycles.
+  const writeAccess = useRef({ edit: canEdit, solve: canSolve, cancel: canCancel, epoch: 0, mounted: true });
+  if (writeAccess.current.edit !== canEdit || writeAccess.current.solve !== canSolve || writeAccess.current.cancel !== canCancel)
+    writeAccess.current.epoch++;
+  Object.assign(writeAccess.current, { edit: canEdit, solve: canSolve, cancel: canCancel });
+  useLayoutEffect(() => {
+    const access = writeAccess.current;
+    access.mounted = true;
+    return () => { access.mounted = false; access.epoch++; };
+  }, []);
   const t = useT();
   const [days, setDays] = useState<DaySummary[]>([]);
   const [dayId, setDayId] = useState<string>('day1');
@@ -266,7 +277,7 @@ export default function App() {
 
   // Run a live solve of a scenario with the current objective/budget.
   const runSolve = useCallback(async (scenarioId: string, dayIdForJob: string): Promise<Plan | null> => {
-    if (!canSolve) return null;
+    if (!writeAccess.current.mounted || !writeAccess.current.solve) return null;
     pollAbort.current?.abort();
     const ctrl = new AbortController();
     pollAbort.current = ctrl;
@@ -281,11 +292,11 @@ export default function App() {
       setJob(null);
       return null;
     }
-  }, [canSolve, budgetSec, objective, fullBudget, followJob]);
+  }, [budgetSec, objective, fullBudget, followJob]);
 
   // Cancel the active solve (server-side) and drop back to the current plan.
   const cancelSolve = useCallback(async () => {
-    if (!canCancel) return;
+    if (!writeAccess.current.mounted || !writeAccess.current.cancel) return;
     const id = activeJobId.current;
     if (!id) { pollAbort.current?.abort(); setJob(null); return; }
     activeJobId.current = null;
@@ -293,7 +304,7 @@ export default function App() {
     persistActiveJob(null);
     try { await api.cancelJob(id); } catch { /* best effort */ }
     setJob(null);
-  }, [canCancel]);
+  }, []);
 
   // Reconnect to a solve persisted before a reload. Returns true if it set up state.
   const tryResume = useCallback(async (ds: DaySummary[]): Promise<boolean> => {
@@ -327,8 +338,10 @@ export default function App() {
   // staged edit so the tune loop has positive feedback (nothing else changes
   // on the map until Replan).
   const applyEdit = useCallback((edit: ScenarioEdit): Promise<boolean> => {
-    if (!canEdit) return Promise.resolve(false);
+    if (!writeAccess.current.mounted || !writeAccess.current.edit) return Promise.resolve(false);
+    const epoch = writeAccess.current.epoch;
     const queued = editQueue.current.then(async () => {
+      if (!writeAccess.current.mounted || !writeAccess.current.edit || epoch !== writeAccess.current.epoch) return false;
       const current = scenarioRef.current;
       if (!current) return false;
       try {
@@ -342,13 +355,15 @@ export default function App() {
     });
     editQueue.current = queued;
     return queued;
-  }, [canEdit, showToast, t]);
+  }, [showToast, t]);
 
   // Apply several staged edits at once (bulk actions); one fork + one revision.
   const applyEdits = useCallback((edits: ScenarioEdit[], toastMsg?: string): Promise<boolean> => {
-    if (!canEdit) return Promise.resolve(false);
+    if (!writeAccess.current.mounted || !writeAccess.current.edit) return Promise.resolve(false);
+    const epoch = writeAccess.current.epoch;
     if (edits.length === 0) return Promise.resolve(true);
     const queued = editQueue.current.then(async () => {
+      if (!writeAccess.current.mounted || !writeAccess.current.edit || epoch !== writeAccess.current.epoch) return false;
       const current = scenarioRef.current;
       if (!current) return false;
       try {
@@ -362,7 +377,7 @@ export default function App() {
     });
     editQueue.current = queued;
     return queued;
-  }, [canEdit, showToast, t]);
+  }, [showToast, t]);
 
   // Bulk-assign: pin many orders to one vehicle in a single staged batch.
   const onBulkAssign = useCallback((orderNos: string[], vehicleId: number) => {
@@ -373,17 +388,19 @@ export default function App() {
   // Replan: solve the current (edited) scenario, then surface the comparison if
   // it is an edited copy. Staged edits are applied together here.
   const replan = useCallback(async () => {
-    if (!canEdit || !scenarioRef.current || solveActive) return;
+    if (!writeAccess.current.mounted || !writeAccess.current.solve || !scenarioRef.current || solveActive) return;
+    const epoch = writeAccess.current.epoch;
     setSolveActive(true);
     try {
       if (!await editQueue.current) return;
+      if (!writeAccess.current.mounted || !writeAccess.current.solve || epoch !== writeAccess.current.epoch) return;
       const current = scenarioRef.current;
       if (!current) return;
       const wasCopy = current.kind === 'copy';
       const revised = await runSolve(current.id, dayId);
       if (revised && wasCopy) setCompareOpen(true);
     } finally { setSolveActive(false); }
-  }, [canEdit, dayId, runSolve, solveActive]);
+  }, [dayId, runSolve, solveActive]);
 
   const resetToBaseline = useCallback(() => {
     const d = days.find((x) => x.id === dayId);

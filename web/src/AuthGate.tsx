@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { ArrowRight, CheckCircle2, LoaderCircle, LockKeyhole, Mail, Route } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { AccountBar, type AccountUser } from '@/components/AccountBar';
@@ -16,14 +16,20 @@ export function AuthGate({ children }: { children: ReactNode }) {
   const [signingOut, setSigningOut] = useState(false);
   const [logoutError, setLogoutError] = useState(false);
   const [workspaceBrand, setWorkspaceBrand] = useState(false);
+  const authGeneration = useRef(0);
+  const logoutPending = useRef(false);
 
   useEffect(() => {
     let alive = true;
-    const refresh = () => { void fetch('/api/auth/me', { cache: 'no-store' }).then(async r => {
-      if (r.ok) { const value = await r.json() as AccountUser; if (alive) setUser(value); }
-      else if (r.status === 401 && alive) setUser(null);
-      else if (alive) setUser(current => current === undefined ? null : current);
-    }).catch(() => { if (alive) setUser(current => current === undefined ? null : current); }); };
+    const refresh = () => {
+      if (logoutPending.current) return;
+      const generation = ++authGeneration.current;
+      const current = () => alive && !logoutPending.current && generation === authGeneration.current;
+      void fetch('/api/auth/me', { cache: 'no-store' }).then(async r => {
+        if (r.ok) { const value = await r.json() as AccountUser; if (current()) setUser(value); }
+        else if (current()) setUser(user => r.status === 401 || user === undefined ? null : user);
+      }).catch(() => { if (current()) setUser(user => user === undefined ? null : user); });
+    };
     refresh();
     const timer = window.setInterval(refresh, 30_000);
     window.addEventListener('focus', refresh);
@@ -40,13 +46,17 @@ export function AuthGate({ children }: { children: ReactNode }) {
     <LoaderCircle className="mr-2 h-4 w-4 animate-spin text-primary" /> {t('auth.loading')}
   </div>;
   async function logout() {
+    if (logoutPending.current) return;
+    logoutPending.current = true;
+    ++authGeneration.current; // Pending identities must not resurrect a session.
     setSigningOut(true); setLogoutError(false);
     try {
       const response = await fetch('/api/auth/logout', { method: 'POST' });
       if (!response.ok) throw new Error('Sign out failed');
+      ++authGeneration.current;
       setUser(null); setEmail(''); setSent(false);
     } catch { setLogoutError(true); }
-    finally { setSigningOut(false); }
+    finally { logoutPending.current = false; setSigningOut(false); }
   }
 
   if (user) return <div className="flex h-full min-h-0 flex-col overflow-hidden">

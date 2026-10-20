@@ -78,6 +78,11 @@ periodically, and after an authorization rejection. Removing an address from
 the private allowlist takes effect after restarting the application replicas.
 Demotion blocks new requests; it does not cancel jobs previously authorized by
 an Admin/Planner or undo their completed writes.
+Identity refreshes ignore superseded responses. UI edits/replans waiting in the
+local queue are invalidated when their permissions change or the workspace
+unmounts, including revocation followed by regrant. Already-dispatched requests
+remain subject to server authorization; the UI does not undo accepted writes.
+Preview switches are single-flight even for same-frame repeated clicks.
 
 Reviewer adds migration **002** and Planner adds **003** (with transactional
 SQLite upgrades), preserving existing memberships, sessions and application data.
@@ -95,6 +100,12 @@ Planner reorder/exclusion/route-lock replans, Reviewer read-only/export, both
 Admin preview modes, English/Hungarian labels and mobile layouts. Private
 Gyermelyi/failure-workflow tests remain opt-in with external fixtures; they are
 not implied by the public fixture suite.
+Additional chaos cases exercise out-of-order identity responses, pending logout,
+queued edits/replans during role changes, open dialogs, shared-session tabs,
+preview failures/repeated clicks, and forged client roles/headers/API verbs.
+Set `CURSUS_ACCEPTANCE_MAX_FAILURES=0` for a diagnostic run that collects every
+failure; CI defaults to fail-fast. This does not enable retries or certify a
+failing run.
 
 A polished dispatch-planning workspace over a sample logistics dataset: load a
 planning day, optimize deliveries with **Surge**, inspect vehicle trips, apply

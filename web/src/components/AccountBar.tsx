@@ -1,5 +1,5 @@
 import { LogOut } from 'lucide-react';
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { useT } from '@/i18n';
 import type { Role, Permission } from '../../../server/src/roles';
 
@@ -20,14 +20,18 @@ export function AccountBar({ user, signingOut, error, onSignOut }: {
   const t = useT();
   const [switching, setSwitching] = useState(false);
   const [viewError, setViewError] = useState(false);
+  const previewPending = useRef(false);
   async function switchView(role: 'planner' | 'reviewer' | null) {
+    // State disables the buttons on render; this lock covers same-frame events.
+    if (previewPending.current) return;
+    previewPending.current = true;
     setSwitching(true); setViewError(false);
     try {
       const response = await fetch('/api/auth/view-as', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ role }) });
       if (!response.ok) throw new Error('View change failed');
       // Reload clears staged edits and any cached Admin-only views.
       window.location.reload();
-    } catch { setViewError(true); setSwitching(false); }
+    } catch { previewPending.current = false; setViewError(true); setSwitching(false); }
   }
   const local = user.email.split('@')[0] ?? '';
   const parts = local.split(/[._+-]+/).filter(Boolean);

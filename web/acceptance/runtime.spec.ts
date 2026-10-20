@@ -97,19 +97,30 @@ test('chaos: late authenticated refresh cannot resurrect the workspace after rea
     await page.evaluate(() => window.dispatchEvent(new Event('focus'))); await captured.wait;
     await page.getByRole('button', { name: 'Sign out', exact: true }).click();
     await expect(page.getByRole('heading', { name: 'Continue to Cursus' })).toBeVisible();
+    await page.evaluate(() => {
+      const state = window as typeof window & { chaosResurrected?: boolean };
+      state.chaosResurrected = false;
+      new MutationObserver(() => {
+        if (document.querySelector('[data-testid="workspace-content"]')) state.chaosResurrected = true;
+      }).observe(document.body, { childList: true, subtree: true });
+    });
     const late = page.waitForResponse(r => r.url().endsWith('/api/auth/me'));
     held.release(); await settleResponse(page, await late);
     for (const origin of ['', peer]) expect((await page.request.get(`${origin}/api/days`)).status()).toBe(401);
     expect(await page.getByRole('contentinfo').count()).toBe(0);
     expect(await page.getByRole('heading', { name: 'Continue to Cursus' }).isVisible()).toBe(true);
+    expect(await page.evaluate(() => (window as typeof window & { chaosResurrected?: boolean }).chaosResurrected)).toBe(false);
   } finally { held.release(); chaosRole('planner'); }
 });
 
-test('chaos: queued edits are dropped after demotion even when the first real edit completes late', async ({ page }) => {
+for (const transition of ['demoted', 'regranted', 'pending-replan'] as const) {
+test(`chaos: queued edits are dropped after permission transition (${transition}) even when the first real edit completes late`, async ({ page }) => {
   await chaosLogin(page);
   const vehicle = (await baseline(page)).vehicles[0]!;
   await page.locator('aside').first().getByText(vehicle.ref, { exact: true }).click();
   const held = gate(), captured = gate(); let edits = 0;
+  let solves = 0;
+  page.on('request', request => { if (request.method() === 'POST' && request.url().endsWith('/solve')) solves++; });
   await page.route('**/api/scenarios/*/edit', async route => {
     edits++;
     const response = await route.fetch(); captured.release(); await held.wait; await route.fulfill({ response });
@@ -118,17 +129,24 @@ test('chaos: queued edits are dropped after demotion even when the first real ed
     const exclude = page.getByRole('button', { name: `Mark ${vehicle.ref} unavailable` });
     await exclude.click(); await captured.wait;
     await exclude.click(); // queue a second edit behind the held response
+    if (transition === 'pending-replan') await page.getByRole('button', { name: /^(Optimize|Replan)$/ }).click();
     chaosRole('reviewer');
     await page.evaluate(() => window.dispatchEvent(new Event('focus')));
     await expect(page.getByText('Read-only access', { exact: true })).toBeVisible();
+    if (transition === 'regranted') {
+      chaosRole('planner'); await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+      await expect(page.getByRole('contentinfo').getByText('Planner', { exact: true })).toBeVisible();
+    }
     const late = page.waitForResponse(r => r.url().endsWith('/edit'));
     held.release(); await settleResponse(page, await late);
     // A read through the peer is a network barrier after the queued microtasks.
     await get(page.request, `${peer}/api/scenarios`);
     expect(edits).toBe(1);
-    await expect(page.getByRole('button', { name: /Mark .* unavailable|Lock route|Unlock route/ })).toHaveCount(0);
+    expect(solves).toBe(0);
+    if (transition !== 'regranted') await expect(page.getByRole('button', { name: /Mark .* unavailable|Lock route|Unlock route/ })).toHaveCount(0);
   } finally { held.release(); chaosRole('planner'); }
 });
+}
 
 test('chaos: open rename/upload dialogs lose their privileged controls immediately on demotion', async ({ page }) => {
   await chaosLogin(page, 'admin');
