@@ -1,5 +1,15 @@
 export interface WorkspaceLayout { fleet: number; inspector: number; timeline: number }
 export const LAYOUT_KEY = 'cursus.workspace-layout.v1';
+export const VISIBILITY_KEY = 'cursus.workspace-visibility.v1';
+export const DEFAULT_VISIBILITY = { timeline: true, kpis: true };
+export function parseVisibility(raw: string | null): typeof DEFAULT_VISIBILITY {
+  try {
+    const value: unknown = JSON.parse(raw ?? 'null');
+    if (!value || typeof value !== 'object' || !('version' in value) || value.version !== 1) return { ...DEFAULT_VISIBILITY };
+    const data = value as Record<string, unknown>;
+    return { timeline: typeof data.timeline === 'boolean' ? data.timeline : true, kpis: typeof data.kpis === 'boolean' ? data.kpis : true };
+  } catch { return { ...DEFAULT_VISIBILITY }; }
+}
 export const DEFAULT_LAYOUT: WorkspaceLayout = { fleet: 310, inspector: 340, timeline: 192 };
 export const LIMITS = { fleet: [240, 520], inspector: [260, 560], timeline: [120, 360] } as const;
 export const HANDLE_SIZE = 6;

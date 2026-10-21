@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen, RotateCcw } from 'lucide-react';
+import { PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen, PanelTopClose, PanelTopOpen, PanelBottomClose, PanelBottomOpen, RotateCcw } from 'lucide-react';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import { Button } from '@/components/ui/button';
 import { TopBar } from '@/components/TopBar';
@@ -592,8 +592,10 @@ export default function App() {
           onOpenScenarios={() => setScenariosOpen(true)}
           onOpenHelp={() => setHelpOpen(true)}
         />
-        <KpiStrip plan={plan} baseline={baseline} compare={isReplan} job={job}
-          previewDistanceKm={previewTotals?.distanceKm} previewCostTotal={previewTotals?.costTotal} />
+        <div id="cursus-kpi-pane" className="shrink-0" hidden={!workspace.visibility.kpis}>
+          <KpiStrip plan={plan} baseline={baseline} compare={isReplan} job={job}
+            previewDistanceKm={previewTotals?.distanceKm} previewCostTotal={previewTotals?.costTotal} />
+        </div>
         <ReadinessPanel plan={plan} baseline={baseline} scenario={scenario} pending={pendingEdits > 0 || !!solving || !!freshnessError || workspaceLoading} />
         <PlanApproval key={plan.id} planId={plan.id} revision={scenario.revision} pending={pendingEdits > 0 || !!solving || !!freshnessError || workspaceLoading || scenario.id !== plan.scenarioId} />
         {freshnessError && <div role="alert" className="border-b border-warning/40 bg-warning/10 px-4 py-2 text-sm">
@@ -636,16 +638,22 @@ export default function App() {
                 <Button variant="graphite" size="icon" className="h-8 w-8 opacity-90" aria-label={rightOpen ? 'Collapse inspector' : 'Open inspector'} onClick={() => setRightOpen((o) => !o)}>
                   {rightOpen ? <PanelRightClose className="h-4 w-4" /> : <PanelRightOpen className="h-4 w-4" />}
                 </Button>
+                <Button variant="graphite" size="icon" className="h-8 w-8 opacity-90" aria-label={t(workspace.visibility.kpis ? 'layout.collapseKpis' : 'layout.openKpis')} title={t(workspace.visibility.kpis ? 'layout.collapseKpis' : 'layout.openKpis')} aria-expanded={workspace.visibility.kpis} aria-controls="cursus-kpi-pane" onClick={() => workspace.toggleVisibility('kpis')}>
+                  {workspace.visibility.kpis ? <PanelTopClose className="h-4 w-4" /> : <PanelTopOpen className="h-4 w-4" />}
+                </Button>
+                <Button variant="graphite" size="icon" className="h-8 w-8 opacity-90" aria-label={t(workspace.visibility.timeline ? 'layout.collapseTimeline' : 'layout.openTimeline')} title={t(workspace.visibility.timeline ? 'layout.collapseTimeline' : 'layout.openTimeline')} aria-expanded={workspace.visibility.timeline} aria-controls="cursus-timeline-pane" onClick={() => { if (workspace.visibility.timeline) stopClock(); workspace.toggleVisibility('timeline'); }}>
+                  {workspace.visibility.timeline ? <PanelBottomClose className="h-4 w-4" /> : <PanelBottomOpen className="h-4 w-4" />}
+                </Button>
                 {workspace.layout.desktop && <Button variant="graphite" size="icon" className="h-8 w-8 opacity-90" aria-label={t('layout.reset')} title={t('layout.reset')} onClick={workspace.reset}>
                   <RotateCcw className="h-4 w-4" />
                 </Button>}
               </div>
               <MapView plan={plan} scenario={scenario} selection={selection} onSelect={navigate} clockSec={clockSec} visibleVehicleIds={visibleVehicleIds} />
             </div>
-            {workspace.layout.desktop && <ResizeHandle label={t('layout.timeline')} help={t('layout.help')} controls="cursus-timeline-pane"
+            {workspace.visibility.timeline && workspace.layout.desktop && <ResizeHandle label={t('layout.timeline')} help={t('layout.help')} controls="cursus-timeline-pane"
               axis="y" direction={-1} value={workspace.layout.timeline} min={workspace.layout.timelineMin} max={workspace.layout.timelineMax}
               onChange={n => workspace.setSize('timeline', n)} onReset={() => workspace.resetSize('timeline')} />}
-            <div id="cursus-timeline-pane" className="h-48 shrink-0 overflow-hidden border-t border-divider" style={{ height: workspace.layout.timeline }}>
+            <div id="cursus-timeline-pane" hidden={!workspace.visibility.timeline} className="h-48 shrink-0 overflow-hidden border-t border-divider" style={{ height: workspace.layout.timeline }}>
               <Timeline plan={plan} selection={selection} onSelect={navigate}
                 clockSec={clockSec} playing={playing} speed={speed} dayRange={dayRange}
                 onTogglePlay={togglePlay} onSeek={seekClock} onStop={stopClock} onSpeed={setSpeed} />
