@@ -723,6 +723,54 @@ test('Reviewer can review snapshot readiness, baseline metrics and Hungarian det
   }
 });
 
+test('timeline and KPI collapse persist, preserve dimensions, restore and never submit planning writes', async ({ page }) => {
+  await login(page, 'reviewer@acceptance.example.test');
+  const original = await baseline(page);
+  const writes: string[] = [];
+  page.on('request', r => { if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(r.method())) writes.push(r.url()); });
+  const timeline = page.locator('#cursus-timeline-pane'), kpis = page.locator('#cursus-kpi-pane');
+  const handle = page.getByRole('separator', { name: 'Resize timeline', exact: true });
+  await handle.focus(); await page.keyboard.press('ArrowUp');
+  const height = await handle.getAttribute('aria-valuenow');
+  const mapBefore = (await page.locator('#cursus-map-pane').boundingBox())!.height;
+  await timeline.getByRole('button', { name: 'Play', exact: true }).click();
+  await expect(timeline.getByRole('button', { name: 'Pause', exact: true })).toBeVisible();
+  const collapseTimeline = page.getByRole('button', { name: 'Collapse timeline', exact: true });
+  await expect(collapseTimeline).toHaveAttribute('aria-expanded', 'true');
+  await collapseTimeline.focus(); await page.keyboard.press('Enter');
+  await expect(timeline).toBeHidden(); await expect(handle).toHaveCount(0);
+  await page.getByRole('button', { name: 'Open timeline', exact: true }).click();
+  await expect(timeline.getByRole('button', { name: 'Play', exact: true })).toBeVisible();
+  await expect(timeline.getByRole('button', { name: 'Stop', exact: true })).toBeDisabled();
+  await page.getByRole('button', { name: 'Collapse timeline', exact: true }).click();
+  await page.getByRole('button', { name: 'Collapse KPI bar', exact: true }).click();
+  await expect(kpis).toBeHidden();
+  expect((await page.locator('#cursus-map-pane').boundingBox())!.height).toBeGreaterThan(mapBefore);
+  await page.reload();
+  await expect(page.getByRole('button', { name: 'Open timeline', exact: true })).toHaveAttribute('aria-expanded', 'false');
+  await expect(timeline).toBeHidden(); await expect(kpis).toBeHidden();
+  await page.getByRole('button', { name: 'Open timeline', exact: true }).click();
+  await expect(handle).toHaveAttribute('aria-valuenow', height!);
+  await expect(timeline.getByRole('button', { name: 'Play', exact: true })).toBeVisible();
+  await expect(timeline.getByRole('button', { name: 'Stop', exact: true })).toBeDisabled();
+  await expect(kpis).toBeHidden();
+  await page.getByRole('button', { name: 'Collapse timeline', exact: true }).click();
+  await page.getByRole('button', { name: 'Reset layout', exact: true }).click();
+  await expect(timeline).toBeVisible(); await expect(kpis).toBeVisible();
+  await expect(handle).toHaveAttribute('aria-valuenow', '192');
+  await page.getByRole('button', { name: 'Collapse fleet panel', exact: true }).click();
+  await page.getByRole('button', { name: 'Collapse inspector', exact: true }).click();
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.getByRole('button', { name: 'HU', exact: true }).click();
+  await page.getByRole('button', { name: 'Idővonal összecsukása', exact: true }).click();
+  await page.getByRole('button', { name: 'Mutatósáv összecsukása', exact: true }).click();
+  await expect(timeline).toBeHidden(); await expect(kpis).toBeHidden();
+  await page.getByRole('button', { name: 'Idővonal megnyitása', exact: true }).click();
+  await page.getByRole('button', { name: 'Mutatósáv megnyitása', exact: true }).click();
+  await expect(timeline).toBeVisible(); await expect(kpis).toBeVisible();
+  expect(writes).toEqual([]); expect(await baseline(page)).toEqual(original);
+});
+
 test('workspace panels resize by pointer and keyboard, persist, reset and never submit planning writes', async ({ page }) => {
   await login(page, 'reviewer@acceptance.example.test');
   const original = await baseline(page);

@@ -1,5 +1,12 @@
 import { test, expect } from '@playwright/test';
-import { DEFAULT_LAYOUT, HANDLE_SIZE, MAP_MIN_WIDTH, fitLayout, parseLayout } from '../src/lib/workspace-layout';
+import { DEFAULT_LAYOUT, DEFAULT_VISIBILITY, HANDLE_SIZE, MAP_MIN_WIDTH, fitLayout, parseLayout, parseVisibility } from '../src/lib/workspace-layout';
+
+test('panel visibility admits only versioned booleans and safely defaults to visible', () => {
+  for (const raw of [null, '', '{', 'null', '[]', '{"version":2,"timeline":false}']) expect(parseVisibility(raw)).toEqual(DEFAULT_VISIBILITY);
+  expect(parseVisibility('{"version":1,"timeline":false,"kpis":false}')).toEqual({ timeline: false, kpis: false });
+  expect(parseVisibility('{"version":1,"timeline":"false","kpis":0}')).toEqual(DEFAULT_VISIBILITY);
+  expect(parseVisibility('{"version":1,"timeline":false,"unknown":false}')).toEqual({ timeline: false, kpis: true });
+});
 
 test('layout preferences validate versions, types and finite sizes without trusting storage', () => {
   for (const raw of [null, '', '{', 'null', '[]', '"text"', '{"version":2,"fleet":500}']) expect(parseLayout(raw)).toEqual(DEFAULT_LAYOUT);

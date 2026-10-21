@@ -2,7 +2,12 @@
 
 On workspaces at least 1024 pixels wide, drag the dividers between Fleet/Map,
 Map/Inspector and Map/Timeline. The existing sidebar collapse buttons remain.
-The map toolbar's **Reset layout** button restores all three default dimensions;
+The map toolbar also independently collapses/restores the KPI bar and timeline.
+Their controls remain on the map when the panels are hidden, expose expanded
+state to assistive technology, and support keyboard activation in English/Hungarian.
+Collapsing the timeline stops playback and clears its map clock. Its preferred
+expanded height is retained, and no invisible timeline divider remains.
+The map toolbar's **Reset layout** button restores KPI/timeline visibility and all three default dimensions;
 double-clicking a divider resets just its panel.
 
 Focusable separators support arrow keys (10 pixels), Shift+arrow (40 pixels),
@@ -20,6 +25,8 @@ An explicit sidebar resize in a constrained viewport anchors the other sidebar
 at its currently visible width so the divider follows the gesture predictably.
 
 Preferences are browser-local UI settings under `cursus.workspace-layout.v1`.
+KPI/timeline visibility is stored separately under `cursus.workspace-visibility.v1`
+as versioned booleans; missing/invalid settings default to both visible.
 They contain only a format version and three dimensions, not tenant/user IDs,
 emails or plan data. They are not shared server state or cross-device settings.
 Corrupted, non-finite or out-of-range values are sanitized. Storage denial or

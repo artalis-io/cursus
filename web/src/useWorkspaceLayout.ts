@@ -1,7 +1,14 @@
 import { useEffect, useState } from 'react';
 import { DEFAULT_LAYOUT, LAYOUT_KEY, LIMITS, clamp, fitLayout, parseLayout, type WorkspaceLayout } from '@/lib/workspace-layout';
+import { DEFAULT_VISIBILITY, VISIBILITY_KEY, parseVisibility } from '@/lib/workspace-layout';
 
 export function useWorkspaceLayout(fleetOpen: boolean, inspectorOpen: boolean) {
+  const [visibility, setVisibility] = useState(() => {
+    try { return parseVisibility(localStorage.getItem(VISIBILITY_KEY)); } catch { return { ...DEFAULT_VISIBILITY }; }
+  });
+  useEffect(() => {
+    try { localStorage.setItem(VISIBILITY_KEY, JSON.stringify({ version: 1, ...visibility })); } catch { /* Personal layout still works without storage. */ }
+  }, [visibility]);
   const [container, setContainer] = useState<HTMLDivElement | null>(null);
   const [bounds, setBounds] = useState({ width: 0, height: 0 });
   const [preferred, setPreferred] = useState<WorkspaceLayout>(() => {
@@ -31,5 +38,6 @@ export function useWorkspaceLayout(fleetOpen: boolean, inspectorOpen: boolean) {
     });
   };
   return { containerRef: setContainer, layout: fitLayout(preferred, bounds.width, bounds.height, fleetOpen, inspectorOpen),
-    setSize, reset: () => setPreferred({ ...DEFAULT_LAYOUT }), resetSize: (key: keyof WorkspaceLayout) => setSize(key, DEFAULT_LAYOUT[key]) };
+    visibility, toggleVisibility: (key: keyof typeof DEFAULT_VISIBILITY) => setVisibility(v => ({ ...v, [key]: !v[key] })),
+    setSize, reset: () => { setPreferred({ ...DEFAULT_LAYOUT }); setVisibility({ ...DEFAULT_VISIBILITY }); }, resetSize: (key: keyof WorkspaceLayout) => setSize(key, DEFAULT_LAYOUT[key]) };
 }
