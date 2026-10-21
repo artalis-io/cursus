@@ -5,6 +5,8 @@ import type { Plan } from '../types.js';
 import type { Scenario } from '../store.js';
 import type { StatefulStore } from './postgres.js';
 import type { Workflow } from '../workflow-contract.js';
+import { constraintSnapshot, type HandoffActor, type HandoffMetadata } from '../handoff.js';
+import { withNormalizedPlanStats } from '../plan/stats.js';
 export type { Workflow } from '../workflow-contract.js';
 
 export class WorkflowError extends Error {
@@ -61,33 +63,67 @@ export function approvalBlockers(plan: Plan, revision: number, scenario?: Scenar
 export class PlanWorkflow {
   constructor(private store: StatefulStore, private tenantId: string) {}
 
-  private async snapshot(client: PoolClient, id: string, lock: boolean): Promise<{ workflow: Workflow; plan: Plan }> {
+  private async snapshot(client: PoolClient, id: string, lock: boolean, allowMissingScenario = false) {
     const found = await client.query<{ body: Plan }>('SELECT body FROM plans WHERE tenant_id=$1 AND id=$2', [this.tenantId, id]);
     const plan = found.rows[0]?.body;
     if (!plan) throw new WorkflowError(404, 'plan not found');
     const scenarios = await client.query<{ revision: string; body: Scenario }>(`SELECT revision,body FROM scenarios WHERE tenant_id=$1 AND id=$2${lock ? ' FOR UPDATE' : ''}`, [this.tenantId, plan.scenarioId]);
-    if (!scenarios.rows[0]) throw new WorkflowError(409, 'Plan scenario no longer exists.');
-    const revision = Number(scenarios.rows[0].revision);
+    if (!scenarios.rows[0] && !allowMissingScenario) throw new WorkflowError(409, 'Plan scenario no longer exists.');
+    const scenario = scenarios.rows[0]?.body ?? null;
+    const revision = scenarios.rows[0] ? Number(scenarios.rows[0].revision) : -1;
     const hash = planDigest(plan);
-    const events = await client.query<{ action: string; detail: { version: number; planSha256: string; scenarioRevision: number }; user_id: string | null; created_at: Date }>(
-      `SELECT action,detail,user_id,created_at FROM audit_events WHERE tenant_id=$1 AND action IN ('plan.review','plan.approve')
-       AND detail->>'planId'=$2 ORDER BY id DESC LIMIT 1`, [this.tenantId, id]);
+    const events = await client.query<{ action: string; detail: { version: number; planSha256: string; scenarioRevision: number;
+      scenarioSnapshot?: Scenario; actor?: { userId: string; email: string }; acknowledgedExceptions?: boolean };
+      user_id: string | null; email: string | null; created_at: Date }>(
+      `SELECT e.action,e.detail,e.user_id,e.created_at,u.email FROM audit_events e LEFT JOIN users u ON u.id=e.user_id
+       WHERE e.tenant_id=$1 AND e.action IN ('plan.review','plan.approve')
+       AND e.detail->>'planId'=$2 ORDER BY e.id DESC LIMIT 1`, [this.tenantId, id]);
     const event = events.rows[0];
     const state = event ? revision !== plan.scenarioRevision || event.detail.planSha256 !== hash ? 'superseded'
       : event.action === 'plan.approve' ? 'approved' : 'reviewed' : 'draft';
-    return { plan, workflow: { state, version: event?.detail.version ?? 0, scenarioRevision: plan.scenarioRevision,
+    return { plan, scenario, event, workflow: { state, version: event?.detail.version ?? 0, scenarioRevision: plan.scenarioRevision,
       currentRevision: revision, planSha256: hash, actor: event?.user_id ?? null, at: event?.created_at.toISOString() ?? null,
-      blockers: approvalBlockers(plan, revision, scenarios.rows[0].body) } };
+      blockers: approvalBlockers(plan, revision, scenario ?? undefined) } satisfies Workflow };
   }
 
   async get(id: string): Promise<Workflow> {
     return this.store.tx(async client => (await this.snapshot(client, id, true)).workflow);
   }
 
+  /** Render bytes, not a lazy/streamed response, while the scenario lock is held.
+   * Network delivery is outside the transaction; checkedAt defines the snapshot. */
+  async renderExport(id: string, requireApproved: boolean, render: (plan: Plan, metadata: HandoffMetadata) => string): Promise<{ body: string; metadata: HandoffMetadata }> {
+    return this.store.tx(async client => {
+      const { plan, scenario, event, workflow } = await this.snapshot(client, id, true, true);
+      const fresh = scenario !== null && workflow.currentRevision === plan.scenarioRevision;
+      const approved = workflow.state === 'approved' && fresh && workflow.blockers.length === 0;
+      const status = approved ? 'Approved' : !fresh || workflow.state === 'superseded' || workflow.state === 'approved' ? 'Superseded' : 'Draft';
+      if (requireApproved && !approved) throw new WorkflowError(409, 'This plan is not currently approved. Refresh its review status or download an ordinary draft/superseded export.');
+      const historical = event?.detail.scenarioSnapshot;
+      const recorded = historical?.id === plan.scenarioId && historical.revision === plan.scenarioRevision ? historical : null;
+      const actor: HandoffActor = event?.user_id ? {
+        userId: event.user_id, email: event.detail.actor?.userId === event.user_id ? event.detail.actor.email : event.email,
+        identitySource: event.detail.actor?.userId === event.user_id ? 'approval-event' : 'user-record',
+      } : { userId: null, email: null, identitySource: event ? 'local' : 'unavailable' };
+      const clock = await client.query<{ at: Date }>('SELECT clock_timestamp() AS at');
+      const metadata: HandoffMetadata = {
+        version: 1, status, planId: plan.id, scenarioId: plan.scenarioId, scenarioRevision: plan.scenarioRevision,
+        currentScenarioRevision: scenario ? workflow.currentRevision : null, planSha256: workflow.planSha256,
+        checkedAt: clock.rows[0]!.at.toISOString(),
+        approval: event?.action === 'plan.approve' ? { workflowVersion: workflow.version, approvedAt: event.created_at.toISOString(),
+          approver: actor, exceptionsAcknowledged: event.detail.acknowledgedExceptions === true } : null,
+        blockers: [...workflow.blockers, ...(!scenario ? ['Plan scenario no longer exists.'] : [])],
+        constraints: constraintSnapshot(plan, fresh ? scenario : recorded, fresh ? 'matching-revision' : recorded ? 'approval-event' : 'unavailable'),
+        policy: plan.provenance?.planningPolicy ?? null,
+      };
+      return { body: render(withNormalizedPlanStats(plan), metadata), metadata };
+    });
+  }
+
   async transition(id: string, action: 'plan.review' | 'plan.approve', version: number, revision: number,
     acknowledgeExceptions: boolean, actor?: Principal): Promise<Workflow> {
     return this.store.tx(async client => {
-      const { plan, workflow } = await this.snapshot(client, id, true);
+      const { plan, scenario, workflow } = await this.snapshot(client, id, true);
       if (workflow.version !== version || workflow.currentRevision !== revision)
         throw new WorkflowError(409, 'Plan review changed. Reload before continuing.');
       if (workflow.blockers.length) throw new WorkflowError(409, workflow.blockers.join(' '));
@@ -97,7 +133,8 @@ export class PlanWorkflow {
       await client.query(`INSERT INTO audit_events(tenant_id,user_id,action,detail) VALUES($1,$2,$3,$4)`,
         [this.tenantId, actor?.userId ?? null, action, { planId: id, scenarioId: plan.scenarioId,
           scenarioRevision: plan.scenarioRevision, planSha256: workflow.planSha256, version: version + 1,
-          acknowledgedExceptions: true, actorMode: actor ? 'authenticated' : 'local' }]);
+          acknowledgedExceptions: true, actorMode: actor ? 'authenticated' : 'local',
+          actor: actor ? { userId: actor.userId, email: actor.email } : null, scenarioSnapshot: scenario }]);
       return (await this.snapshot(client, id, false)).workflow;
     });
   }

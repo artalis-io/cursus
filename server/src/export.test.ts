@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 
 import { planToCsv, planToRouteSheetHtml, planToRoutesCsv, planToHandoffJson } from './export.js';
 import type { Plan, PlanStop, PlanTrip, PlanVehicle } from './types.js';
+import { legacyHandoff, exportFilename } from './handoff.js';
 
 function mkStop(orderNo: string, over: Partial<PlanStop> = {}): PlanStop {
   return {
@@ -39,6 +40,48 @@ function mkPlan(): Plan {
     unassigned: [{ orderId: null, orderNo: 'U9', customer: 'Cust U9', city: 'Elsewhere', lon: 20, lat: 47, reason: null, reasonCode: null }],
   };
 }
+
+test('handoff metadata is additive, explicit, escaped and never manufactures legacy approval', () => {
+  const plan = mkPlan();
+  const metadata = legacyHandoff(plan, undefined, 'a'.repeat(64));
+  assert.equal(metadata.status, 'Superseded'); assert.equal(metadata.approval, null);
+  assert.equal(metadata.constraints.scenarioEvidence, 'unavailable');
+  metadata.planId = '<script>alert(1)</script>';
+  assert.deepEqual(planToHandoffJson(plan, plan.day, metadata).handoff, metadata);
+  const html = planToRouteSheetHtml(plan, plan.day, metadata);
+  assert.match(html, /Superseded/); assert.match(html, /&lt;script&gt;/);
+  assert.ok(!html.includes('<script>alert(1)'));
+  for (const csv of [planToCsv(plan, metadata), planToRoutesCsv(plan, plan.day, metadata)]) {
+    assert.match(csv.split('\n')[0]!, /handoff_status,plan_id,scenario_revision,handoff_json$/);
+    assert.match(csv, /Superseded/); assert.match(csv, /planSha256/);
+    assert.equal(csv.trim().split('\n').length, 4);
+  }
+  assert.ok(!/[\r\n"]/.test(exportFilename('id\r\n"/../../x', 'Draft', 'json')));
+  const empty = { ...plan, vehicles: [], unassigned: [] };
+  for (const csv of [planToCsv(empty, metadata), planToRoutesCsv(empty, plan.day, metadata)]) {
+    assert.match(csv, /handoff_metadata/); assert.match(csv, /planSha256/);
+    assert.equal(csv.trim().split('\n').length, 2);
+  }
+});
+
+test('approved handoff retains exception reasons and repeats the receipt on printable vehicle sheets', () => {
+  const plan = mkPlan(), metadata = legacyHandoff(plan, undefined, 'a'.repeat(64));
+  metadata.status = 'Approved';
+  metadata.approval = { workflowVersion: 2, approvedAt: '2026-05-06T08:00:00.000Z', exceptionsAcknowledged: true,
+    approver: { userId: 'test-user', email: 'approver@example.test', identitySource: 'approval-event' } };
+  metadata.policy = { version: 1, id: 'public-policy', date: plan.day, datasetRequestSha256: 'b'.repeat(64),
+    approvedAt: metadata.approval.approvedAt, approvedBy: 'Operator',
+    exceptions: [{ orderNo: 'O1', reason: 'Approved <script> exception', originalRequiresTailLift: true, requiresTailLift: false }] };
+  const json = planToHandoffJson(plan, plan.day, metadata);
+  assert.equal(json.handoff?.policy?.exceptions[0]?.reason, 'Approved <script> exception');
+  assert.equal(json.handoff?.approval?.approver.email, 'approver@example.test');
+  const html = planToRouteSheetHtml(plan, plan.day, metadata);
+  assert.match(html, /Approved &lt;script&gt; exception/); assert.ok(!html.includes('<script>'));
+  assert.match(html, /Max GVW/); assert.match(html, /Tail-lift/); assert.match(html, /Capacity:/);
+  assert.match(html, /Approved · pln_1 · revision 1/);
+  const csv = planToRoutesCsv(plan, plan.day, metadata);
+  assert.equal(csv.split('""planSha256""').length - 1, 1, 'full inventory is serialized once, not quadratically per stop');
+});
 
 test('planToCsv: header, assigned rows, and an unassigned row', () => {
   const csv = planToCsv(mkPlan());

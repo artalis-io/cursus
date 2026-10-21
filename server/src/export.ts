@@ -1,4 +1,18 @@
 import type { Plan, PlanStop, PlanVehicle } from './types.js';
+import type { HandoffMetadata } from './handoff.js';
+
+function csvHandoff(rows: string[], metadata?: HandoffMetadata): string {
+  if (!metadata) return rows.join('\n') + '\n';
+  // One full evidence envelope, not one copy of the entire stop inventory per
+  // delivery (quadratic file size). Every operational row still has the label.
+  if (rows.length === 1) {
+    const cells = rows[0]!.split(',').map(() => '');
+    cells[rows[0]!.split(',').indexOf('status')] = 'handoff_metadata';
+    rows = [...rows, cells.join(',')];
+  }
+  return rows.map((row, index) => `${row},${index === 0 ? 'handoff_status,plan_id,scenario_revision,handoff_json'
+    : [metadata.status, metadata.planId, metadata.scenarioRevision, index === 1 ? JSON.stringify(metadata) : ''].map(csvCell).join(',')}`).join('\n') + '\n';
+}
 
 /*
  * Operational exports of a plan: a flat stops CSV (for spreadsheets / TMS
@@ -31,7 +45,7 @@ const CSV_HEADER = [
   'pallets', 'weight_kg', 'late_min',
 ];
 
-export function planToCsv(plan: Plan): string {
+export function planToCsv(plan: Plan, metadata?: HandoffMetadata): string {
   const rows: string[] = [CSV_HEADER.join(',')];
   for (const v of plan.vehicles) {
     for (const trip of v.trips) {
@@ -52,7 +66,7 @@ export function planToCsv(plan: Plan): string {
       '', '', '', '', '', '', '', '',
     ].map(csvCell).join(','));
   }
-  return rows.join('\n') + '\n';
+  return csvHandoff(rows, metadata);
 }
 
 function round1(n: number): number { return Math.round(n * 10) / 10; }
@@ -67,7 +81,7 @@ const ROUTES_HEADER = [
   'order_no', 'vehicle', 'sequence', 'date', 'vehicle_class', 'trip',
   'planned_arrival', 'planned_departure', 'service_min', 'late_min', 'status',
 ];
-export function planToRoutesCsv(plan: Plan, isoDate: string): string {
+export function planToRoutesCsv(plan: Plan, isoDate: string, metadata?: HandoffMetadata): string {
   const rows: string[] = [ROUTES_HEADER.join(',')];
   for (const v of plan.vehicles) {
     let seq = 0;
@@ -84,12 +98,13 @@ export function planToRoutesCsv(plan: Plan, isoDate: string): string {
   for (const u of plan.unassigned) {
     rows.push([u.orderNo, '', '', isoDate, '', '', '', '', '', '', 'unassigned'].map(csvCell).join(','));
   }
-  return rows.join('\n') + '\n';
+  return csvHandoff(rows, metadata);
 }
 
 /* A clean, documented dispatch-plan document for programmatic handoff (not the
  * raw internal Plan, which carries geometry + provenance). */
 export interface HandoffPlan {
+  handoff?: HandoffMetadata;
   otto_dispatch_plan: 1;
   day: string; date: string; generatedAt: string; objective: string;
   summary: { vehiclesUsed: number; servedOrders: number; totalOrders: number; totalDistanceKm: number; cost: { currency: string; total: number; source: string } | null };
@@ -97,8 +112,9 @@ export interface HandoffPlan {
     stops: { sequence: number; trip: number; orderNo: string; customer: string | null; city: string | null; plannedArrival: string; plannedDeparture: string; serviceMin: number; lateMin: number; weightKg: number; pallets: number }[] }[];
   unassigned: { orderNo: string; customer: string | null; city: string | null; reason: string | null }[];
 }
-export function planToHandoffJson(plan: Plan, isoDate: string): HandoffPlan {
+export function planToHandoffJson(plan: Plan, isoDate: string, metadata?: HandoffMetadata): HandoffPlan {
   return {
+    ...(metadata ? { handoff: metadata } : {}),
     otto_dispatch_plan: 1,
     day: plan.day, date: isoDate, generatedAt: plan.createdAt,
     objective: plan.objective === 'distance' ? 'least_distance' : 'fewest_vehicles',
@@ -135,7 +151,7 @@ function money(n: number, currency: string): string {
   return `${Math.round(n).toLocaleString('en-US')} ${currency}`;
 }
 
-function vehicleBlock(plan: Plan, v: PlanVehicle): string {
+function vehicleBlock(plan: Plan, v: PlanVehicle, metadata?: HandoffMetadata): string {
   const cost = plan.cost?.perVehicle.find((c) => c.vehicleId === v.id);
   const trips = v.trips.map((trip) => {
     const rows = trip.stops.map((s) => `
@@ -146,6 +162,8 @@ function vehicleBlock(plan: Plan, v: PlanVehicle): string {
         <td class="n">${hhmm(s.twStartSec)}–${hhmm(s.twEndSec)}</td>
         <td class="n">${round1(s.pallets)}</td>
         <td class="n">${Math.round(s.weightKg).toLocaleString('en-US')}</td>
+        <td class="n">${s.maxTonnage === null ? 'Unrestricted' : s.maxTonnage === undefined ? 'Unknown' : `${s.maxTonnage} t`}</td>
+        <td>${s.requiresTailLift === true ? 'Required' : s.requiresTailLift === false ? 'No' : 'Unknown'}</td>
       </tr>`).join('');
     return `
       <div class="trip">
@@ -155,13 +173,14 @@ function vehicleBlock(plan: Plan, v: PlanVehicle): string {
           <a class="nav" href="${mapsUrl(plan, trip.stops)}" target="_blank" rel="noopener">Open in Maps ↗</a>
         </div>
         <table>
-          <thead><tr><th>#</th><th>Stop</th><th>ETA</th><th>Window</th><th>Plt</th><th>Kg</th></tr></thead>
+          <thead><tr><th>#</th><th>Stop</th><th>ETA</th><th>Window</th><th>Plt</th><th>Kg</th><th>Max GVW</th><th>Tail-lift</th></tr></thead>
           <tbody>${rows}</tbody>
         </table>
       </div>`;
   }).join('');
   return `
     <section class="veh">
+      ${metadata ? `<div class="sub">${esc(metadata.status)} · ${esc(metadata.planId)} · revision ${metadata.scenarioRevision} · checked ${esc(metadata.checkedAt)}</div>` : ''}
       <div class="veh-h">
         <span class="swatch" style="background:${v.color}"></span>
         <h2>${esc(v.ref)}</h2>
@@ -169,11 +188,12 @@ function vehicleBlock(plan: Plan, v: PlanVehicle): string {
         ${v.isSubcontractor ? '<span class="tag sub">subcontractor</span>' : ''}
         <span class="veh-stats">${v.tripCount} trip(s) · ${v.distanceKm.toFixed(1)} km · finish ${hhmm(v.finishTimeSec)}${cost ? ` · ${money(cost.totalCost, plan.cost!.currency)}` : ''}</span>
       </div>
+      <div class="sub">Vehicle GVW: ${Number.isFinite(v.tonnage) ? `${v.tonnage} t` : 'Unknown'} · Tail-lift: ${v.hasTailLift === true ? 'Yes' : v.hasTailLift === false ? 'No' : 'Unknown'} · Capacity: ${v.capacityKg} kg / ${v.capacityPallets} pallets</div>
       ${trips}
     </section>`;
 }
 
-export function planToRouteSheetHtml(plan: Plan, dayLabel: string): string {
+export function planToRouteSheetHtml(plan: Plan, dayLabel: string, metadata?: HandoffMetadata): string {
   const s = plan.stats;
   const costLine = plan.cost ? ` · est. ${money(plan.cost.total, plan.cost.currency)}${plan.cost.source === 'demo' ? ' (demo tariff)' : ''}` : '';
   const unassigned = plan.unassigned.length
@@ -213,9 +233,15 @@ export function planToRouteSheetHtml(plan: Plan, dayLabel: string): string {
 </style></head><body>
 <header class="doc">
   <h1>Route sheets — ${esc(dayLabel)}</h1>
+  ${metadata ? `<h2>${esc(metadata.status)} · ${esc(metadata.planId)} · revision ${metadata.scenarioRevision}</h2>
+  <p>Approval checked at ${esc(metadata.checkedAt)}. Approval is valid only for this snapshot.</p>
+  <p>${metadata.approval ? `Approver: ${esc(metadata.approval.approver.email ?? metadata.approval.approver.userId ?? 'Local operator (no authenticated identity)')} · ${esc(metadata.approval.approvedAt)}` : 'Not approved.'}</p>
+  <p>Approved exceptions: ${metadata.policy?.exceptions.length ? metadata.policy.exceptions.map(e => `${esc(e.orderNo)}: ${esc(e.reason)}${e.maxTonnage !== undefined ? ` (GVW ${e.originalMaxTonnage ?? 'unknown'} → ${e.maxTonnage} t)` : ''}${e.requiresTailLift !== undefined ? ` (tail-lift ${e.originalRequiresTailLift === undefined ? 'unknown' : e.originalRequiresTailLift ? 'required' : 'not required'} → ${e.requiresTailLift ? 'required' : 'not required'})` : ''}`).join('; ') : 'None recorded.'}</p>
+  <p>Locked routes: ${metadata.constraints.scenario ? esc(metadata.constraints.scenario.sequences.filter(route => route.locked).map(route => `vehicle ${route.vehicleId}: ${route.orderNos.join(' → ')}`).join('; ') || 'None recorded.') : 'Historical scenario evidence unavailable.'}</p>
+  <details><summary>Full constraints and handoff evidence (JSON)</summary><pre style="white-space:pre-wrap;overflow-wrap:anywhere">${esc(JSON.stringify(metadata, null, 2))}</pre></details>` : ''}
   <div class="meta">${s.vehiclesUsed} vehicles · ${s.servedOrders}/${s.totalOrders} orders · ${s.totalDistanceKm.toFixed(0)} km · objective: ${plan.objective === 'distance' ? 'least distance' : 'fewest vehicles'}${costLine}</div>
 </header>
-${plan.vehicles.map((v) => vehicleBlock(plan, v)).join('')}
+${plan.vehicles.map((v) => vehicleBlock(plan, v, metadata)).join('')}
 ${unassigned}
 </body></html>`;
 }

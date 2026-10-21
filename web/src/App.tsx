@@ -573,7 +573,7 @@ export default function App() {
       <div className="flex h-full flex-col overflow-hidden">
         <TopBar
           days={days} dayId={dayId} onDayChange={(id) => { if (!okToSwitch()) return; const d = days.find((x) => x.id === id); if (d) void loadDay(d); }}
-          scenario={scenario} plan={plan} job={job} solving={!!solving}
+          scenario={scenario} plan={plan} job={job} solving={!!solving} exportPending={workspaceLoading}
           objective={objective} onObjectiveChange={setObjective}
           budgetSec={budgetSec} onBudgetChange={setBudgetSec}
           fullBudget={fullBudget} onFullBudgetChange={setFullBudget}

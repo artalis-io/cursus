@@ -1,9 +1,9 @@
-import { useContext, useEffect, useRef, useState } from 'react';
+import { useContext, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { Play, RotateCcw, Download, Loader2, Repeat, GitCompareArrows, Database, History, Settings2, X, ChevronDown, FileText, FileSpreadsheet, FileJson, SlidersHorizontal, CalendarRange, AlertTriangle, GitBranch, HelpCircle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { api } from '@/lib/api';
+import { api, ApiError } from '@/lib/api';
 import { useI18n, useT } from '@/i18n';
 import type { DaySummary, Objective, Plan, Scenario } from '@/types';
 import type { JobView } from '@/App';
@@ -41,12 +41,13 @@ function Popover({ open, onClose, align = 'right', children }: { open: boolean; 
 }
 
 export function TopBar({
-  days, dayId, onDayChange, scenario, plan, job, solving,
+  days, dayId, onDayChange, scenario, plan, job, solving, exportPending = false,
   objective, onObjectiveChange, budgetSec, onBudgetChange, fullBudget, onFullBudgetChange, changesCount, dirty,
   onOptimize, onCancel, onReset, onOpenChanges, showCompare, onCompare, onOpenImport, onOpenHistory, onOpenWeek, onOpenIssues, issuesCount, onOpenScenarios, onOpenHelp,
 }: {
   days: DaySummary[]; dayId: string; onDayChange: (id: string) => void;
   scenario: Scenario; plan: Plan; job: JobView | null; solving: boolean;
+  exportPending?: boolean;
   objective: Objective; onObjectiveChange: (o: Objective) => void;
   budgetSec: number; onBudgetChange: (n: number) => void; fullBudget: boolean; onFullBudgetChange: (b: boolean) => void; changesCount: number; dirty: boolean;
   onOptimize: () => void; onCancel: () => void; onReset: () => void; onOpenChanges: () => void;
@@ -60,6 +61,14 @@ export function TopBar({
   const workspaceName = useContext(WorkspaceNameContext);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [exportOpen, setExportOpen] = useState(false);
+  const [exportError, setExportError] = useState('');
+  const [exportBusy, setExportBusy] = useState(false);
+  const exportGeneration = useRef(0);
+  useLayoutEffect(() => {
+    const generation = ++exportGeneration.current;
+    setExportError(''); setExportBusy(false); setExportOpen(false);
+    return () => { exportGeneration.current = generation + 1; };
+  }, [plan.id, exportPending]);
   const isReplan = scenario.kind === 'copy';
   const termOk = plan.provenance.termination === 'OK';
   const invalid = !plan.provenance.validation.valid;
@@ -69,6 +78,22 @@ export function TopBar({
     a.href = url; a.download = ''; a.click();
   }
   function openRouteSheets() { window.open(api.routeSheetUrl(plan.id), '_blank', 'noopener'); }
+  async function downloadApproved() {
+    if (exportPending) return;
+    const generation = exportGeneration.current;
+    setExportBusy(true); setExportError('');
+    try {
+      const document = await api.approvedHandoff(plan.id, plan.scenarioRevision);
+      if (generation !== exportGeneration.current) return;
+      const url = URL.createObjectURL(new Blob([JSON.stringify(document, null, 2)], { type: 'application/json' }));
+      const anchor = window.document.createElement('a');
+      anchor.href = url; anchor.download = `cursus-${plan.id.replace(/[^a-zA-Z0-9_-]/g, '_')}-approved.json`; anchor.click();
+      window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+      setExportOpen(false);
+    } catch (error) {
+      if (generation === exportGeneration.current) setExportError(t(error instanceof ApiError && error.status === 409 ? 'export.notApproved' : 'export.failed'));
+    } finally { if (generation === exportGeneration.current) setExportBusy(false); }
+  }
 
   return (
     <header className="flex h-14 shrink-0 items-center gap-4 bg-graphite px-4 text-graphite-foreground">
@@ -202,7 +227,7 @@ export function TopBar({
 
         {/* Export menu */}
         <div className="relative">
-          <Button variant="graphite" size="sm" className="border border-white/15" onClick={() => setExportOpen((o) => !o)} title={t('topbar.export')} aria-label={t('topbar.export')}>
+          <Button variant="graphite" size="sm" className="border border-white/15" disabled={exportPending} onClick={() => setExportOpen((o) => !o)} title={t('topbar.export')} aria-label={t('topbar.export')}>
             <Download className="h-4 w-4" /> <ChevronDown className="h-3 w-3 opacity-70" />
           </Button>
           <Popover open={exportOpen} onClose={() => setExportOpen(false)}>
@@ -213,6 +238,11 @@ export function TopBar({
               <div className="px-2 pb-0.5 pt-1.5 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">{t('export.handoffGroup')}</div>
               <MenuItem icon={<FileSpreadsheet className="h-4 w-4" />} label={t('export.routes')} onClick={() => { setExportOpen(false); downloadUrl(api.routesCsvUrl(plan.id)); }} />
               <MenuItem icon={<FileJson className="h-4 w-4" />} label={t('export.handoff')} onClick={() => { setExportOpen(false); downloadUrl(api.handoffJsonUrl(plan.id)); }} />
+              <button type="button" role="menuitem" disabled={exportBusy} onClick={() => void downloadApproved()} className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-sm hover:bg-muted disabled:opacity-50">
+                <FileJson className="h-4 w-4" />{t('export.approved')}
+              </button>
+              <p className="max-w-[280px] px-2 py-1 text-xs text-muted-foreground">{t('export.statusNote')}</p>
+              {exportError && <p role="alert" className="max-w-[280px] px-2 py-1 text-xs text-destructive">{exportError}</p>}
             </div>
           </Popover>
         </div>

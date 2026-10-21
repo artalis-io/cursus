@@ -156,6 +156,10 @@ const en: Dict = {
   'export.json': 'Plan (JSON)', 'export.csv': 'Stops (CSV)', 'export.routesheet': 'Driver route sheets',
   'export.forDrivers': 'For drivers', 'export.handoffGroup': 'Hand back to your system',
   'export.routes': 'Routes (CSV, re-importable)', 'export.handoff': 'Dispatch plan (JSON)',
+  'export.approved': 'Approved handoff only (JSON)',
+  'export.statusNote': 'Files are labelled Draft, Approved or Superseded by the server at download time.',
+  'export.notApproved': 'This plan is not currently approved. Refresh its review status, or download an ordinary export.',
+  'export.failed': 'Export failed. Check your connection and access, then try again.',
   // Overrides
   'topbar.editsN': '{n} edits', 'topbar.changes': 'Changes',
   'edits.pending': '{n} staged change(s) — review & Replan to apply.',
@@ -411,6 +415,10 @@ const hu: Dict = {
   'export.json': 'Terv (JSON)', 'export.csv': 'Megállók (CSV)', 'export.routesheet': 'Sofőr útvonallapok',
   'export.forDrivers': 'Sofőröknek', 'export.handoffGroup': 'Visszaadás a rendszerednek',
   'export.routes': 'Útvonalak (CSV, visszaimportálható)', 'export.handoff': 'Diszpécser terv (JSON)',
+  'export.approved': 'Csak jóváhagyott terv (JSON)',
+  'export.statusNote': 'A fájlokat a szerver letöltéskor Piszkozat, Jóváhagyott vagy Elavult állapottal jelöli.',
+  'export.notApproved': 'A terv jelenleg nincs jóváhagyva. Frissítsd a felülvizsgálati állapotot, vagy tölts le normál exportot.',
+  'export.failed': 'Az export sikertelen. Ellenőrizd a kapcsolatot és a jogosultságot, majd próbáld újra.',
   // Overrides
   'topbar.editsN': '{n} módosítás', 'topbar.changes': 'Módosítások',
   'edits.pending': '{n} előkészített módosítás — nézd át és Újratervezés az érvényesítéshez.',

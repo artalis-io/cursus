@@ -4,6 +4,9 @@ This is a decision-cockpit review record, not dispatch/execution tracking. No
 original or handwritten plan is required or introduced. Existing comparisons
 continue to use saved plans and scenario revisions.
 
+For status-labelled operational exports and the approved-only download contract,
+see [Approved plan handoff](approved-plan-handoff.md).
+
 ## Permissions
 
 | Role | Read review history | Mark reviewed | Approve |

@@ -32,6 +32,7 @@ import { registerAccessControl, viewIdentity } from '../access-control.js';
 import { isRole, rolePermissions } from '../roles.js';
 import { expectedRevision, registerScenarioPreconditions } from '../revisions.js';
 import { PlanWorkflow, WorkflowError } from './plan-workflow.js';
+import { exportFilename } from '../handoff.js';
 
 // Do not advertise legacy-only endpoints as usable controls in this runtime.
 function statefulPermissions(role: string) {
@@ -225,17 +226,27 @@ export async function createStatefulApi(options: StatefulApiOptions): Promise<Fa
   app.get('/api/week', async () => statefulWeekSummary(
     await scenarios.list(), await options.store.listPlans(options.tenantId),
   ));
-  const planExport = (kind: 'csv' | 'routes' | 'html' | 'handoff') => async (req: { params: { id: string } }, reply: FastifyReply) => {
-    const plan = await options.store.getPlan(options.tenantId, req.params.id); if (!plan) return reply.code(404).send({ error: 'plan not found' });
-    if (kind === 'csv') { reply.type('text/csv; charset=utf-8'); return reply.send(planToCsv(plan)); }
-    if (kind === 'routes') { reply.type('text/csv; charset=utf-8'); return reply.send(planToRoutesCsv(plan, plan.day)); }
-    if (kind === 'html') { reply.type('text/html; charset=utf-8'); return reply.send(planToRouteSheetHtml(plan, plan.day)); }
-    return planToHandoffJson(plan, plan.day);
+  const planExport = (kind: 'csv' | 'routes' | 'html' | 'handoff') => async (req: { params: { id: string }; query: { approval?: string } }, reply: FastifyReply) => {
+    reply.header('Cache-Control', 'private, no-store, max-age=0');
+    reply.header('X-Content-Type-Options', 'nosniff');
+    if (req.query.approval !== undefined && req.query.approval !== 'required') return reply.code(400).send({ error: 'approval must be required or omitted' });
+    try {
+      const result = await workflow.renderExport(req.params.id, req.query.approval === 'required', (plan, metadata) => {
+        if (kind === 'csv') return planToCsv(plan, metadata);
+        if (kind === 'routes') return planToRoutesCsv(plan, plan.day, metadata);
+        if (kind === 'html') return planToRouteSheetHtml(plan, plan.day, metadata);
+        return JSON.stringify(planToHandoffJson(plan, plan.day, metadata));
+      });
+      reply.type(kind === 'html' ? 'text/html; charset=utf-8' : kind === 'handoff' ? 'application/json' : 'text/csv; charset=utf-8');
+      reply.header('X-Cursus-Export-Status', result.metadata.status);
+      reply.header('Content-Disposition', `${kind === 'html' ? 'inline' : 'attachment'}; filename="${exportFilename(req.params.id, result.metadata.status, kind === 'handoff' ? 'json' : kind === 'html' ? 'html' : `${kind}.csv`)}"`);
+      return reply.send(result.body);
+    } catch (error) { if (error instanceof WorkflowError) return reply.code(error.status).send({ error: error.message }); throw error; }
   };
-  app.get<{ Params: { id: string } }>('/api/plans/:id/export.csv', planExport('csv'));
-  app.get<{ Params: { id: string } }>('/api/plans/:id/routes.csv', planExport('routes'));
-  app.get<{ Params: { id: string } }>('/api/plans/:id/routesheet.html', planExport('html'));
-  app.get<{ Params: { id: string } }>('/api/plans/:id/handoff.json', planExport('handoff'));
+  app.get<{ Params: { id: string }; Querystring: { approval?: string } }>('/api/plans/:id/export.csv', planExport('csv'));
+  app.get<{ Params: { id: string }; Querystring: { approval?: string } }>('/api/plans/:id/routes.csv', planExport('routes'));
+  app.get<{ Params: { id: string }; Querystring: { approval?: string } }>('/api/plans/:id/routesheet.html', planExport('html'));
+  app.get<{ Params: { id: string }; Querystring: { approval?: string } }>('/api/plans/:id/handoff.json', planExport('handoff'));
   app.get('/api/import/catalog', async () => CATALOG);
   app.get('/api/import/summary', async () => statefulImportSummary(await options.store.listDatasets(options.tenantId, true)));
   app.get<{ Querystring: { file?: string; limit?: string } }>('/api/import/raw', async (req, reply) => {
