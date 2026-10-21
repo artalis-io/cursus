@@ -151,7 +151,7 @@ function money(n: number, currency: string): string {
   return `${Math.round(n).toLocaleString('en-US')} ${currency}`;
 }
 
-function vehicleBlock(plan: Plan, v: PlanVehicle): string {
+function vehicleBlock(plan: Plan, v: PlanVehicle, metadata?: HandoffMetadata): string {
   const cost = plan.cost?.perVehicle.find((c) => c.vehicleId === v.id);
   const trips = v.trips.map((trip) => {
     const rows = trip.stops.map((s) => `
@@ -162,6 +162,8 @@ function vehicleBlock(plan: Plan, v: PlanVehicle): string {
         <td class="n">${hhmm(s.twStartSec)}–${hhmm(s.twEndSec)}</td>
         <td class="n">${round1(s.pallets)}</td>
         <td class="n">${Math.round(s.weightKg).toLocaleString('en-US')}</td>
+        <td class="n">${s.maxTonnage === null ? 'Unrestricted' : s.maxTonnage === undefined ? 'Unknown' : `${s.maxTonnage} t`}</td>
+        <td>${s.requiresTailLift === true ? 'Required' : s.requiresTailLift === false ? 'No' : 'Unknown'}</td>
       </tr>`).join('');
     return `
       <div class="trip">
@@ -171,13 +173,14 @@ function vehicleBlock(plan: Plan, v: PlanVehicle): string {
           <a class="nav" href="${mapsUrl(plan, trip.stops)}" target="_blank" rel="noopener">Open in Maps ↗</a>
         </div>
         <table>
-          <thead><tr><th>#</th><th>Stop</th><th>ETA</th><th>Window</th><th>Plt</th><th>Kg</th></tr></thead>
+          <thead><tr><th>#</th><th>Stop</th><th>ETA</th><th>Window</th><th>Plt</th><th>Kg</th><th>Max GVW</th><th>Tail-lift</th></tr></thead>
           <tbody>${rows}</tbody>
         </table>
       </div>`;
   }).join('');
   return `
     <section class="veh">
+      ${metadata ? `<div class="sub">${esc(metadata.status)} · ${esc(metadata.planId)} · revision ${metadata.scenarioRevision} · checked ${esc(metadata.checkedAt)}</div>` : ''}
       <div class="veh-h">
         <span class="swatch" style="background:${v.color}"></span>
         <h2>${esc(v.ref)}</h2>
@@ -185,6 +188,7 @@ function vehicleBlock(plan: Plan, v: PlanVehicle): string {
         ${v.isSubcontractor ? '<span class="tag sub">subcontractor</span>' : ''}
         <span class="veh-stats">${v.tripCount} trip(s) · ${v.distanceKm.toFixed(1)} km · finish ${hhmm(v.finishTimeSec)}${cost ? ` · ${money(cost.totalCost, plan.cost!.currency)}` : ''}</span>
       </div>
+      <div class="sub">Vehicle GVW: ${Number.isFinite(v.tonnage) ? `${v.tonnage} t` : 'Unknown'} · Tail-lift: ${v.hasTailLift === true ? 'Yes' : v.hasTailLift === false ? 'No' : 'Unknown'} · Capacity: ${v.capacityKg} kg / ${v.capacityPallets} pallets</div>
       ${trips}
     </section>`;
 }
@@ -232,10 +236,12 @@ export function planToRouteSheetHtml(plan: Plan, dayLabel: string, metadata?: Ha
   ${metadata ? `<h2>${esc(metadata.status)} · ${esc(metadata.planId)} · revision ${metadata.scenarioRevision}</h2>
   <p>Approval checked at ${esc(metadata.checkedAt)}. Approval is valid only for this snapshot.</p>
   <p>${metadata.approval ? `Approver: ${esc(metadata.approval.approver.email ?? metadata.approval.approver.userId ?? 'Local operator (no authenticated identity)')} · ${esc(metadata.approval.approvedAt)}` : 'Not approved.'}</p>
-  <details open><summary>Constraints, approved exceptions and handoff evidence</summary><pre style="white-space:pre-wrap;overflow-wrap:anywhere">${esc(JSON.stringify(metadata, null, 2))}</pre></details>` : ''}
+  <p>Approved exceptions: ${metadata.policy?.exceptions.length ? metadata.policy.exceptions.map(e => `${esc(e.orderNo)}: ${esc(e.reason)}${e.maxTonnage !== undefined ? ` (GVW ${e.originalMaxTonnage ?? 'unknown'} → ${e.maxTonnage} t)` : ''}${e.requiresTailLift !== undefined ? ` (tail-lift ${e.originalRequiresTailLift === undefined ? 'unknown' : e.originalRequiresTailLift ? 'required' : 'not required'} → ${e.requiresTailLift ? 'required' : 'not required'})` : ''}`).join('; ') : 'None recorded.'}</p>
+  <p>Locked routes: ${metadata.constraints.scenario ? esc(metadata.constraints.scenario.sequences.filter(route => route.locked).map(route => `vehicle ${route.vehicleId}: ${route.orderNos.join(' → ')}`).join('; ') || 'None recorded.') : 'Historical scenario evidence unavailable.'}</p>
+  <details><summary>Full constraints and handoff evidence (JSON)</summary><pre style="white-space:pre-wrap;overflow-wrap:anywhere">${esc(JSON.stringify(metadata, null, 2))}</pre></details>` : ''}
   <div class="meta">${s.vehiclesUsed} vehicles · ${s.servedOrders}/${s.totalOrders} orders · ${s.totalDistanceKm.toFixed(0)} km · objective: ${plan.objective === 'distance' ? 'least distance' : 'fewest vehicles'}${costLine}</div>
 </header>
-${plan.vehicles.map((v) => vehicleBlock(plan, v)).join('')}
+${plan.vehicles.map((v) => vehicleBlock(plan, v, metadata)).join('')}
 ${unassigned}
 </body></html>`;
 }

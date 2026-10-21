@@ -64,6 +64,25 @@ test('handoff metadata is additive, explicit, escaped and never manufactures leg
   }
 });
 
+test('approved handoff retains exception reasons and repeats the receipt on printable vehicle sheets', () => {
+  const plan = mkPlan(), metadata = legacyHandoff(plan, undefined, 'a'.repeat(64));
+  metadata.status = 'Approved';
+  metadata.approval = { workflowVersion: 2, approvedAt: '2026-05-06T08:00:00.000Z', exceptionsAcknowledged: true,
+    approver: { userId: 'test-user', email: 'approver@example.test', identitySource: 'approval-event' } };
+  metadata.policy = { version: 1, id: 'public-policy', date: plan.day, datasetRequestSha256: 'b'.repeat(64),
+    approvedAt: metadata.approval.approvedAt, approvedBy: 'Operator',
+    exceptions: [{ orderNo: 'O1', reason: 'Approved <script> exception', originalRequiresTailLift: true, requiresTailLift: false }] };
+  const json = planToHandoffJson(plan, plan.day, metadata);
+  assert.equal(json.handoff?.policy?.exceptions[0]?.reason, 'Approved <script> exception');
+  assert.equal(json.handoff?.approval?.approver.email, 'approver@example.test');
+  const html = planToRouteSheetHtml(plan, plan.day, metadata);
+  assert.match(html, /Approved &lt;script&gt; exception/); assert.ok(!html.includes('<script>'));
+  assert.match(html, /Max GVW/); assert.match(html, /Tail-lift/); assert.match(html, /Capacity:/);
+  assert.match(html, /Approved · pln_1 · revision 1/);
+  const csv = planToRoutesCsv(plan, plan.day, metadata);
+  assert.equal(csv.split('""planSha256""').length - 1, 1, 'full inventory is serialized once, not quadratically per stop');
+});
+
 test('planToCsv: header, assigned rows, and an unassigned row', () => {
   const csv = planToCsv(mkPlan());
   const lines = csv.trim().split('\n');
