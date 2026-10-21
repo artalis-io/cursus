@@ -920,7 +920,7 @@ test('native plan review, Admin-only approval and cross-replica stale-edit prote
   expect((await get<{ handoff: { status: string } }>(page.request, `${peer}${handoffUrl}`)).handoff.status).toBe('Draft');
   await page.getByRole('button', { name: 'Export', exact: true }).click();
   await page.getByRole('menuitem', { name: 'Approved handoff only (JSON)', exact: true }).click();
-  await expect(page.getByRole('alert')).toContainText('not currently approved');
+  await expect(page.getByRole('menu').getByRole('alert')).toContainText('not currently approved');
   await page.keyboard.press('Escape');
   await expect(panel.getByRole('button', { name: 'Mark reviewed', exact: true })).toBeDisabled();
   await panel.getByRole('checkbox').check();
@@ -970,7 +970,7 @@ test('native plan review, Admin-only approval and cross-replica stale-edit prote
   expect((await get<{ handoff: { status: string } }>(page.request, handoffUrl)).handoff.status).toBe('Superseded');
   await page.getByRole('button', { name: 'Export', exact: true }).click();
   await page.getByRole('menuitem', { name: 'Approved handoff only (JSON)', exact: true }).click();
-  await expect(page.getByRole('alert')).toContainText('not currently approved');
+  await expect(page.getByRole('menu').getByRole('alert')).toContainText('not currently approved');
   await page.keyboard.press('Escape');
   expect((await page.request.post(`/api/scenarios/${scenario.id}/solve`, { headers: { ...headers, 'if-match': `"${scenario.revision}"` }, data: {} })).status()).toBe(409);
   await expect(page.getByRole('button', { name: /^Replan/ })).toHaveCount(0);
