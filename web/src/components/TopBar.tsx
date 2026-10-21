@@ -65,8 +65,9 @@ export function TopBar({
   const [exportBusy, setExportBusy] = useState(false);
   const exportGeneration = useRef(0);
   useLayoutEffect(() => {
-    exportGeneration.current++; setExportError(''); setExportBusy(false); setExportOpen(false);
-    return () => { exportGeneration.current++; };
+    const generation = ++exportGeneration.current;
+    setExportError(''); setExportBusy(false); setExportOpen(false);
+    return () => { exportGeneration.current = generation + 1; };
   }, [plan.id, exportPending]);
   const isReplan = scenario.kind === 'copy';
   const termOk = plan.provenance.termination === 'OK';
