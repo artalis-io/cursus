@@ -711,6 +711,7 @@ test('Reviewer can review snapshot readiness, baseline metrics and Hungarian det
   await expect(panel.getByRole('region', { name: 'Comparison with day baseline' })).toContainText(plan.id);
   await expect(panel).toContainText('not necessarily the original handwritten plan');
   await expect(panel.getByRole('button')).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Export', exact: true })).toBeDisabled();
   await page.screenshot({ path: test.info().outputPath('readiness-en.png'), fullPage: true });
   await page.getByRole('button', { name: 'HU', exact: true }).click();
   await expect(panel).toHaveCount(0);
@@ -912,6 +913,7 @@ test('native plan review, Admin-only approval and cross-replica stale-edit prote
   await expect(panel.getByRole('button')).toHaveCount(0);
   navigation.release();
   await expect(panel).toHaveAttribute('data-plan-id', planId);
+  await expect(page.getByRole('button', { name: 'Export', exact: true })).toBeEnabled();
   await page.unroute(`**/api/plans/${planId}`);
   await expect(panel).toContainText('Draft');
   const handoffUrl = `/api/plans/${planId}/handoff.json`;
