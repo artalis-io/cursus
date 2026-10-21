@@ -34,9 +34,9 @@ export function fitLayout(preferred: WorkspaceLayout, width: number, height: num
   const scale = Math.min(1, Math.max(0, budget - minFleet - minInspector) / (extraFleet + extraInspector || 1));
   const fleet = minFleet + Math.floor(extraFleet * scale);
   const inspector = minInspector + Math.floor(extraInspector * scale);
-  const timelineMax = Math.max(0, Math.min(LIMITS.timeline[1], height - MAP_MIN_HEIGHT - HANDLE_SIZE));
+  const timelineMax = Math.max(0, Math.floor(Math.min(LIMITS.timeline[1], height - MAP_MIN_HEIGHT - HANDLE_SIZE)));
   const timelineMin = Math.min(LIMITS.timeline[0], timelineMax);
   return { desktop, fleet, inspector, timeline: clamp(preferred.timeline, timelineMin, timelineMax),
-    fleetMax: Math.min(LIMITS.fleet[1], budget - inspector),
-    inspectorMax: Math.min(LIMITS.inspector[1], budget - fleet), timelineMin, timelineMax };
+    fleetMax: Math.floor(Math.min(LIMITS.fleet[1], budget - inspector)),
+    inspectorMax: Math.floor(Math.min(LIMITS.inspector[1], budget - fleet)), timelineMin, timelineMax };
 }

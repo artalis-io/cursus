@@ -748,6 +748,8 @@ test('workspace panels resize by pointer and keyboard, persist, reset and never 
   await drag(timeline, 0, -50);
   await expect(timeline).toHaveAttribute('aria-valuenow', '242');
   expect(await size('#cursus-timeline-pane', 'height')).toBe(242);
+  await expect.poll(async () => Math.abs((await page.locator('#cursus-map-pane canvas').boundingBox())!.width - await size('#cursus-map-pane', 'width'))).toBeLessThanOrEqual(1);
+  await page.screenshot({ path: test.info().outputPath('resizable-workspace.png'), fullPage: true });
   await page.reload();
   await expect(fleet).toHaveAttribute('aria-valuenow', '390');
   await expect(inspector).toHaveAttribute('aria-valuenow', '400');
@@ -784,6 +786,9 @@ test('workspace panels resize by pointer and keyboard, persist, reset and never 
 
 test('workspace resizing clamps to the viewport, cancels safely and leaves mobile and other roles usable', async ({ page }) => {
   await login(page);
+  const original = await baseline(page);
+  const writes: string[] = [];
+  page.on('request', request => { if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(request.method())) writes.push(request.url()); });
   const fleet = page.getByRole('separator', { name: 'Resize fleet panel', exact: true });
   const inspector = page.getByRole('separator', { name: 'Resize inspector panel', exact: true });
   const timeline = page.getByRole('separator', { name: 'Resize timeline', exact: true });
@@ -804,10 +809,21 @@ test('workspace resizing clamps to the viewport, cancels safely and leaves mobil
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.locator('details[aria-label="Dispatch readiness"] summary').click();
   await expect(fleet).toHaveAttribute('aria-valuenow', '520');
+  // A resize at a constrained desktop width must follow the user's gesture,
+  // not shrink due to the sibling's larger saved desktop preference.
+  await page.setViewportSize({ width: 1024, height: 900 });
+  await expect.poll(async () => Number(await fleet.getAttribute('aria-valuenow'))).toBeLessThan(520);
+  const fitted = Number(await fleet.getAttribute('aria-valuenow'));
+  const max = Number(await fleet.getAttribute('aria-valuemax'));
+  await fleet.focus(); await page.keyboard.press('ArrowRight');
+  await expect(fleet).toHaveAttribute('aria-valuenow', String(Math.min(max, fitted + 10)));
+  await page.setViewportSize({ width: 1440, height: 900 });
   await page.getByRole('button', { name: 'HU', exact: true }).click();
   await expect(page.getByRole('separator', { name: 'Flottapanel átméretezése' })).toBeVisible();
   await page.getByRole('button', { name: 'Elrendezés alaphelyzetbe', exact: true }).click();
   await page.getByRole('button', { name: 'EN', exact: true }).click();
+  expect(writes).toEqual([]);
+  expect(await baseline(page)).toEqual(original);
 });
 
 test('workspace layout tolerates corrupted preferences and unavailable browser storage', async ({ page }) => {

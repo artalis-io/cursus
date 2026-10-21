@@ -16,6 +16,8 @@ width and 120px height when the workspace has room. Short windows or an expanded
 readiness panel shrink the timeline further instead of overflowing the viewport.
 Below 1024px, dividers are absent and the previous fixed panel sizes remain;
 the saved desktop preferences are not overwritten by viewport fitting/collapse.
+An explicit sidebar resize in a constrained viewport anchors the other sidebar
+at its currently visible width so the divider follows the gesture predictably.
 
 Preferences are browser-local UI settings under `cursus.workspace-layout.v1`.
 They contain only a format version and three dimensions, not tenant/user IDs,

@@ -44,15 +44,17 @@ export function ResizeHandle({ label, help, controls, axis, direction, value, mi
       }}
       onPointerCancel={() => finish(true)} onLostPointerCapture={() => finish(true)} onBlur={() => { if (drag.current) finish(true); }}
       onClick={e => { e.preventDefault(); e.stopPropagation(); }}
-      onDoubleClick={e => { e.preventDefault(); e.stopPropagation(); onReset(); }}
+      onDoubleClick={e => { e.preventDefault(); e.stopPropagation(); if (enabled) onReset(); }}
       onKeyDown={e => {
         if (e.key === 'Escape' && drag.current) { e.preventDefault(); finish(true); return; }
-        if (!enabled) return;
+        if (!enabled || e.altKey || e.ctrlKey || e.metaKey) return;
         const delta = axis === 'x' ? e.key === 'ArrowRight' ? 1 : e.key === 'ArrowLeft' ? -1 : 0
           : e.key === 'ArrowDown' ? 1 : e.key === 'ArrowUp' ? -1 : 0;
         if (!delta && !['Home', 'End'].includes(e.key)) return;
         e.preventDefault(); e.stopPropagation();
         onChange(e.key === 'Home' ? min : e.key === 'End' ? max : clamp(value + delta * direction * (e.shiftKey ? 40 : 10), min, max));
-      }} />
+      }}>
+      <span aria-hidden className={`pointer-events-none absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 rounded bg-muted-foreground/50 ${axis === 'x' ? 'h-6 w-0.5' : 'h-0.5 w-6'}`} />
+    </div>
   </>;
 }

@@ -19,7 +19,16 @@ export function useWorkspaceLayout(fleetOpen: boolean, inspectorOpen: boolean) {
     try { localStorage.setItem(LAYOUT_KEY, JSON.stringify({ version: 1, ...preferred })); } catch { /* Storage may be unavailable; layout still works. */ }
   }, [preferred]);
   const setSize = (key: keyof WorkspaceLayout, value: number) => {
-    if (Number.isFinite(value)) setPreferred(p => ({ ...p, [key]: Math.round(clamp(value, LIMITS[key][0], LIMITS[key][1])) }));
+    if (Number.isFinite(value)) setPreferred(p => {
+      const current = fitLayout(p, bounds.width, bounds.height, fleetOpen, inspectorOpen);
+      const next = { ...p, [key]: Math.round(clamp(value, LIMITS[key][0], LIMITS[key][1])) };
+      // Once the USER resizes a fitted sidebar, anchor its sibling at the
+      // currently visible width. Otherwise an old oversized sibling preference
+      // could make dragging right paradoxically shrink the active panel.
+      if (current.desktop && key === 'fleet' && inspectorOpen) next.inspector = current.inspector;
+      if (current.desktop && key === 'inspector' && fleetOpen) next.fleet = current.fleet;
+      return next;
+    });
   };
   return { containerRef: setContainer, layout: fitLayout(preferred, bounds.width, bounds.height, fleetOpen, inspectorOpen),
     setSize, reset: () => setPreferred({ ...DEFAULT_LAYOUT }), resetSize: (key: keyof WorkspaceLayout) => setSize(key, DEFAULT_LAYOUT[key]) };
