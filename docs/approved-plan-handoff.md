@@ -26,6 +26,9 @@ The server returns HTTP 409 when approval is absent, stale, superseded, or its
 validation no longer passes. Other query values return 400. The UI exposes
 this mode as **Approved handoff only (JSON)** and handles failure without saving
 an error document as a plan. It never relies on a cached UI approval badge.
+The browser also requires a matching Approved receipt, revision, plan hash and
+workflow version; an old backend ignoring the query cannot cause an unlabelled
+response to be saved as an approved file during a rolling upgrade.
 
 Exports require existing `workspace.export` permission, including for Reviewers.
 They do not grant review/approval permission and create no jobs, approvals or

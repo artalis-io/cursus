@@ -918,6 +918,19 @@ test('native plan review, Admin-only approval and cross-replica stale-edit prote
   await expect(panel).toContainText('Draft');
   const handoffUrl = `/api/plans/${planId}/handoff.json`;
   expect((await get<{ handoff: { status: string } }>(page.request, `${peer}${handoffUrl}`)).handoff.status).toBe('Draft');
+  // A rolling-upgrade peer may ignore approval=required and return HTTP 200.
+  // Missing receipts must never produce a download labelled Approved.
+  let badDownloads = 0;
+  const countBadDownload = () => { badDownloads++; };
+  page.on('download', countBadDownload);
+  await page.route(`**${handoffUrl}?approval=required`, route => route.fulfill({ json: { otto_dispatch_plan: 1, routes: [] } }));
+  await page.getByRole('button', { name: 'Export', exact: true }).click();
+  await page.getByRole('menuitem', { name: 'Approved handoff only (JSON)', exact: true }).click();
+  await expect(page.getByRole('menu').getByRole('alert')).toContainText('not currently approved');
+  expect(badDownloads).toBe(0);
+  page.off('download', countBadDownload);
+  await page.keyboard.press('Escape');
+  await page.unroute(`**${handoffUrl}?approval=required`);
   await page.getByRole('button', { name: 'Export', exact: true }).click();
   await page.getByRole('menuitem', { name: 'Approved handoff only (JSON)', exact: true }).click();
   await expect(page.getByRole('menu').getByRole('alert')).toContainText('not currently approved');

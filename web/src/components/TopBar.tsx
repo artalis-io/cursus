@@ -83,7 +83,7 @@ export function TopBar({
     const generation = exportGeneration.current;
     setExportBusy(true); setExportError('');
     try {
-      const document = await api.approvedHandoff(plan.id);
+      const document = await api.approvedHandoff(plan.id, plan.scenarioRevision);
       if (generation !== exportGeneration.current) return;
       const url = URL.createObjectURL(new Blob([JSON.stringify(document, null, 2)], { type: 'application/json' }));
       const anchor = window.document.createElement('a');

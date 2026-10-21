@@ -50,7 +50,17 @@ async function jsend<T>(url: string, method: string, body?: unknown, revision?: 
 }
 
 export const api = {
-  approvedHandoff: (id: string) => jget<{ handoff: { status: string; planId: string } } & Record<string, unknown>>(`/api/plans/${encodeURIComponent(id)}/handoff.json?approval=required`),
+  approvedHandoff: async (id: string, revision: number) => {
+    const value = await jget<{ handoff?: { status: string; planId: string; scenarioRevision: number; planSha256: string; checkedAt: string;
+      approval?: { workflowVersion: number } } } & Record<string, unknown>>(`/api/plans/${encodeURIComponent(id)}/handoff.json?approval=required`);
+    const receipt = value?.handoff;
+    // An old backend might ignore the query. Never label that reply Approved.
+    if (!receipt || receipt.status !== 'Approved' || receipt.planId !== id || receipt.scenarioRevision !== revision
+      || !/^[a-f0-9]{64}$/.test(receipt.planSha256) || !Number.isFinite(Date.parse(receipt.checkedAt))
+      || !Number.isSafeInteger(receipt.approval?.workflowVersion) || Number(receipt.approval?.workflowVersion) < 1)
+      throw new ApiError(409, 'bad_request', 'Missing or mismatched approved handoff receipt.');
+    return value;
+  },
   planWorkflow: (id: string) => jget<import('../../../server/src/workflow-contract').Workflow>(`/api/plans/${id}/workflow`),
   transitionPlan: (id: string, action: 'review' | 'approve', version: number, revision: number, acknowledgeExceptions: boolean) =>
     jsend<import('../../../server/src/workflow-contract').Workflow>(`/api/plans/${id}/${action}`, 'POST', { version, revision, acknowledgeExceptions }),
