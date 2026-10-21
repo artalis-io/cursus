@@ -6,6 +6,7 @@ import { managedPath, routePermission } from './route-permissions.js';
 
 declare module 'fastify' {
   interface FastifyContextConfig { permission?: Permission | 'public' }
+  interface FastifyRequest { cursusPrincipal?: Principal }
 }
 
 interface AccessOptions {
@@ -65,6 +66,7 @@ export function registerAccessControl(app: FastifyInstance, options?: AccessOpti
     if (!principal || !isRole(principal.role) || principal.tenantId !== options.tenantId)
       return reply.code(401).send({ error: 'authentication required' });
     const identity = viewIdentity(principal, req.headers.cookie);
+    req.cursusPrincipal = principal;
     if (!permission || !hasPermission(identity.effectiveRole, permission))
       return reply.code(403).send({ error: 'permission denied', permission: permission ?? 'unclassified' });
     if (!isReadMethod(req.method)) {

@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import type { StatefulStore } from './postgres.js';
 import { applyScenarioEdits, type Scenario, type ScenarioEdit, type ScenarioEditsBundle } from '../store.js';
+import { RevisionConflictError } from './postgres.js';
 
 export class ScenarioRepository {
   constructor(private store: StatefulStore, private tenantId: string) {}
@@ -26,17 +27,24 @@ export class ScenarioRepository {
     return scenario;
   }
 
-  async edit(id: string, edits: ScenarioEdit[]): Promise<Scenario> {
-    const current = await this.get(id);
-    if (!current) throw new Error('scenario not found');
-    const target = current.kind === 'base' ? await this.copy(current) : current;
-    const updated = applyScenarioEdits(target, edits);
-    await this.store.updateScenario(this.tenantId, target.id, target.revision, updated);
-    return updated;
+  async edit(id: string, edits: ScenarioEdit[], expectedRevision?: number): Promise<Scenario> {
+    return this.store.tx(async client => {
+      const found = await client.query<{ body: Scenario }>('SELECT body FROM scenarios WHERE tenant_id=$1 AND id=$2 FOR UPDATE', [this.tenantId, id]);
+      const current = found.rows[0]?.body;
+      if (!current) throw new Error('scenario not found');
+      if (expectedRevision !== undefined && current.revision !== expectedRevision) throw new RevisionConflictError();
+      const target: Scenario = current.kind === 'base' ? { ...structuredClone(current), id: `scn_${randomUUID()}`, kind: 'copy',
+        parentId: current.id, revision: 1, label: `${current.label} (edited)`, createdAt: new Date().toISOString() } : current;
+      const updated = applyScenarioEdits(target, edits);
+      if (target.id !== id) await client.query('INSERT INTO scenarios(tenant_id,id,revision,body) VALUES($1,$2,$3,$4)', [this.tenantId, target.id, updated.revision, updated]);
+      else await client.query('UPDATE scenarios SET revision=$3,body=$4,updated_at=now() WHERE tenant_id=$1 AND id=$2', [this.tenantId, id, updated.revision, updated]);
+      return updated;
+    });
   }
 
-  async rename(id: string, label: string): Promise<Scenario> {
+  async rename(id: string, label: string, expectedRevision?: number): Promise<Scenario> {
     const current = await this.get(id); if (!current) throw new Error('scenario not found');
+    if (expectedRevision !== undefined && current.revision !== expectedRevision) throw new RevisionConflictError();
     const updated = { ...current, label, revision: current.revision + 1 };
     const revision = await this.store.updateScenario(this.tenantId, id, current.revision, updated);
     return { ...updated, revision };
@@ -51,5 +59,5 @@ export class ScenarioRepository {
     return updated;
   }
 
-  delete(id: string): Promise<boolean> { return this.store.deleteScenario(this.tenantId, id); }
+  delete(id: string, expectedRevision?: number): Promise<boolean> { return this.store.deleteScenario(this.tenantId, id, expectedRevision); }
 }

@@ -1,5 +1,5 @@
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from 'fastify';
-import { JobQueueFullError, type StatefulStore } from './postgres.js';
+import { JobQueueFullError, RevisionConflictError, type StatefulStore } from './postgres.js';
 import { ScenarioRepository } from './scenarios.js';
 import { validateScenarioEdit, type ScenarioEdit } from '../store.js';
 import { cookieValue } from '../auth.js';
@@ -30,6 +30,8 @@ import { loadDay, loadVehicleInfo } from '../data/dataset.js';
 import { loadConvertedDay, type ConvertedManifest } from './conversion.js';
 import { registerAccessControl, viewIdentity } from '../access-control.js';
 import { isRole, rolePermissions } from '../roles.js';
+import { expectedRevision, registerScenarioPreconditions } from '../revisions.js';
+import { PlanWorkflow, WorkflowError } from './plan-workflow.js';
 
 // Do not advertise legacy-only endpoints as usable controls in this runtime.
 function statefulPermissions(role: string) {
@@ -50,6 +52,22 @@ export async function createStatefulApi(options: StatefulApiOptions): Promise<Fa
   await options.store.ensureTenant(options.tenantId, options.tenantName);
   await options.auth?.initialize();
   const scenarios = new ScenarioRepository(options.store, options.tenantId);
+  registerScenarioPreconditions(app, id => scenarios.get(id));
+  const workflow = new PlanWorkflow(options.store, options.tenantId);
+  app.get<{ Params: { id: string } }>('/api/plans/:id/workflow', async (req, reply) => {
+    reply.header('Cache-Control', 'private, no-store');
+    try { return await workflow.get(req.params.id); }
+    catch (error) { if (error instanceof WorkflowError) return reply.code(error.status).send({ error: error.message }); throw error; }
+  });
+  for (const action of ['review', 'approve'] as const) {
+    app.post<{ Params: { id: string }; Body: { version?: unknown; revision?: unknown; acknowledgeExceptions?: unknown } }>(`/api/plans/:id/${action}`, async (req, reply) => {
+      const body = req.body;
+      if (!Number.isSafeInteger(body?.version) || Number(body.version) < 0 || !Number.isSafeInteger(body?.revision) || Number(body.revision) < 0)
+        return reply.code(400).send({ error: 'Non-negative version and revision required.' });
+      try { return await workflow.transition(req.params.id, `plan.${action}`, Number(body.version), Number(body.revision), body.acknowledgeExceptions === true, req.cursusPrincipal); }
+      catch (error) { if (error instanceof WorkflowError) return reply.code(error.status).send({ error: error.message }); throw error; }
+    });
+  }
   const datasets = options.objects ? new DatasetRepository(options.store, options.objects, options.tenantId) : null;
   if (datasets) await app.register(fastifyMultipart, { limits: { files: 1, fileSize: options.maxUploadBytes ?? 25 * 1024 * 1024 } });
   app.get('/api/health', async () => ({ status: 'ok', service: 'cursus-api', runtime: 'stateful' }));
@@ -103,7 +121,7 @@ export async function createStatefulApi(options: StatefulApiOptions): Promise<Fa
   app.get<{ Params: { id: string } }>('/api/scenarios/:id', async (req, reply) => (await scenarios.get(req.params.id)) ?? reply.code(404).send({ error: 'scenario not found' }));
   app.post<{ Params: { id: string }; Body: { edit?: ScenarioEdit } }>('/api/scenarios/:id/edit', async (req, reply) => {
     const invalid = validateScenarioEdit(req.body?.edit); if (invalid) return reply.code(400).send({ error: invalid });
-    try { return await scenarios.edit(req.params.id, [req.body.edit!]); } catch (error) { return reply.code((error as Error).message === 'scenario not found' ? 404 : 409).send({ error: (error as Error).message }); }
+    try { return await scenarios.edit(req.params.id, [req.body.edit!], expectedRevision(req.headers)!); } catch (error) { return reply.code((error as Error).message === 'scenario not found' ? 404 : 409).send({ error: (error as Error).message }); }
   });
   app.post<{ Params: { id: string }; Body: { edits?: unknown; label?: unknown } }>('/api/scenarios/:id/edits', async (req, reply) => {
     const edits = req.body?.edits;
@@ -114,17 +132,19 @@ export async function createStatefulApi(options: StatefulApiOptions): Promise<Fa
     for (const edit of edits) { const invalid = validateScenarioEdit(edit); if (invalid) return reply.code(400).send({ error: invalid }); }
     if (req.body.label != null && (typeof req.body.label !== 'string' || req.body.label.length > 120))
       return reply.code(400).send({ error: 'invalid label' });
-    try { return await scenarios.edit(req.params.id, edits as ScenarioEdit[]); }
+    try { return await scenarios.edit(req.params.id, edits as ScenarioEdit[], expectedRevision(req.headers)!); }
     catch (error) { return reply.code((error as Error).message === 'scenario not found' ? 404 : 409).send({ error: (error as Error).message }); }
   });
   app.post<{ Params: { id: string }; Body: { label?: string } }>('/api/scenarios/:id/rename', async (req, reply) => {
     const label = req.body?.label?.trim(); if (!label || label.length > 120) return reply.code(400).send({ error: 'label required (<=120 chars)' });
-    try { return await scenarios.rename(req.params.id, label); } catch { return reply.code(404).send({ error: 'scenario not found' }); }
+    try { return await scenarios.rename(req.params.id, label, expectedRevision(req.headers)!); }
+    catch (error) { return reply.code((error as Error).message === 'scenario not found' ? 404 : 409).send({ error: (error as Error).message }); }
   });
   app.delete<{ Params: { id: string } }>('/api/scenarios/:id', async (req, reply) => {
     const scenario = await scenarios.get(req.params.id); if (!scenario) return reply.code(404).send({ error: 'scenario not found' });
     if (scenario.kind === 'base') return reply.code(400).send({ error: 'base scenario cannot be deleted' });
-    return { deleted: await scenarios.delete(req.params.id) };
+    try { return { deleted: await scenarios.delete(req.params.id, expectedRevision(req.headers)!) }; }
+    catch (error) { if (error instanceof RevisionConflictError) return reply.code(409).send({ error: 'Scenario changed; reload before deleting.' }); throw error; }
   });
   app.get<{ Params: { id: string } }>('/api/scenarios/:id/export', async (req, reply) => {
     const scenario = await scenarios.get(req.params.id); return scenario ? exportScenario(scenario) : reply.code(404).send({ error: 'scenario not found' });
@@ -137,12 +157,14 @@ export async function createStatefulApi(options: StatefulApiOptions): Promise<Fa
   });
   app.post<{ Params: { id: string }; Body: { budgetSec?: number; objective?: string; fullBudget?: boolean } }>('/api/scenarios/:id/solve', async (req, reply) => {
     const scenario = await scenarios.get(req.params.id); if (!scenario) return reply.code(404).send({ error: 'scenario not found' });
+    if (scenario.revision !== expectedRevision(req.headers)) return reply.code(409).send({ error: 'Scenario changed; reload before optimizing.' });
     let id: string;
     try {
       id = await options.store.enqueueJob(options.tenantId, 'solve', `solve/${scenario.id}/${scenario.revision}/${randomKey()}`, {
         scenarioId: scenario.id, scenarioRevision: scenario.revision, budgetSec: req.body?.budgetSec, objective: req.body?.objective ?? 'vehicles', fullBudget: req.body?.fullBudget === true, scenario,
-      }, config.maxSolveQueue);
+      }, config.maxSolveQueue, { id: scenario.id, revision: expectedRevision(req.headers)! });
     } catch (error) {
+      if (error instanceof RevisionConflictError) return reply.code(409).send({ error: 'Scenario changed; reload before optimizing.' });
       if (error instanceof JobQueueFullError) return reply.code(429).send({ error: 'optimization queue is full; retry later' });
       throw error;
     }

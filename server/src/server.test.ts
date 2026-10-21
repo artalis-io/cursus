@@ -81,9 +81,9 @@ test('GET /api/scenarios requires a day and lists the base for a known day', asy
 });
 
 test('rename rejects an empty label and 404s an unknown scenario', async () => {
-  const empty = await inj({ method: 'POST', url: '/api/scenarios/day1-base/rename', payload: { label: '' } });
+  const empty = await inj({ method: 'POST', url: '/api/scenarios/day1-base/rename', headers: { 'if-match': '"0"' }, payload: { label: '' } });
   assert.equal(empty.statusCode, 400);
-  const nf = await inj({ method: 'POST', url: '/api/scenarios/scn_nope/rename', payload: { label: 'x' } });
+  const nf = await inj({ method: 'POST', url: '/api/scenarios/scn_nope/rename', headers: { 'if-match': '"0"' }, payload: { label: 'x' } });
   assert.equal(nf.statusCode, 404);
 });
 
@@ -95,7 +95,7 @@ test('scenario import rejects a bad bundle and an unknown day', async () => {
 });
 
 test('DELETE a base scenario is rejected (400)', async () => {
-  const r = await inj({ method: 'DELETE', url: '/api/scenarios/day1-base' });
+  const r = await inj({ method: 'DELETE', url: '/api/scenarios/day1-base', headers: { 'if-match': '"0"' } });
   assert.equal(r.statusCode, 400);
 });
 
@@ -144,17 +144,17 @@ test('bulk edits apply several pins in one forked copy', async () => {
   const baseR = await inj({ method: 'POST', url: '/api/scenarios', payload: { day: 'day1' } });
   const base = baseR.json() as { id: string };
   const edits = [{ op: 'pin', orderNo: 'BULK-1', vehicleId: 0 }, { op: 'pin', orderNo: 'BULK-2', vehicleId: 0 }];
-  const r = await inj({ method: 'POST', url: `/api/scenarios/${base.id}/edits`, payload: { edits } });
+  const r = await inj({ method: 'POST', url: `/api/scenarios/${base.id}/edits`, headers: { 'if-match': '"0"' }, payload: { edits } });
   assert.equal(r.statusCode, 201); // forked a copy from the base
   const sc = r.json() as { kind: string; pins: { orderNo: string; vehicleId: number }[] };
   assert.equal(sc.kind, 'copy');
   assert.ok(sc.pins.some((p) => p.orderNo === 'BULK-1') && sc.pins.some((p) => p.orderNo === 'BULK-2'));
 
-  const empty = await inj({ method: 'POST', url: `/api/scenarios/${base.id}/edits`, payload: { edits: [] } });
+  const empty = await inj({ method: 'POST', url: `/api/scenarios/${base.id}/edits`, headers: { 'if-match': '"0"' }, payload: { edits: [] } });
   assert.equal(empty.statusCode, 400);
-  const nf = await inj({ method: 'POST', url: '/api/scenarios/nope/edits', payload: { edits } });
+  const nf = await inj({ method: 'POST', url: '/api/scenarios/nope/edits', headers: { 'if-match': '"0"' }, payload: { edits } });
   assert.equal(nf.statusCode, 404);
-  const badEdit = await inj({ method: 'POST', url: `/api/scenarios/${base.id}/edits`, payload: { edits: [{ op: 'nonsense' }] } });
+  const badEdit = await inj({ method: 'POST', url: `/api/scenarios/${base.id}/edits`, headers: { 'if-match': '"0"' }, payload: { edits: [{ op: 'nonsense' }] } });
   assert.equal(badEdit.statusCode, 400);
 });
 

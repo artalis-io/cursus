@@ -21,9 +21,9 @@ test('permission grants match an independent specification, not production-deriv
   const expected: Record<Role, string[]> = {
     reviewer: ['workspace.read', 'workspace.export'],
     planner: ['workspace.read', 'workspace.export', 'scenario.create', 'scenario.rename', 'scenario.edit',
-      'scenario.import', 'plan.evaluate', 'optimization.submit', 'optimization.cancel', 'analysis.generate'],
+      'scenario.import', 'plan.evaluate', 'plan.review', 'optimization.submit', 'optimization.cancel', 'analysis.generate'],
     admin: ['workspace.read', 'workspace.export', 'scenario.create', 'scenario.rename', 'scenario.edit', 'scenario.import',
-      'scenario.delete', 'plan.evaluate', 'optimization.submit', 'optimization.cancel', 'analysis.generate',
+      'scenario.delete', 'plan.evaluate', 'plan.review', 'plan.approve', 'optimization.submit', 'optimization.cancel', 'analysis.generate',
       'dataset.upload', 'dataset.convert', 'dataset.validate', 'dataset.admit', 'dataset.delete', 'role.preview'],
   };
   for (const role of ['admin', 'planner', 'reviewer'] as const)

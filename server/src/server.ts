@@ -34,6 +34,7 @@ import { newUploadPath, uploadPath, sampleUpload, runIngestPreview, runGeocode, 
 import type { Plan } from './types.js';
 import { buildInfo } from './build-info.js';
 import { registerAccessControl, viewIdentity } from './access-control.js';
+import { registerScenarioPreconditions } from './revisions.js';
 import { rolePermissions } from './roles.js';
 
 const ENTITIES: Entity[] = ['orders', 'vehicles', 'routes'];
@@ -91,6 +92,7 @@ registerAccessControl(app, auth ? { authenticate: token => auth.authenticate(tok
   audit: (principal, detail) => auth.recordAccessAudit(principal, detail),
   tenantId: config.authTenantId, publicOrigin: config.authPublicOrigin } : undefined);
 registerWorkspaceBranding(app, config.authTenantName);
+registerScenarioPreconditions(app, id => store.getScenario(id) ?? null);
 
 // Per-IP rate limit. The API surface uses the standard bucket; the tile proxy
 // gets its own, more generous bucket (was unthrottled). Health is exempt.
@@ -170,10 +172,11 @@ app.post<{ Querystring: { token?: string } }>('/api/auth/verify', async (req, re
 });
 app.get('/api/auth/me', async (req, reply) => {
   reply.header('Cache-Control', 'private, no-store');
-  if (!auth) return { email: 'local@cursus', tenantId: 'local', tenantName: config.authTenantName, role: 'admin', permissions: rolePermissions.admin.filter(p => p !== 'role.preview'), build: buildInfo };
+  if (!auth) return { email: 'local@cursus', tenantId: 'local', tenantName: config.authTenantName, role: 'admin', permissions: rolePermissions.admin.filter(p => p !== 'role.preview' && p !== 'plan.review' && p !== 'plan.approve'), build: buildInfo };
   const principal = auth.authenticate(cookieValue(req.headers.cookie, 'cursus_session'));
   if (!principal) return reply.code(401).send({ error: 'authentication required' });
-  return { ...viewIdentity(principal, req.headers.cookie), tenantName: config.authTenantName, build: buildInfo };
+  const identity = viewIdentity(principal, req.headers.cookie);
+  return { ...identity, permissions: identity.permissions.filter(p => p !== 'plan.review' && p !== 'plan.approve'), tenantName: config.authTenantName, build: buildInfo };
 });
 app.post('/api/auth/logout', async (req, reply) => {
   if (auth && req.headers.origin !== config.authPublicOrigin) return reply.code(403).send({ error: 'invalid request origin' });
@@ -188,6 +191,8 @@ app.get('/api/config', async () => {
     cost: { available: true, currency: tariff.currency, source: tariff.source },
   };
 });
+// Approval history requires the shared transactional runtime, never JSON files.
+app.get('/api/plans/:id/workflow', async (_req, reply) => reply.code(404).send({ error: 'Plan approval requires the stateful runtime.' }));
 
 app.get('/api/days', async () => allDayIds().map((d) => {
   const plan = store.getPlan(`${d.id}-baseline`);

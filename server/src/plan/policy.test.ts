@@ -89,7 +89,7 @@ test('real HTTP solve submission retains full-budget flag and authoritative poli
     enqueueJob: async (_t: string, _k: string, _key: string, payload: unknown) => { submitted = payload; return 'job'; } } as unknown as StatefulStore;
   const app = await createStatefulApi({ store, tenantId: 'test', tenantName: 'Public' });
   try {
-    const res = await app.inject({ method: 'POST', url: '/api/scenarios/day1-base/solve', payload: { fullBudget: true, budgetSec: 600, planningPolicy: null } });
+    const res = await app.inject({ method: 'POST', url: '/api/scenarios/day1-base/solve', headers: { 'if-match': `"${s.revision}"` }, payload: { fullBudget: true, budgetSec: 600, planningPolicy: null } });
     assert.equal(res.statusCode, 202);
     assert.equal((submitted as {fullBudget: boolean}).fullBudget, true);
     assert.deepEqual((submitted as {scenario: Scenario}).scenario.planningPolicy, policy());

@@ -72,8 +72,9 @@ export class StatefulStore {
     return rows.map((r) => r.body);
   }
 
-  async deleteScenario(tenantId: string, id: string): Promise<boolean> {
-    const result = await this.pool.query("DELETE FROM scenarios WHERE tenant_id=$1 AND id=$2 AND body->>'kind'='copy'", [tenantId, id]);
+  async deleteScenario(tenantId: string, id: string, expectedRevision?: number): Promise<boolean> {
+    const result = await this.pool.query("DELETE FROM scenarios WHERE tenant_id=$1 AND id=$2 AND body->>'kind'='copy' AND ($3::bigint IS NULL OR revision=$3)", [tenantId, id, expectedRevision ?? null]);
+    if (!result.rowCount && expectedRevision !== undefined && await this.getScenario(tenantId, id)) throw new RevisionConflictError();
     return result.rowCount === 1;
   }
 
@@ -146,8 +147,12 @@ export class StatefulStore {
     return rows;
   }
 
-  async enqueueJob(tenantId: string, kind: 'solve' | 'dataset-admit', idempotencyKey: string, payload: unknown, maxQueued?: number): Promise<string> {
+  async enqueueJob(tenantId: string, kind: 'solve' | 'dataset-admit', idempotencyKey: string, payload: unknown, maxQueued?: number, scenarioGuard?: { id: string; revision: number }): Promise<string> {
     return this.tx(async (client) => {
+      if (scenarioGuard) {
+        const found = await client.query<{ revision: string }>('SELECT revision FROM scenarios WHERE tenant_id=$1 AND id=$2 FOR SHARE', [tenantId, scenarioGuard.id]);
+        if (!found.rows[0] || Number(found.rows[0].revision) !== scenarioGuard.revision) throw new RevisionConflictError();
+      }
       // Serialize admission per tenant/job-kind so two HTTP replicas cannot
       // race past the queue bound. Idempotent retries remain free.
       await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [`${tenantId}:${kind}`]);

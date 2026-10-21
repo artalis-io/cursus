@@ -501,6 +501,7 @@ export class Store {
     const s = this.scenarios.get(id);
     if (!s) throw new Error('scenario not found');
     s.label = label;
+    s.revision++;
     writeJson(join(dir('scenarios'), `${s.id}.json`), s);
     return s;
   }

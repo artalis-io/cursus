@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/button';
 import { TopBar } from '@/components/TopBar';
 import { KpiStrip } from '@/components/KpiStrip';
 import { ReadinessPanel } from '@/components/ReadinessPanel';
+import { PlanApproval } from '@/components/PlanApproval';
 import { ResizeHandle } from '@/components/ResizeHandle';
 import { useWorkspaceLayout } from '@/useWorkspaceLayout';
 import { FleetPanel } from '@/components/FleetPanel';
@@ -19,10 +20,10 @@ import { WeekDialog } from '@/components/WeekDialog';
 import { IssuesDialog } from '@/components/IssuesDialog';
 import { ScenariosDialog } from '@/components/ScenariosDialog';
 import { HelpOverlay } from '@/components/HelpOverlay';
-import { api, pollJob } from '@/lib/api';
+import { api, ApiError, pollJob } from '@/lib/api';
 import { useT, describeApiError } from '@/i18n';
 import type { DaySummary, Job, Objective, Plan, Scenario, ScenarioEdit, Selection } from '@/types';
-import { usePermission } from '@/permissions';
+import { StaleWorkspaceContext, usePermission } from '@/permissions';
 
 /* The live solve budget for UI-triggered solves. The saved baseline used ~240s
  * to reach day-1 117/0; 60s gives a believable, genuinely-elapsed optimize/replan
@@ -127,10 +128,11 @@ function sameSel(a: Selection, b: Selection): boolean {
 }
 
 export default function App() {
-  const canEdit = usePermission('scenario.edit');
-  const canSolve = usePermission('optimization.submit');
+  const [freshnessError, setFreshnessError] = useState<string | null>(null);
+  const canEdit = usePermission('scenario.edit') && !freshnessError;
+  const canSolve = usePermission('optimization.submit') && !freshnessError;
   const canCancel = usePermission('optimization.cancel');
-  const canEvaluate = usePermission('plan.evaluate');
+  const canEvaluate = usePermission('plan.evaluate') && !freshnessError;
   // Async callbacks can outlive the render that authorized them. Recheck at
   // dispatch, and invalidate queued intents across revocation/regrant cycles.
   const writeAccess = useRef({ edit: canEdit, solve: canSolve, cancel: canCancel, epoch: 0, mounted: true });
@@ -204,6 +206,45 @@ export default function App() {
   // reads scenarioRef so it cannot solve the pre-reorder scenario when clicked
   // immediately after moving a stop.
   const editQueue = useRef<Promise<boolean>>(Promise.resolve(true));
+  const pendingEditsRef = useRef(pendingEdits);
+  useLayoutEffect(() => { pendingEditsRef.current = pendingEdits; }, [pendingEdits]);
+  const rejectStaleIntent = useCallback((error: unknown) => {
+    if (error instanceof ApiError && (error.status === 409 || error.status === 428)) {
+      writeAccess.current.epoch++;
+      writeAccess.current.edit = false;
+      writeAccess.current.solve = false;
+      setFreshnessError('freshness.changed');
+    }
+  }, []);
+  useEffect(() => {
+    if (!scenario) return;
+    let stopped = false, busy = false;
+    setFreshnessError(null);
+    const check = async () => {
+      if (busy || pendingEditsRef.current > 0 || document.hidden) return;
+      const snapshot = scenarioRef.current;
+      if (!snapshot) return;
+      busy = true;
+      try {
+        const latest = await api.scenario(snapshot.id);
+        if (!stopped && pendingEditsRef.current === 0 && scenarioRef.current === snapshot && latest.revision !== snapshot.revision) {
+          writeAccess.current.epoch++;
+          writeAccess.current.edit = false; writeAccess.current.solve = false;
+          setFreshnessError('freshness.changed');
+        }
+      } catch {
+        if (!stopped && pendingEditsRef.current === 0 && scenarioRef.current === snapshot) {
+          writeAccess.current.epoch++;
+          writeAccess.current.edit = false; writeAccess.current.solve = false;
+          setFreshnessError('freshness.unverified');
+        }
+      } finally { busy = false; }
+    };
+    const timer = setInterval(() => { void check(); }, 5000);
+    window.addEventListener('focus', check);
+    document.addEventListener('visibilitychange', check);
+    return () => { stopped = true; clearInterval(timer); window.removeEventListener('focus', check); document.removeEventListener('visibilitychange', check); };
+  }, [scenario]);
   // Transient toast for staged-edit feedback.
   const [toast, setToast] = useState<string | null>(null);
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -238,6 +279,7 @@ export default function App() {
   }, []);
 
   const loadDay = useCallback(async (d: DaySummary) => {
+    writeAccess.current.epoch++;
     pollAbort.current?.abort();
     activeJobId.current = null;
     persistActiveJob(null);
@@ -248,7 +290,7 @@ export default function App() {
     const base = await loadPlanWithGeometry(d.baselinePlanId);
     setBaseline(base);
     setPlan(base);
-    setScenario({ id: d.baseScenarioId, day: d.id, kind: 'base', parentId: null, revision: 0, label: d.label, removedVehicleIds: [], pins: [], forbids: [], vehicleOverrides: [], sequences: [], createdAt: '' });
+    setScenario(await api.scenario(d.baseScenarioId));
   }, []);
 
   // Follow a running job (already created) to its terminal state; apply + return
@@ -291,15 +333,18 @@ export default function App() {
     setError(null);
     setJob({ id: '', status: 'pending', elapsedSec: 0, scenarioId, error: null });
     try {
-      const { jobId } = await api.solve(scenarioId, budgetSec, objective, fullBudget);
+      const current = scenarioRef.current;
+      if (!current || current.id !== scenarioId) return null;
+      const { jobId } = await api.solve(scenarioId, current.revision, budgetSec, objective, fullBudget);
       return await followJob(jobId, scenarioId, dayIdForJob, ctrl);
     } catch (e) {
       if ((e as Error).name === 'AbortError') return null;
+      rejectStaleIntent(e);
       setError(describeApiError(e, t));
       setJob(null);
       return null;
     }
-  }, [budgetSec, objective, fullBudget, followJob]);
+  }, [budgetSec, objective, fullBudget, followJob, rejectStaleIntent]);
 
   // Cancel the active solve (server-side) and drop back to the current plan.
   const cancelSolve = useCallback(async () => {
@@ -354,17 +399,17 @@ export default function App() {
       if (!current) return false;
       try {
         const label = current.kind === 'base' ? t('scn.edited', { day: current.label }) : undefined;
-        const updated = await api.editScenario(current.id, edit, label);
+        const updated = await api.editScenario(current.id, current.revision, edit, label);
         scenarioRef.current = updated;
         setScenario(updated);
         showToast(editMessage(edit, t, (id) => planRef.current?.vehicles.find((v) => v.id === id)?.ref ?? `#${id}`));
         return true;
-      } catch (e) { setError(describeApiError(e, t)); return false; }
+      } catch (e) { rejectStaleIntent(e); setError(describeApiError(e, t)); return false; }
     });
     void queued.finally(() => { if (writeAccess.current.mounted) setPendingEdits(n => Math.max(0, n - 1)); });
     editQueue.current = queued;
     return queued;
-  }, [showToast, t]);
+  }, [showToast, t, rejectStaleIntent]);
 
   // Apply several staged edits at once (bulk actions); one fork + one revision.
   const applyEdits = useCallback((edits: ScenarioEdit[], toastMsg?: string): Promise<boolean> => {
@@ -378,17 +423,17 @@ export default function App() {
       if (!current) return false;
       try {
         const label = current.kind === 'base' ? t('scn.edited', { day: current.label }) : undefined;
-        const updated = await api.editScenarioBatch(current.id, edits, label);
+        const updated = await api.editScenarioBatch(current.id, current.revision, edits, label);
         scenarioRef.current = updated;
         setScenario(updated);
         if (toastMsg) showToast(toastMsg);
         return true;
-      } catch (e) { setError(describeApiError(e, t)); return false; }
+      } catch (e) { rejectStaleIntent(e); setError(describeApiError(e, t)); return false; }
     });
     void queued.finally(() => { if (writeAccess.current.mounted) setPendingEdits(n => Math.max(0, n - 1)); });
     editQueue.current = queued;
     return queued;
-  }, [showToast, t]);
+  }, [showToast, t, rejectStaleIntent]);
 
   // Bulk-assign: pin many orders to one vehicle in a single staged batch.
   const onBulkAssign = useCallback((orderNos: string[], vehicleId: number) => {
@@ -442,6 +487,7 @@ export default function App() {
   // Adopt an imported scenario: switch to its day if needed, show the clean
   // baseline, and stage its edits (Replan solves it). It has no result yet.
   const onImportScenario = useCallback(async (s: Scenario) => {
+    writeAccess.current.epoch++;
     try {
       if (s.day !== dayId) { const d = days.find((x) => x.id === s.day); if (d) await loadDay(d); }
       setScenario(s);
@@ -450,6 +496,7 @@ export default function App() {
   }, [dayId, days, loadDay, resetSelection, t]);
 
   const reopenPlan = useCallback(async (planId: string) => {
+    writeAccess.current.epoch++;
     pollAbort.current?.abort();
     activeJobId.current = null;
     persistActiveJob(null);
@@ -510,7 +557,7 @@ export default function App() {
   const dirty = scenario.revision !== plan.scenarioRevision;
 
   return (
-    <TooltipProvider delayDuration={200}>
+    <StaleWorkspaceContext.Provider value={!!freshnessError}><TooltipProvider delayDuration={200}>
       <div className="flex h-full flex-col overflow-hidden">
         <TopBar
           days={days} dayId={dayId} onDayChange={(id) => { if (!okToSwitch()) return; const d = days.find((x) => x.id === id); if (d) void loadDay(d); }}
@@ -535,7 +582,15 @@ export default function App() {
         />
         <KpiStrip plan={plan} baseline={baseline} compare={isReplan} job={job}
           previewDistanceKm={previewTotals?.distanceKm} previewCostTotal={previewTotals?.costTotal} />
-        <ReadinessPanel plan={plan} baseline={baseline} scenario={scenario} pending={pendingEdits > 0 || !!solving} />
+        <ReadinessPanel plan={plan} baseline={baseline} scenario={scenario} pending={pendingEdits > 0 || !!solving || !!freshnessError} />
+        <PlanApproval key={plan.id} planId={plan.id} revision={scenario.revision} pending={pendingEdits > 0 || !!solving || !!freshnessError || scenario.id !== plan.scenarioId} />
+        {freshnessError && <div role="alert" className="border-b border-warning/40 bg-warning/10 px-4 py-2 text-sm">
+          {t(freshnessError)} <button className="underline" onClick={() => {
+            if (!window.confirm(t('freshness.confirm'))) return;
+            writeAccess.current.epoch++;
+            void api.scenario(scenario.id).then(latest => { scenarioRef.current = latest; setScenario(latest); setFreshnessError(null); setError(null); }).catch(e => setError(describeApiError(e, t)));
+          }}>{t('freshness.reload')}</button>
+        </div>}
         {error && <div role="alert" className="border-b border-destructive/30 bg-destructive/10 px-4 py-2 text-sm text-destructive">{error}</div>}
 
         {dirty && changesCount > 0 && !solving && (
@@ -635,6 +690,6 @@ export default function App() {
       )}
       <ImportDialog open={importOpen} onOpenChange={setImportOpen} onAdmitted={(id) => void onAdmitted(id)} onDatasetsChanged={() => void onDatasetsChanged()} />
       <HistoryDialog open={historyOpen} onOpenChange={setHistoryOpen} dayId={dayId} currentPlanId={plan.id} onReopen={(id) => { if (okToSwitch()) void reopenPlan(id); }} />
-    </TooltipProvider>
+    </TooltipProvider></StaleWorkspaceContext.Provider>
   );
 }

@@ -43,12 +43,14 @@ export function ScenariosDialog({ open, onOpenChange, dayId, currentScenarioId, 
     if (!canRename) return;
     const label = editLabel.trim(); setEditing(null);
     if (!label) return;
-    try { await api.renameScenario(id, label); refresh(); } catch (e) { setErr(describeApiError(e, t)); }
+    const current = list?.find(s => s.id === id); if (!current) return;
+    try { await api.renameScenario(id, current.revision, label); refresh(); } catch (e) { setErr(describeApiError(e, t)); }
   };
   const del = async (id: string) => {
     if (!canDelete) return;
     if (!window.confirm(t('scenarios.deleteConfirm'))) return;
-    try { await api.deleteScenario(id); setSel((p) => { const n = new Set(p); n.delete(id); return n; }); refresh(); }
+    const current = list?.find(s => s.id === id); if (!current) return;
+    try { await api.deleteScenario(id, current.revision); setSel((p) => { const n = new Set(p); n.delete(id); return n; }); refresh(); }
     catch (e) { setErr(describeApiError(e, t)); }
   };
   const exportOne = async (id: string, label: string) => {
