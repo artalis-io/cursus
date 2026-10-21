@@ -26,7 +26,7 @@ export function PlanApproval({ planId, revision, pending }: { planId: string; re
   if (!workflow) return error ? <div role="alert" className="px-4 py-2 text-xs text-destructive">{error}</div> : null;
   const labels = hu ? { draft: 'Tervezet', reviewed: 'Ellenőrizve', approved: 'Jóváhagyva', superseded: 'Elavult' }
     : { draft: 'Draft', reviewed: 'Reviewed', approved: 'Approved', superseded: 'Superseded' };
-  const actionable = workflow.blockers.length === 0 && workflow.currentRevision === revision && workflow.scenarioRevision === revision && !pending && !busy;
+  const actionable = !error && workflow.blockers.length === 0 && workflow.currentRevision === revision && workflow.scenarioRevision === revision && !pending && !busy;
   const act = async (action: 'review' | 'approve') => {
     setBusy(true); setError(null);
     try { setWorkflow(await api.transitionPlan(planId, action, workflow.version, revision, ack)); setAck(false); }

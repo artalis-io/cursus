@@ -25,10 +25,10 @@ test('approval fails closed on stale, incomplete and missing evidence and hard c
     (p: Plan) => { p.provenance.validation.valid = false; },
     (p: Plan) => { p.provenance.validation.violations = [{ type: 'TAIL_LIFT', soft: true }]; },
     (p: Plan) => { p.provenance.inputSha256 = ''; },
-    (p: Plan) => { p.vehicles[0].tonnage = 24; },
-    (p: Plan) => { p.vehicles[0].hasTailLift = false; },
-    (p: Plan) => { p.vehicles[0].trips[0].loadKg = 2000; },
-    (p: Plan) => { p.vehicles[0].trips[0].stops[0].arrivalSec = 201.1; },
-    (p: Plan) => { p.vehicles[0].trips[0].stops[0].maxTonnage = undefined as unknown as null; },
+    (p: Plan) => { p.vehicles[0]!.tonnage = 24; },
+    (p: Plan) => { p.vehicles[0]!.hasTailLift = false; },
+    (p: Plan) => { p.vehicles[0]!.trips[0]!.loadKg = 2000; },
+    (p: Plan) => { p.vehicles[0]!.trips[0]!.stops[0]!.arrivalSec = 201.1; },
+    (p: Plan) => { p.vehicles[0]!.trips[0]!.stops[0]!.maxTonnage = undefined as unknown as null; },
   ]) { const p = validPlan(); mutate(p); assert.ok(approvalBlockers(p, 1).length); }
 });
