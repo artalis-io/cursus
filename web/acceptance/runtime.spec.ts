@@ -722,6 +722,129 @@ test('Reviewer can review snapshot readiness, baseline metrics and Hungarian det
   }
 });
 
+test('workspace panels resize by pointer and keyboard, persist, reset and never submit planning writes', async ({ page }) => {
+  await login(page, 'reviewer@acceptance.example.test');
+  const original = await baseline(page);
+  const writes: string[] = [];
+  page.on('request', request => { if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(request.method())) writes.push(request.url()); });
+  const fleet = page.getByRole('separator', { name: 'Resize fleet panel', exact: true });
+  const inspector = page.getByRole('separator', { name: 'Resize inspector panel', exact: true });
+  const timeline = page.getByRole('separator', { name: 'Resize timeline', exact: true });
+  const size = async (selector: string, dimension: 'width' | 'height') => (await page.locator(selector).boundingBox())![dimension];
+  async function drag(handle: import('@playwright/test').Locator, dx: number, dy: number) {
+    const box = (await handle.boundingBox())!;
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(box.x + box.width / 2 + dx, box.y + box.height / 2 + dy, { steps: 6 });
+    await page.mouse.up();
+  }
+  await expect(fleet).toHaveAttribute('aria-valuenow', '310');
+  await drag(fleet, 80, 0);
+  await expect(fleet).toHaveAttribute('aria-valuenow', '390');
+  expect(await size('#cursus-fleet-pane', 'width')).toBe(390);
+  await drag(inspector, -60, 0);
+  await expect(inspector).toHaveAttribute('aria-valuenow', '400');
+  expect(await size('#cursus-inspector-pane', 'width')).toBe(400);
+  await drag(timeline, 0, -50);
+  await expect(timeline).toHaveAttribute('aria-valuenow', '242');
+  expect(await size('#cursus-timeline-pane', 'height')).toBe(242);
+  await expect.poll(async () => Math.abs((await page.locator('#cursus-map-pane canvas').boundingBox())!.width - await size('#cursus-map-pane', 'width'))).toBeLessThanOrEqual(1);
+  await page.screenshot({ path: test.info().outputPath('resizable-workspace.png'), fullPage: true });
+  await page.reload();
+  await expect(fleet).toHaveAttribute('aria-valuenow', '390');
+  await expect(inspector).toHaveAttribute('aria-valuenow', '400');
+  await expect(timeline).toHaveAttribute('aria-valuenow', '242');
+  await fleet.focus(); await page.keyboard.press('ArrowRight');
+  await expect(fleet).toHaveAttribute('aria-valuenow', '400');
+  await page.keyboard.press('Shift+ArrowLeft');
+  await expect(fleet).toHaveAttribute('aria-valuenow', '360');
+  await page.keyboard.press('Home');
+  await expect(fleet).toHaveAttribute('aria-valuenow', '240');
+  await page.keyboard.press('End');
+  await expect(fleet).toHaveAttribute('aria-valuenow', '520');
+  await fleet.dblclick();
+  await expect(fleet).toHaveAttribute('aria-valuenow', '310');
+  await inspector.focus(); await page.keyboard.press('ArrowLeft');
+  await expect(inspector).toHaveAttribute('aria-valuenow', '410');
+  await timeline.focus(); await page.keyboard.press('ArrowUp');
+  await expect(timeline).toHaveAttribute('aria-valuenow', '252');
+  await page.getByRole('button', { name: 'Collapse fleet panel' }).click();
+  await expect(fleet).toHaveCount(0);
+  await page.getByRole('button', { name: 'Open fleet panel' }).click();
+  await expect(fleet).toHaveAttribute('aria-valuenow', '310');
+  // Resizing never persisted a scenario change, nor attempted a forbidden API.
+  expect(writes).toEqual([]);
+  expect(await baseline(page)).toEqual(original);
+  await page.getByRole('button', { name: 'Reset layout', exact: true }).click();
+  await expect(inspector).toHaveAttribute('aria-valuenow', '340');
+  await expect(timeline).toHaveAttribute('aria-valuenow', '192');
+  await page.reload();
+  await expect(fleet).toHaveAttribute('aria-valuenow', '310');
+  await expect(inspector).toHaveAttribute('aria-valuenow', '340');
+  await expect(timeline).toHaveAttribute('aria-valuenow', '192');
+});
+
+test('workspace resizing clamps to the viewport, cancels safely and leaves mobile and other roles usable', async ({ page }) => {
+  await login(page);
+  const original = await baseline(page);
+  const writes: string[] = [];
+  page.on('request', request => { if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(request.method())) writes.push(request.url()); });
+  const fleet = page.getByRole('separator', { name: 'Resize fleet panel', exact: true });
+  const inspector = page.getByRole('separator', { name: 'Resize inspector panel', exact: true });
+  const timeline = page.getByRole('separator', { name: 'Resize timeline', exact: true });
+  const box = (await fleet.boundingBox())!;
+  await page.mouse.move(box.x + 3, box.y + 30); await page.mouse.down();
+  await page.mouse.move(box.x + 103, box.y + 30, { steps: 4 });
+  await expect(fleet).toHaveAttribute('aria-valuenow', '410');
+  await page.keyboard.press('Escape'); await page.mouse.up();
+  await expect(fleet).toHaveAttribute('aria-valuenow', '310');
+  await fleet.focus(); await page.keyboard.press('End');
+  await inspector.focus(); await page.keyboard.press('End');
+  await page.setViewportSize({ width: 1024, height: 900 });
+  await expect.poll(async () => (await page.locator('#cursus-map-pane').boundingBox())!.width).toBeGreaterThanOrEqual(320);
+  await page.locator('details[aria-label="Dispatch readiness"] summary').click();
+  await expect.poll(async () => (await page.locator('#cursus-map-pane').boundingBox())!.height).toBeGreaterThanOrEqual(120);
+  await page.setViewportSize({ width: 375, height: 900 });
+  await expect(fleet).toHaveCount(0); await expect(inspector).toHaveCount(0); await expect(timeline).toHaveCount(0);
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.locator('details[aria-label="Dispatch readiness"] summary').click();
+  await expect(fleet).toHaveAttribute('aria-valuenow', '520');
+  // A resize at a constrained desktop width must follow the user's gesture,
+  // not shrink due to the sibling's larger saved desktop preference.
+  await page.setViewportSize({ width: 1024, height: 900 });
+  await expect.poll(async () => Number(await fleet.getAttribute('aria-valuenow'))).toBeLessThan(520);
+  const fitted = Number(await fleet.getAttribute('aria-valuenow'));
+  const max = Number(await fleet.getAttribute('aria-valuemax'));
+  await fleet.focus(); await page.keyboard.press('ArrowRight');
+  await expect(fleet).toHaveAttribute('aria-valuenow', String(Math.min(max, fitted + 10)));
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.getByRole('button', { name: 'HU', exact: true }).click();
+  await expect(page.getByRole('separator', { name: 'Flottapanel átméretezése' })).toBeVisible();
+  await page.getByRole('button', { name: 'Elrendezés alaphelyzetbe', exact: true }).click();
+  await page.getByRole('button', { name: 'EN', exact: true }).click();
+  expect(writes).toEqual([]);
+  expect(await baseline(page)).toEqual(original);
+});
+
+test('workspace layout tolerates corrupted preferences and unavailable browser storage', async ({ page }) => {
+  await login(page, 'planner@acceptance.example.test');
+  await page.evaluate(() => localStorage.setItem('cursus.workspace-layout.v1', '{broken'));
+  await page.reload();
+  const fleet = page.getByRole('separator', { name: 'Resize fleet panel', exact: true });
+  await expect(fleet).toHaveAttribute('aria-valuenow', '310');
+  await page.addInitScript(() => {
+    const get = Storage.prototype.getItem, set = Storage.prototype.setItem;
+    Storage.prototype.getItem = function (key) { if (key === 'cursus.workspace-layout.v1') throw new Error('storage unavailable'); return get.call(this, key); };
+    Storage.prototype.setItem = function (key, value) { if (key === 'cursus.workspace-layout.v1') throw new Error('storage full'); set.call(this, key, value); };
+  });
+  await page.reload();
+  await expect(fleet).toHaveAttribute('aria-valuenow', '310');
+  await fleet.focus(); await page.keyboard.press('ArrowRight');
+  await expect(fleet).toHaveAttribute('aria-valuenow', '320');
+  await page.getByRole('button', { name: 'Reset layout', exact: true }).click();
+  await expect(fleet).toHaveAttribute('aria-valuenow', '310');
+});
+
 test('native reduced-fleet result reports unassigned orders without claiming efficiency savings', async ({ page }) => {
   await login(page);
   const headers = { origin: new URL(page.url()).origin };
