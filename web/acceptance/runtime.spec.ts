@@ -725,6 +725,26 @@ test('Reviewer can review snapshot readiness, baseline metrics and Hungarian det
 
 test('timeline and KPI collapse persist, preserve dimensions, restore and never submit planning writes', async ({ page }) => {
   await login(page, 'reviewer@acceptance.example.test');
+  async function expectControlCross() {
+    const boxes = await page.locator('[data-panel-controls]').evaluate(el => Array.from(el.querySelectorAll('button')).map(button => {
+      const r = button.getBoundingClientRect(); return { x: r.x, y: r.y, width: r.width, height: r.height };
+    }));
+    expect(boxes).toHaveLength(5);
+    const [top, left, center, right, bottom] = boxes;
+    for (const box of boxes) { expect(box.width).toBe(32); expect(box.height).toBe(32); }
+    expect(top.x).toBe(center.x); expect(bottom.x).toBe(center.x);
+    expect(left.y).toBe(center.y); expect(right.y).toBe(center.y);
+    expect(top.y + top.height).toBeLessThan(center.y);
+    expect(left.x + left.width).toBeLessThan(center.x);
+    expect(center.x + center.width).toBeLessThan(right.x);
+    expect(center.y + center.height).toBeLessThan(bottom.y);
+    expect(await page.locator('[data-panel-controls]').evaluate(el => {
+      const r = el.getBoundingClientRect();
+      return el.contains(document.elementFromPoint(r.x + 1, r.y + 1));
+    })).toBe(false); // The unused corner must not block the map.
+  }
+  await expect(page.getByRole('group', { name: 'Panel controls', exact: true })).toBeVisible();
+  await expectControlCross();
   const original = await baseline(page);
   const writes: string[] = [];
   page.on('request', r => { if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(r.method())) writes.push(r.url()); });
@@ -749,6 +769,7 @@ test('timeline and KPI collapse persist, preserve dimensions, restore and never 
   await page.reload();
   await expect(page.getByRole('button', { name: 'Open timeline', exact: true })).toHaveAttribute('aria-expanded', 'false');
   await expect(timeline).toBeHidden(); await expect(kpis).toBeHidden();
+  await expectControlCross();
   await page.getByRole('button', { name: 'Open timeline', exact: true }).click();
   await expect(handle).toHaveAttribute('aria-valuenow', height!);
   await expect(timeline.getByRole('button', { name: 'Play', exact: true })).toBeVisible();
@@ -762,6 +783,9 @@ test('timeline and KPI collapse persist, preserve dimensions, restore and never 
   await page.getByRole('button', { name: 'Collapse inspector', exact: true }).click();
   await page.setViewportSize({ width: 390, height: 844 });
   await page.getByRole('button', { name: 'HU', exact: true }).click();
+  await expect(page.getByRole('group', { name: 'Panelvezérlők', exact: true })).toBeVisible();
+  await expectControlCross();
+  await expect(page.getByRole('button', { name: 'Elrendezés alaphelyzetbe', exact: true })).toBeVisible();
   await page.getByRole('button', { name: 'Idővonal összecsukása', exact: true }).click();
   await page.getByRole('button', { name: 'Mutatósáv összecsukása', exact: true }).click();
   await expect(timeline).toBeHidden(); await expect(kpis).toBeHidden();

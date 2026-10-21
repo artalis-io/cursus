@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen, PanelTopClose, PanelTopOpen, PanelBottomClose, PanelBottomOpen, RotateCcw } from 'lucide-react';
+import { ChevronLeft, ChevronRight, ChevronUp, ChevronDown, RotateCcw } from 'lucide-react';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import { Button } from '@/components/ui/button';
 import { TopBar } from '@/components/TopBar';
@@ -631,22 +631,22 @@ export default function App() {
 
           <main className="flex min-w-0 flex-1 flex-col">
             <div id="cursus-map-pane" className="relative min-h-0 flex-1">
-              <div className="absolute left-3 top-3 z-10 flex gap-1.5">
-                <Button variant="graphite" size="icon" className="h-8 w-8 opacity-90" aria-label={leftOpen ? 'Collapse fleet panel' : 'Open fleet panel'} onClick={() => setLeftOpen((o) => !o)}>
-                  {leftOpen ? <PanelLeftClose className="h-4 w-4" /> : <PanelLeftOpen className="h-4 w-4" />}
+              <div data-panel-controls role="group" aria-label={t('layout.controls')} className="pointer-events-none absolute left-3 top-3 z-10 grid grid-cols-[repeat(3,2rem)] grid-rows-[repeat(3,2rem)] gap-1 [&>button]:pointer-events-auto">
+                <Button variant="graphite" size="icon" className="col-start-2 row-start-1 h-8 w-8 opacity-90" aria-label={t(workspace.visibility.kpis ? 'layout.collapseKpis' : 'layout.openKpis')} title={t(workspace.visibility.kpis ? 'layout.collapseKpis' : 'layout.openKpis')} aria-expanded={workspace.visibility.kpis} aria-controls="cursus-kpi-pane" onClick={() => workspace.toggleVisibility('kpis')}>
+                  {workspace.visibility.kpis ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
                 </Button>
-                <Button variant="graphite" size="icon" className="h-8 w-8 opacity-90" aria-label={rightOpen ? 'Collapse inspector' : 'Open inspector'} onClick={() => setRightOpen((o) => !o)}>
-                  {rightOpen ? <PanelRightClose className="h-4 w-4" /> : <PanelRightOpen className="h-4 w-4" />}
+                <Button variant="graphite" size="icon" className="col-start-1 row-start-2 h-8 w-8 opacity-90" aria-label={leftOpen ? 'Collapse fleet panel' : 'Open fleet panel'} title={leftOpen ? 'Collapse fleet panel' : 'Open fleet panel'} aria-expanded={leftOpen} aria-controls="cursus-fleet-pane" onClick={() => setLeftOpen((o) => !o)}>
+                  {leftOpen ? <ChevronLeft className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
                 </Button>
-                <Button variant="graphite" size="icon" className="h-8 w-8 opacity-90" aria-label={t(workspace.visibility.kpis ? 'layout.collapseKpis' : 'layout.openKpis')} title={t(workspace.visibility.kpis ? 'layout.collapseKpis' : 'layout.openKpis')} aria-expanded={workspace.visibility.kpis} aria-controls="cursus-kpi-pane" onClick={() => workspace.toggleVisibility('kpis')}>
-                  {workspace.visibility.kpis ? <PanelTopClose className="h-4 w-4" /> : <PanelTopOpen className="h-4 w-4" />}
-                </Button>
-                <Button variant="graphite" size="icon" className="h-8 w-8 opacity-90" aria-label={t(workspace.visibility.timeline ? 'layout.collapseTimeline' : 'layout.openTimeline')} title={t(workspace.visibility.timeline ? 'layout.collapseTimeline' : 'layout.openTimeline')} aria-expanded={workspace.visibility.timeline} aria-controls="cursus-timeline-pane" onClick={() => { if (workspace.visibility.timeline) stopClock(); workspace.toggleVisibility('timeline'); }}>
-                  {workspace.visibility.timeline ? <PanelBottomClose className="h-4 w-4" /> : <PanelBottomOpen className="h-4 w-4" />}
-                </Button>
-                {workspace.layout.desktop && <Button variant="graphite" size="icon" className="h-8 w-8 opacity-90" aria-label={t('layout.reset')} title={t('layout.reset')} onClick={workspace.reset}>
+                <Button variant="graphite" size="icon" className="col-start-2 row-start-2 h-8 w-8 opacity-90" aria-label={t('layout.reset')} title={t('layout.reset')} onClick={workspace.reset}>
                   <RotateCcw className="h-4 w-4" />
-                </Button>}
+                </Button>
+                <Button variant="graphite" size="icon" className="col-start-3 row-start-2 h-8 w-8 opacity-90" aria-label={rightOpen ? 'Collapse inspector' : 'Open inspector'} title={rightOpen ? 'Collapse inspector' : 'Open inspector'} aria-expanded={rightOpen} aria-controls="cursus-inspector-pane" onClick={() => setRightOpen((o) => !o)}>
+                  {rightOpen ? <ChevronRight className="h-4 w-4" /> : <ChevronLeft className="h-4 w-4" />}
+                </Button>
+                <Button variant="graphite" size="icon" className="col-start-2 row-start-3 h-8 w-8 opacity-90" aria-label={t(workspace.visibility.timeline ? 'layout.collapseTimeline' : 'layout.openTimeline')} title={t(workspace.visibility.timeline ? 'layout.collapseTimeline' : 'layout.openTimeline')} aria-expanded={workspace.visibility.timeline} aria-controls="cursus-timeline-pane" onClick={() => { if (workspace.visibility.timeline) stopClock(); workspace.toggleVisibility('timeline'); }}>
+                  {workspace.visibility.timeline ? <ChevronDown className="h-4 w-4" /> : <ChevronUp className="h-4 w-4" />}
+                </Button>
               </div>
               <MapView plan={plan} scenario={scenario} selection={selection} onSelect={navigate} clockSec={clockSec} visibleVehicleIds={visibleVehicleIds} />
             </div>

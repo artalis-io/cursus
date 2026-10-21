@@ -3,6 +3,10 @@
 On workspaces at least 1024 pixels wide, drag the dividers between Fleet/Map,
 Map/Inspector and Map/Timeline. The existing sidebar collapse buttons remain.
 The map toolbar also independently collapses/restores the KPI bar and timeline.
+Its five controls form a cross: KPI above, Fleet left, Reset layout centre,
+Inspector right and Timeline below. Arrows reverse when a panel is hidden.
+The centre remains available on narrow screens; it resets layout, not data or
+scenario edits. Empty corners allow pointer interaction with the map beneath.
 Their controls remain on the map when the panels are hidden, expose expanded
 state to assistive technology, and support keyboard activation in English/Hungarian.
 Collapsing the timeline stops playback and clears its map clock. Its preferred
