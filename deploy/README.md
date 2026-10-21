@@ -1,5 +1,9 @@
 # Portable Cursus deployment
 
+Read-only operational checks: `python3 deploy/monitor.py`. See
+[operational alerts](../docs/operational-alerts.md) for thresholds, notification
+setup and limitations. This command never restarts or rebuilds production.
+
 For the stateful two-Spark deployment, reboot recovery is managed by the existing
 production tooling: `python3 deploy/cutover.py recovery status`. Approved
 provisioning installs the schedule; existing installations can adopt it with
