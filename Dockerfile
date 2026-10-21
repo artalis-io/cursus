@@ -6,6 +6,7 @@ COPY web/package.json web/package-lock.json ./
 RUN npm ci
 COPY web/ ./
 COPY server/src/roles.ts /src/server/src/roles.ts
+COPY server/src/workflow-contract.ts /src/server/src/workflow-contract.ts
 RUN npm run build
 
 FROM node:20.19.5-bookworm-slim@sha256:9e70124bd00f47dd023e349cd587132ae61892acc0e47ed641416c3e18f401c3 AS server-build

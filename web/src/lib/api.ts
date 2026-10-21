@@ -50,9 +50,9 @@ async function jsend<T>(url: string, method: string, body?: unknown, revision?: 
 }
 
 export const api = {
-  planWorkflow: (id: string) => jget<import('../../../server/src/state/plan-workflow').Workflow>(`/api/plans/${id}/workflow`),
+  planWorkflow: (id: string) => jget<import('../../../server/src/workflow-contract').Workflow>(`/api/plans/${id}/workflow`),
   transitionPlan: (id: string, action: 'review' | 'approve', version: number, revision: number, acknowledgeExceptions: boolean) =>
-    jsend<import('../../../server/src/state/plan-workflow').Workflow>(`/api/plans/${id}/${action}`, 'POST', { version, revision, acknowledgeExceptions }),
+    jsend<import('../../../server/src/workflow-contract').Workflow>(`/api/plans/${id}/${action}`, 'POST', { version, revision, acknowledgeExceptions }),
   days: () => jget<DaySummary[]>('/api/days'),
   plan: (id: string) => jget<Plan>(`/api/plans/${id}`),
   /** Recompute one vehicle trip under a proposed stop order (no re-solve). */

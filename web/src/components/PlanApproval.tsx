@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { api, ApiError } from '@/lib/api';
 import { usePermission } from '@/permissions';
 import { useI18n } from '@/i18n';
-import type { Workflow } from '../../../server/src/state/plan-workflow';
+import type { Workflow } from '../../../server/src/workflow-contract';
 
 /** Read-only visibility for every role; actions always re-authorized by the API. */
 export function PlanApproval({ planId, revision, pending }: { planId: string; revision: number; pending: boolean }) {

@@ -4,19 +4,11 @@ import type { Principal } from '../auth.js';
 import type { Plan } from '../types.js';
 import type { Scenario } from '../store.js';
 import type { StatefulStore } from './postgres.js';
+import type { Workflow } from '../workflow-contract.js';
+export type { Workflow } from '../workflow-contract.js';
 
 export class WorkflowError extends Error {
   constructor(public status: number, message: string) { super(message); }
-}
-export interface Workflow {
-  state: 'draft' | 'reviewed' | 'approved' | 'superseded';
-  version: number;
-  scenarioRevision: number;
-  currentRevision: number;
-  planSha256: string;
-  actor: string | null;
-  at: string | null;
-  blockers: string[];
 }
 function canonical(value: unknown): string {
   if (Array.isArray(value)) return `[${value.map(canonical).join(',')}]`;
