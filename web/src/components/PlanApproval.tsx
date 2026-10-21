@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { api, ApiError } from '@/lib/api';
 import { usePermission } from '@/permissions';
 import { useI18n } from '@/i18n';
@@ -11,12 +11,16 @@ export function PlanApproval({ planId, revision, pending }: { planId: string; re
   const [workflow, setWorkflow] = useState<Workflow | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [ack, setAck] = useState(false), [busy, setBusy] = useState(false);
+  const generation = useRef({ value: 0 });
+  useLayoutEffect(() => { const clock = generation.current; clock.value++; return () => { clock.value++; }; }, [planId, revision]);
+  const accept = (next: Workflow) => setWorkflow(current => current &&
+    (current.version > next.version || current.currentRevision > next.currentRevision) ? current : next);
   useEffect(() => {
     let alive = true, fetching = false;
-    setWorkflow(null); setError(null); setAck(false);
+    setWorkflow(null); setError(null); setAck(false); setBusy(false);
     const refresh = async () => {
       if (fetching) return; fetching = true;
-      try { const result = await api.planWorkflow(planId); if (alive) { setWorkflow(result); setError(null); } }
+      try { const result = await api.planWorkflow(planId); if (alive) { accept(result); setError(null); } }
       catch (e) { if (alive && (!(e instanceof ApiError) || e.status !== 404)) setError((e as Error).message); }
       finally { fetching = false; }
     };
@@ -28,12 +32,13 @@ export function PlanApproval({ planId, revision, pending }: { planId: string; re
     : { draft: 'Draft', reviewed: 'Reviewed', approved: 'Approved', superseded: 'Superseded' };
   const actionable = !error && workflow.blockers.length === 0 && workflow.currentRevision === revision && workflow.scenarioRevision === revision && !pending && !busy;
   const act = async (action: 'review' | 'approve') => {
+    const epoch = generation.current.value;
     setBusy(true); setError(null);
-    try { setWorkflow(await api.transitionPlan(planId, action, workflow.version, revision, ack)); setAck(false); }
-    catch (e) { setError((e as Error).message); }
-    finally { setBusy(false); }
+    try { const next = await api.transitionPlan(planId, action, workflow.version, revision, ack); if (epoch === generation.current.value) { accept(next); setAck(false); } }
+    catch (e) { if (epoch === generation.current.value) setError((e as Error).message); }
+    finally { if (epoch === generation.current.value) setBusy(false); }
   };
-  return <section aria-label={hu ? 'Terv jóváhagyása' : 'Plan approval'} className="shrink-0 border-b border-divider px-4 py-2 text-xs">
+  return <section data-plan-id={planId} aria-label={hu ? 'Terv jóváhagyása' : 'Plan approval'} className="shrink-0 border-b border-divider px-4 py-2 text-xs">
     <div className="flex flex-wrap items-center gap-3">
       <strong>{hu ? 'Terv ellenőrzése' : 'Plan review'} · {labels[workflow.state]}</strong>
       <span className="text-muted-foreground">{hu ? 'Forgatókönyv-verzió' : 'Scenario revision'} {workflow.scenarioRevision}</span>

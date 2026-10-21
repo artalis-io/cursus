@@ -73,6 +73,8 @@ PostgreSQL. Local unauthenticated stateful development records a null actor with
 
 This changes write preconditions: older browser clients must reload the new SPA.
 Keep API and frontend image revisions aligned. No native solver parameters,
+Freshness guarantees require all writable replicas to run this implementation;
+an old backend does not enforce the new precondition contract during a mixed-version window.
 datasets, production infrastructure or original-plan functionality are changed.
 Do not treat application rollback as permission to overwrite live PostgreSQL.
 

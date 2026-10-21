@@ -46,5 +46,17 @@ test('two independent APIs reject stale intent and serialize review, approval an
     assert.deepEqual(ledger.rows.map(r => r.action), ['plan.review', 'plan.approve']);
     assert.equal(ledger.rows[1].detail.version, 2);
     assert.equal(ledger.rows[1].detail.planSha256, (await workflow.get(p.id)).planSha256);
+    // Approval racing an edit must either fail or be immediately superseded,
+    // never remain authoritative for the new revision.
+    const nextScenario = { ...scenario, id: 'race-scenario' };
+    const nextPlan = { ...p, id: 'race-plan', scenarioId: nextScenario.id };
+    await a.createScenario(tenant, nextScenario.id, nextScenario);
+    await a.pool.query('INSERT INTO plans(tenant_id,id,scenario_id,scenario_revision,body) VALUES($1,$2,$3,1,$4)', [tenant, nextPlan.id, nextScenario.id, nextPlan]);
+    await workflow.transition(nextPlan.id, 'plan.review', 0, 1, true);
+    const race = await Promise.allSettled([peer.transition(nextPlan.id, 'plan.approve', 1, 1, true),
+      new ScenarioRepository(a, tenant).edit(nextScenario.id, [{ op: 'removeVehicle', vehicleId: 1 }], 1)]);
+    assert.equal(race[1]!.status, 'fulfilled');
+    assert.equal((await workflow.get(nextPlan.id)).state, 'superseded');
+    await assert.rejects(() => b.enqueueJob(tenant, 'solve', 'stale-admission', {}, 10, { id: nextScenario.id, revision: 1 }));
   } finally { await Promise.all(apps.map(app => app.close())); await Promise.all([a.close(), b.close()]); }
 });

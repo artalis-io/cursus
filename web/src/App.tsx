@@ -129,10 +129,12 @@ function sameSel(a: Selection, b: Selection): boolean {
 
 export default function App() {
   const [freshnessError, setFreshnessError] = useState<string | null>(null);
-  const canEdit = usePermission('scenario.edit') && !freshnessError;
-  const canSolve = usePermission('optimization.submit') && !freshnessError;
+  const [workspaceLoading, setWorkspaceLoading] = useState(false);
+  const navigationGeneration = useRef(0);
+  const canEdit = usePermission('scenario.edit') && !freshnessError && !workspaceLoading;
+  const canSolve = usePermission('optimization.submit') && !freshnessError && !workspaceLoading;
   const canCancel = usePermission('optimization.cancel');
-  const canEvaluate = usePermission('plan.evaluate') && !freshnessError;
+  const canEvaluate = usePermission('plan.evaluate') && !freshnessError && !workspaceLoading;
   // Async callbacks can outlive the render that authorized them. Recheck at
   // dispatch, and invalidate queued intents across revocation/regrant cycles.
   const writeAccess = useRef({ edit: canEdit, solve: canSolve, cancel: canCancel, epoch: 0, mounted: true });
@@ -279,6 +281,8 @@ export default function App() {
   }, []);
 
   const loadDay = useCallback(async (d: DaySummary) => {
+    const generation = ++navigationGeneration.current;
+    setWorkspaceLoading(true);
     writeAccess.current.epoch++;
     pollAbort.current?.abort();
     activeJobId.current = null;
@@ -286,11 +290,11 @@ export default function App() {
     setJob(null);
     setPlaying(false); setClockSec(null);
     resetSelection();
-    setDayId(d.id);
-    const base = await loadPlanWithGeometry(d.baselinePlanId);
-    setBaseline(base);
-    setPlan(base);
-    setScenario(await api.scenario(d.baseScenarioId));
+    try {
+      const [base, latest] = await Promise.all([loadPlanWithGeometry(d.baselinePlanId), api.scenario(d.baseScenarioId)]);
+      if (generation !== navigationGeneration.current) return;
+      setDayId(d.id); setBaseline(base); setPlan(base); setScenario(latest);
+    } finally { if (generation === navigationGeneration.current) setWorkspaceLoading(false); }
   }, []);
 
   // Follow a running job (already created) to its terminal state; apply + return
@@ -496,6 +500,8 @@ export default function App() {
   }, [dayId, days, loadDay, resetSelection, t]);
 
   const reopenPlan = useCallback(async (planId: string) => {
+    const generation = ++navigationGeneration.current;
+    setWorkspaceLoading(true);
     writeAccess.current.epoch++;
     pollAbort.current?.abort();
     activeJobId.current = null;
@@ -504,13 +510,19 @@ export default function App() {
     try {
       const p = await loadPlanWithGeometry(planId);
       const sc = await api.scenario(p.scenarioId);
+      if (generation !== navigationGeneration.current) return;
       const d = days.find((x) => x.id === sc.day);
       // Only swap the baseline when actually changing day. baseline.day and d.id
       // are both day ids (comparing to d.isoDate never matched).
-      if (d && baseline?.day !== d.id) { setBaseline(await loadPlanWithGeometry(d.baselinePlanId)); setDayId(d.id); }
+      if (d && baseline?.day !== d.id) {
+        const base = await loadPlanWithGeometry(d.baselinePlanId);
+        if (generation !== navigationGeneration.current) return;
+        setBaseline(base); setDayId(d.id);
+      }
       setScenario(sc);
       setPlan(p);
-    } catch (e) { setError(describeApiError(e, t)); }
+    } catch (e) { if (generation === navigationGeneration.current) setError(describeApiError(e, t)); }
+    finally { if (generation === navigationGeneration.current) setWorkspaceLoading(false); }
   }, [days, baseline]);
 
   // Planned-day time range (for the playback cursor).
@@ -557,7 +569,7 @@ export default function App() {
   const dirty = scenario.revision !== plan.scenarioRevision;
 
   return (
-    <StaleWorkspaceContext.Provider value={!!freshnessError}><TooltipProvider delayDuration={200}>
+    <StaleWorkspaceContext.Provider value={!!freshnessError || workspaceLoading}><TooltipProvider delayDuration={200}>
       <div className="flex h-full flex-col overflow-hidden">
         <TopBar
           days={days} dayId={dayId} onDayChange={(id) => { if (!okToSwitch()) return; const d = days.find((x) => x.id === id); if (d) void loadDay(d); }}
@@ -582,8 +594,8 @@ export default function App() {
         />
         <KpiStrip plan={plan} baseline={baseline} compare={isReplan} job={job}
           previewDistanceKm={previewTotals?.distanceKm} previewCostTotal={previewTotals?.costTotal} />
-        <ReadinessPanel plan={plan} baseline={baseline} scenario={scenario} pending={pendingEdits > 0 || !!solving || !!freshnessError} />
-        <PlanApproval key={plan.id} planId={plan.id} revision={scenario.revision} pending={pendingEdits > 0 || !!solving || !!freshnessError || scenario.id !== plan.scenarioId} />
+        <ReadinessPanel plan={plan} baseline={baseline} scenario={scenario} pending={pendingEdits > 0 || !!solving || !!freshnessError || workspaceLoading} />
+        <PlanApproval key={plan.id} planId={plan.id} revision={scenario.revision} pending={pendingEdits > 0 || !!solving || !!freshnessError || workspaceLoading || scenario.id !== plan.scenarioId} />
         {freshnessError && <div role="alert" className="border-b border-warning/40 bg-warning/10 px-4 py-2 text-sm">
           {t(freshnessError)} <button className="underline" onClick={() => {
             if (!window.confirm(t('freshness.confirm'))) return;

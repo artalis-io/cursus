@@ -903,21 +903,33 @@ test('native plan review, Admin-only approval and cross-replica stale-edit prote
   let job: Job;
   await expect.poll(async () => { job = await get<Job>(page.request, `/api/jobs/${jobId}`); return job.status; }).toBe('completed');
   const planId = job!.planId!;
+  const navigation = gate();
+  await page.route(`**/api/plans/${planId}`, async route => { await navigation.wait; await route.continue(); });
   await page.getByRole('button', { name: 'Plans', exact: true }).click();
   await page.getByRole('dialog').locator(`[data-plan-id="${planId}"]`).getByRole('button', { name: 'Reopen', exact: true }).click();
   const panel = page.getByRole('region', { name: 'Plan approval', exact: true });
+  await expect(panel.getByRole('button')).toHaveCount(0);
+  navigation.release();
+  await expect(panel).toHaveAttribute('data-plan-id', planId);
+  await page.unroute(`**/api/plans/${planId}`);
   await expect(panel).toContainText('Draft');
   await expect(panel.getByRole('button', { name: 'Mark reviewed', exact: true })).toBeDisabled();
   await panel.getByRole('checkbox').check();
   await panel.getByRole('button', { name: 'Mark reviewed', exact: true }).click();
   await expect(panel).toContainText('Reviewed');
-  expect((await get<{ state: string }>(page.request, `${peer}/api/plans/${planId}/workflow`)).state).toBe('reviewed');
+  const reviewed = await get<{ state: string; actor: string }>(page.request, `${peer}/api/plans/${planId}/workflow`);
+  expect(reviewed.state).toBe('reviewed');
+  expect(reviewed.actor).toBe((await get<{ userId: string }>(page.request, '/api/auth/me')).userId);
   for (const role of ['reviewer', 'planner']) {
     expect((await page.request.post('/api/auth/view-as', { headers, data: { role } })).status()).toBe(200);
+    await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+    await expect(panel.getByRole('button', { name: 'Approve plan', exact: true })).toHaveCount(0);
     expect((await page.request.post(`${peer}/api/plans/${planId}/approve`, { headers, data: { version: 1, revision: scenario.revision, acknowledgeExceptions: true, role: 'admin' } })).status()).toBe(403);
     if (role === 'reviewer') expect((await page.request.post(`/api/plans/${planId}/review`, { headers, data: {} })).status()).toBe(403);
   }
   expect((await page.request.post('/api/auth/view-as', { headers, data: { role: null } })).status()).toBe(200);
+  await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+  await expect(panel.getByRole('button', { name: 'Approve plan', exact: true })).toBeVisible();
   await panel.getByRole('checkbox').check();
   await panel.getByRole('button', { name: 'Approve plan', exact: true }).click();
   await expect(panel).toContainText('Approved');
@@ -926,7 +938,7 @@ test('native plan review, Admin-only approval and cross-replica stale-edit prote
   await expect(page.getByText('This scenario changed in another workspace. Reload before continuing.', { exact: false })).toBeVisible();
   await expect(panel).toContainText('Superseded');
   expect((await page.request.post(`/api/scenarios/${scenario.id}/solve`, { headers: { ...headers, 'if-match': `"${scenario.revision}"` }, data: {} })).status()).toBe(409);
-  await expect(page.getByRole('button', { name: /^Replan/ }).first()).toBeDisabled();
+  await expect(page.getByRole('button', { name: /^Replan/ })).toHaveCount(0);
   expect((await get<Plan>(page.request, `${peer}/api/plans/${planId}`)).id).toBe(planId);
   expect(await baseline(page)).toEqual(original);
 });
