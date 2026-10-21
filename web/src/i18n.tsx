@@ -10,6 +10,8 @@ export type Lang = 'en' | 'hu';
 type Dict = Record<string, string>;
 
 const en: Dict = {
+  'layout.fleet': 'Resize fleet panel', 'layout.inspector': 'Resize inspector panel', 'layout.timeline': 'Resize timeline',
+  'layout.reset': 'Reset layout', 'layout.help': 'Drag or use arrow keys (Shift for larger steps). Home/End: minimum/maximum. Double-click to reset. Escape cancels dragging.',
   'readiness.title': 'Dispatch readiness', 'readiness.details': 'Review details',
   'readiness.validationUnconfirmed': 'Backend validation has not confirmed this plan as valid.',
   'readiness.advisories': 'Reported advisories also require review in Issues.',
@@ -260,6 +262,8 @@ const en: Dict = {
 };
 
 const hu: Dict = {
+  'layout.fleet': 'Flottapanel átméretezése', 'layout.inspector': 'Részletek panel átméretezése', 'layout.timeline': 'Idővonal átméretezése',
+  'layout.reset': 'Elrendezés alaphelyzetbe', 'layout.help': 'Húzás vagy nyílbillentyűk (Shift: nagyobb lépés). Home/End: minimum/maximum. Dupla kattintás: alaphelyzet. Escape: húzás megszakítása.',
   'readiness.title': 'Indítás előtti ellenőrzés', 'readiness.details': 'Részletek áttekintése',
   'readiness.validationUnconfirmed': 'A háttérrendszer validációja nem igazolta a terv érvényességét.',
   'readiness.advisories': 'A jelentett figyelmeztetéseket is ellenőrizni kell a Problémák ablakban.',

@@ -1,10 +1,12 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen } from 'lucide-react';
+import { PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen, RotateCcw } from 'lucide-react';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import { Button } from '@/components/ui/button';
 import { TopBar } from '@/components/TopBar';
 import { KpiStrip } from '@/components/KpiStrip';
 import { ReadinessPanel } from '@/components/ReadinessPanel';
+import { ResizeHandle } from '@/components/ResizeHandle';
+import { useWorkspaceLayout } from '@/useWorkspaceLayout';
 import { FleetPanel } from '@/components/FleetPanel';
 import { Inspector } from '@/components/Inspector';
 import { Timeline } from '@/components/Timeline';
@@ -183,6 +185,7 @@ export default function App() {
   const closeHelp = useCallback(() => { setHelpOpen(false); try { localStorage.setItem('otto.helpSeen', '1'); } catch { /* ignore */ } }, []);
   const [leftOpen, setLeftOpen] = useState(true);
   const [rightOpen, setRightOpen] = useState(true);
+  const workspace = useWorkspaceLayout(leftOpen, rightOpen);
   // Fleet-panel filter (tail-lift / advisories / search) -> the map shows only
   // the matching vehicles' routes. null = no filter (show all).
   const [visibleVehicleIds, setVisibleVehicleIds] = useState<number[] | null>(null);
@@ -542,9 +545,9 @@ export default function App() {
           </button>
         )}
 
-        <div className="flex min-h-0 flex-1">
+        <div ref={workspace.containerRef} className="flex min-h-0 flex-1">
           {leftOpen && (
-            <aside className="w-[310px] shrink-0 border-r border-divider">
+            <aside id="cursus-fleet-pane" className="w-[310px] shrink-0 overflow-hidden border-r border-divider" style={{ width: workspace.layout.fleet }}>
               <FleetPanel plan={plan} scenario={scenario} selection={selection} onSelect={navigate}
                 onMarkUnavailable={(id) => void applyEdit({ op: 'removeVehicle', vehicleId: id })}
                 onRestoreVehicle={(id) => void applyEdit({ op: 'restoreVehicle', vehicleId: id })} solving={!!solving}
@@ -553,9 +556,12 @@ export default function App() {
                 onBulkAssign={onBulkAssign} />
             </aside>
           )}
+          {leftOpen && workspace.layout.desktop && <ResizeHandle label={t('layout.fleet')} help={t('layout.help')} controls="cursus-fleet-pane"
+            axis="x" direction={1} value={workspace.layout.fleet} min={240} max={workspace.layout.fleetMax}
+            onChange={n => workspace.setSize('fleet', n)} onReset={() => workspace.resetSize('fleet')} />}
 
           <main className="flex min-w-0 flex-1 flex-col">
-            <div className="relative min-h-0 flex-1">
+            <div id="cursus-map-pane" className="relative min-h-0 flex-1">
               <div className="absolute left-3 top-3 z-10 flex gap-1.5">
                 <Button variant="graphite" size="icon" className="h-8 w-8 opacity-90" aria-label={leftOpen ? 'Collapse fleet panel' : 'Open fleet panel'} onClick={() => setLeftOpen((o) => !o)}>
                   {leftOpen ? <PanelLeftClose className="h-4 w-4" /> : <PanelLeftOpen className="h-4 w-4" />}
@@ -563,18 +569,28 @@ export default function App() {
                 <Button variant="graphite" size="icon" className="h-8 w-8 opacity-90" aria-label={rightOpen ? 'Collapse inspector' : 'Open inspector'} onClick={() => setRightOpen((o) => !o)}>
                   {rightOpen ? <PanelRightClose className="h-4 w-4" /> : <PanelRightOpen className="h-4 w-4" />}
                 </Button>
+                {workspace.layout.desktop && <Button variant="graphite" size="icon" className="h-8 w-8 opacity-90" aria-label={t('layout.reset')} title={t('layout.reset')} onClick={workspace.reset}>
+                  <RotateCcw className="h-4 w-4" />
+                </Button>}
               </div>
               <MapView plan={plan} scenario={scenario} selection={selection} onSelect={navigate} clockSec={clockSec} visibleVehicleIds={visibleVehicleIds} />
             </div>
-            <div className="h-48 shrink-0 border-t border-divider">
+            {workspace.layout.desktop && <ResizeHandle label={t('layout.timeline')} help={t('layout.help')} controls="cursus-timeline-pane"
+              axis="y" direction={-1} value={workspace.layout.timeline} min={workspace.layout.timelineMin} max={workspace.layout.timelineMax}
+              onChange={n => workspace.setSize('timeline', n)} onReset={() => workspace.resetSize('timeline')} />}
+            <div id="cursus-timeline-pane" className="h-48 shrink-0 overflow-hidden border-t border-divider" style={{ height: workspace.layout.timeline }}>
               <Timeline plan={plan} selection={selection} onSelect={navigate}
                 clockSec={clockSec} playing={playing} speed={speed} dayRange={dayRange}
                 onTogglePlay={togglePlay} onSeek={seekClock} onStop={stopClock} onSpeed={setSpeed} />
             </div>
           </main>
 
+          {rightOpen && workspace.layout.desktop && <ResizeHandle label={t('layout.inspector')} help={t('layout.help')} controls="cursus-inspector-pane"
+            axis="x" direction={-1} value={workspace.layout.inspector} min={260} max={workspace.layout.inspectorMax}
+            onChange={n => workspace.setSize('inspector', n)} onReset={() => workspace.resetSize('inspector')} />}
+
           {rightOpen && (
-            <aside className="w-[340px] shrink-0 border-l border-divider">
+            <aside id="cursus-inspector-pane" className="w-[340px] shrink-0 overflow-hidden border-l border-divider" style={{ width: workspace.layout.inspector }}>
               <Inspector plan={plan} baseline={baseline} scenario={scenario} selection={selection} onSelect={navigate} solving={!!solving}
                 onBack={goBack} onForward={goForward} canGoBack={canGoBack} canGoForward={canGoForward}
                 onMarkUnavailable={(id) => void applyEdit({ op: 'removeVehicle', vehicleId: id })}
