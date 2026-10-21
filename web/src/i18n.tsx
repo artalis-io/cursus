@@ -10,6 +10,9 @@ export type Lang = 'en' | 'hu';
 type Dict = Record<string, string>;
 
 const en: Dict = {
+  'freshness.changed': 'This scenario changed in another workspace. Reload before continuing.',
+  'freshness.unverified': 'Unable to verify the current scenario. Reload before making changes.',
+  'freshness.reload': 'Reload scenario', 'freshness.confirm': 'Reload the latest scenario? Unsubmitted local changes will be discarded.',
   'layout.fleet': 'Resize fleet panel', 'layout.inspector': 'Resize inspector panel', 'layout.timeline': 'Resize timeline',
   'layout.reset': 'Reset layout', 'layout.help': 'Drag or use arrow keys (Shift for larger steps). Home/End: minimum/maximum. Double-click to reset. Escape cancels dragging.',
   'readiness.title': 'Dispatch readiness', 'readiness.details': 'Review details',
@@ -262,6 +265,9 @@ const en: Dict = {
 };
 
 const hu: Dict = {
+  'freshness.changed': 'A forgatókönyv másik munkaterületen megváltozott. Folytatás előtt töltse újra.',
+  'freshness.unverified': 'A forgatókönyv aktualitása nem ellenőrizhető. Módosítás előtt töltse újra.',
+  'freshness.reload': 'Forgatókönyv újratöltése', 'freshness.confirm': 'Betölti a legújabb forgatókönyvet? A még el nem küldött helyi módosítások elvesznek.',
   'layout.fleet': 'Flottapanel átméretezése', 'layout.inspector': 'Részletek panel átméretezése', 'layout.timeline': 'Idővonal átméretezése',
   'layout.reset': 'Elrendezés alaphelyzetbe', 'layout.help': 'Húzás vagy nyílbillentyűk (Shift: nagyobb lépés). Home/End: minimum/maximum. Dupla kattintás: alaphelyzet. Escape: húzás megszakítása.',
   'readiness.title': 'Indítás előtti ellenőrzés', 'readiness.details': 'Részletek áttekintése',

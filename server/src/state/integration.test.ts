@@ -242,13 +242,13 @@ integration('Admin, Planner and Reviewer sessions enforce tenant-scoped permissi
       assert.equal(created.statusCode, 201);
       const copy = created.json();
       const beforeBatch = await a.getScenario(id, copy.id);
-      assert.equal((await app.inject({ method: 'POST', url: `/api/scenarios/${copy.id}/edits`, headers: plannerHeaders,
+      assert.equal((await app.inject({ method: 'POST', url: `/api/scenarios/${copy.id}/edits`, headers: { ...plannerHeaders, 'if-match': `"${copy.revision}"` },
         payload: { edits: [{ op: 'removeVehicle', vehicleId: 99 }, { op: 'admitDataset', datasetId: 'no' }] } })).statusCode, 400);
       assert.deepEqual(await a.getScenario(id, copy.id), beforeBatch, 'an invalid batch must not partially edit authoritative state');
-      assert.equal((await app.inject({ method: 'POST', url: `/api/scenarios/${copy.id}/edits`, headers: plannerHeaders,
+      assert.equal((await app.inject({ method: 'POST', url: `/api/scenarios/${copy.id}/edits`, headers: { ...plannerHeaders, 'if-match': `"${copy.revision}"` },
         payload: { edits: [{ op: 'removeVehicle', vehicleId: 2 }, { op: 'restoreVehicle', vehicleId: 2 }] } })).statusCode, 200);
-      assert.equal((await app.inject({ method: 'POST', url: `/api/scenarios/${copy.id}/rename`, headers: plannerHeaders, payload: { label: 'Planner revised' } })).statusCode, 200);
-      assert.equal((await app.inject({ method: 'POST', url: `/api/scenarios/${copy.id}/edit`, headers: plannerHeaders, payload: { edit: { op: 'removeVehicle', vehicleId: 1 } } })).statusCode, 200);
+      assert.equal((await app.inject({ method: 'POST', url: `/api/scenarios/${copy.id}/rename`, headers: { ...plannerHeaders, 'if-match': `"${copy.revision + 1}"` }, payload: { label: 'Planner revised' } })).statusCode, 200);
+      assert.equal((await app.inject({ method: 'POST', url: `/api/scenarios/${copy.id}/edit`, headers: { ...plannerHeaders, 'if-match': `"${copy.revision + 2}"` }, payload: { edit: { op: 'removeVehicle', vehicleId: 1 } } })).statusCode, 200);
       assert.equal((await app.inject({ method: 'DELETE', url: `/api/scenarios/${copy.id}`, headers: plannerHeaders })).statusCode, 403);
       for (const path of ['/api/import/upload', '/api/import/preview', '/api/import/geocode', '/api/import/admit',
         '/api/import/datasets/anything/validate', '/api/import/datasets/anything/admit', '/api/import/datasets/anything/convert', '/api/auth/view-as'])
@@ -346,12 +346,12 @@ integration('two real HTTP server instances share scenarios, jobs, and fenced pl
     const created = await apiA.inject({ method: 'POST', url: '/api/scenarios', payload: { day: 'http-day', label: 'HTTP day' } });
     assert.equal(created.statusCode, 200);
     const base = created.json();
-    const edited = await apiB.inject({ method: 'POST', url: `/api/scenarios/${base.id}/edit`, payload: { edit: { op: 'removeVehicle', vehicleId: 7 } } });
+    const edited = await apiB.inject({ method: 'POST', url: `/api/scenarios/${base.id}/edit`, headers: { 'if-match': `"${base.revision}"` }, payload: { edit: { op: 'removeVehicle', vehicleId: 7 } } });
     assert.equal(edited.statusCode, 200);
     const scenario = edited.json();
     const visible = await apiA.inject({ method: 'GET', url: `/api/scenarios/${scenario.id}` });
     assert.deepEqual(visible.json().removedVehicleIds, [7]);
-    const queued = await apiA.inject({ method: 'POST', url: `/api/scenarios/${scenario.id}/solve`, payload: { budgetSec: 1 } });
+    const queued = await apiA.inject({ method: 'POST', url: `/api/scenarios/${scenario.id}/solve`, headers: { 'if-match': `"${scenario.revision}"` }, payload: { budgetSec: 1 } });
     assert.equal(queued.statusCode, 202);
     const jobId = queued.json().jobId;
     assert.equal(typeof jobId, 'string');

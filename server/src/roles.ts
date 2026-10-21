@@ -1,13 +1,13 @@
 export type Role = 'admin' | 'planner' | 'reviewer';
 export const isRole = (value: unknown): value is Role => value === 'admin' || value === 'planner' || value === 'reviewer';
 export const permissions = ['workspace.read', 'workspace.export', 'scenario.create', 'scenario.rename',
-  'scenario.edit', 'scenario.import', 'scenario.delete', 'plan.evaluate', 'optimization.submit',
+  'scenario.edit', 'scenario.import', 'scenario.delete', 'plan.evaluate', 'plan.review', 'plan.approve', 'optimization.submit',
   'optimization.cancel', 'analysis.generate', 'dataset.upload', 'dataset.convert', 'dataset.validate',
   'dataset.admit', 'dataset.delete', 'role.preview'] as const;
 export type Permission = typeof permissions[number];
 const read: readonly Permission[] = ['workspace.read', 'workspace.export'];
 const planning: readonly Permission[] = [...read, 'scenario.create', 'scenario.rename', 'scenario.edit',
-  'scenario.import', 'plan.evaluate', 'optimization.submit', 'optimization.cancel', 'analysis.generate'];
+  'scenario.import', 'plan.evaluate', 'plan.review', 'optimization.submit', 'optimization.cancel', 'analysis.generate'];
 export const rolePermissions: Readonly<Record<Role, readonly Permission[]>> = {
   admin: permissions, planner: planning, reviewer: read,
 };

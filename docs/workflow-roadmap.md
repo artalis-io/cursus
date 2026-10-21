@@ -27,7 +27,9 @@ Building any of these would turn the cockpit into a TMS and is a non-goal:
 - Individual order CRUD / an inbound order inbox (orders arrive as a snapshot).
 - Driver roster, send-to-driver, driver acknowledgment, a driver mobile app.
 - Live execution tracking: actual-vs-planned, ETAs/PTA, stop check-off (telematics/ELD/Pulse own this).
-- Persistent plan lifecycle states (draft/published/dispatched) as owned records.
+- Operational lifecycle states (published/dispatched/executed) as owned records.
+  Revision-bound human review/approval is a decision aid, not execution tracking;
+  see [plan review and freshness](plan-review-and-freshness.md).
 - Multi-day calendar of stored plans; analytics/KPIs over time; a who-changed-what audit trail.
 
 These assume the tool owns the operational timeline. It doesn't.

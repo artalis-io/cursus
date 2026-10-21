@@ -400,7 +400,7 @@ test('Planner can manage scenario edits but cannot administer shared data or ele
   const response = await page.request.post('/api/scenarios', { headers: { origin: new URL(page.url()).origin }, data: { from: plan.scenarioId, label: 'Planner copy' } });
   expect(response.status()).toBe(201);
   const scenario = await response.json() as Scenario;
-  const renamed = await page.request.post(`/api/scenarios/${scenario.id}/rename`, { headers: { origin: new URL(page.url()).origin }, data: { label: 'Planner renamed' } });
+  const renamed = await page.request.post(`/api/scenarios/${scenario.id}/rename`, { headers: { origin: new URL(page.url()).origin, 'if-match': `"${scenario.revision}"` }, data: { label: 'Planner renamed' } });
   expect(renamed.status()).toBe(200);
   const bundle = await get<unknown>(page.request, `/api/scenarios/${scenario.id}/export`);
   expect((await page.request.post('/api/scenarios/import', { headers: { origin: new URL(page.url()).origin }, data: bundle })).status()).toBe(200);
@@ -851,13 +851,13 @@ test('native reduced-fleet result reports unassigned orders without claiming eff
   // The public fixture has exactly two GVW-eligible vehicles for PUBLIC-1.
   // Removing both creates a genuinely unserviceable order, not a mocked plan.
   const edited = await page.request.post('/api/scenarios/acceptance-day-base/edits', {
-    headers, data: { label: 'Readiness service-loss regression', edits: [
+    headers: { ...headers, 'if-match': '"0"' }, data: { label: 'Readiness service-loss regression', edits: [
       { op: 'removeVehicle', vehicleId: 10 }, { op: 'removeVehicle', vehicleId: 50 },
     ] },
   });
   expect(edited.status()).toBe(200);
   const scenario = await edited.json() as Scenario;
-  const submitted = await page.request.post(`/api/scenarios/${scenario.id}/solve`, { headers, data: { budgetSec: 1 } });
+  const submitted = await page.request.post(`/api/scenarios/${scenario.id}/solve`, { headers: { ...headers, 'if-match': `"${scenario.revision}"` }, data: { budgetSec: 1 } });
   expect(submitted.status()).toBe(202);
   const { jobId } = await submitted.json() as { jobId: string };
   let job: Job;
@@ -887,6 +887,60 @@ test('native reduced-fleet result reports unassigned orders without claiming eff
   const comparison = page.getByRole('dialog');
   await expect(comparison).toContainText('Lower distance or cost must not be interpreted as efficiency savings');
   await expect(comparison.getByText(/% saved/)).toHaveCount(0);
+});
+
+test('native plan review, Admin-only approval and cross-replica stale-edit protection', async ({ page }) => {
+  await login(page);
+  const original = await baseline(page);
+  const origin = new URL(page.url()).origin;
+  const headers = { origin };
+  const created = await page.request.post('/api/scenarios', { headers, data: { from: original.scenarioId, label: 'Collaborative review regression' } });
+  expect(created.status()).toBe(201);
+  const scenario = await created.json() as Scenario;
+  const submitted = await page.request.post(`/api/scenarios/${scenario.id}/solve`, { headers: { ...headers, 'if-match': `"${scenario.revision}"` }, data: { budgetSec: 1 } });
+  expect(submitted.status()).toBe(202);
+  const { jobId } = await submitted.json() as { jobId: string };
+  let job: Job;
+  await expect.poll(async () => { job = await get<Job>(page.request, `/api/jobs/${jobId}`); return job.status; }).toBe('completed');
+  const planId = job!.planId!;
+  const navigation = gate();
+  await page.route(`**/api/plans/${planId}`, async route => { await navigation.wait; await route.continue(); });
+  await page.getByRole('button', { name: 'Plans', exact: true }).click();
+  await page.getByRole('dialog').locator(`[data-plan-id="${planId}"]`).getByRole('button', { name: 'Reopen', exact: true }).click();
+  const panel = page.getByRole('region', { name: 'Plan approval', exact: true });
+  await expect(panel.getByRole('button')).toHaveCount(0);
+  navigation.release();
+  await expect(panel).toHaveAttribute('data-plan-id', planId);
+  await page.unroute(`**/api/plans/${planId}`);
+  await expect(panel).toContainText('Draft');
+  await expect(panel.getByRole('button', { name: 'Mark reviewed', exact: true })).toBeDisabled();
+  await panel.getByRole('checkbox').check();
+  await panel.getByRole('button', { name: 'Mark reviewed', exact: true }).click();
+  await expect(panel).toContainText('Reviewed');
+  const reviewed = await get<{ state: string; actor: string }>(page.request, `${peer}/api/plans/${planId}/workflow`);
+  expect(reviewed.state).toBe('reviewed');
+  expect(reviewed.actor).toBe((await get<{ userId: string }>(page.request, '/api/auth/me')).userId);
+  for (const role of ['reviewer', 'planner']) {
+    expect((await page.request.post('/api/auth/view-as', { headers, data: { role } })).status()).toBe(200);
+    await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+    await expect(panel.getByRole('button', { name: 'Approve plan', exact: true })).toHaveCount(0);
+    expect((await page.request.post(`${peer}/api/plans/${planId}/approve`, { headers, data: { version: 1, revision: scenario.revision, acknowledgeExceptions: true, role: 'admin' } })).status()).toBe(403);
+    if (role === 'reviewer') expect((await page.request.post(`/api/plans/${planId}/review`, { headers, data: {} })).status()).toBe(403);
+  }
+  expect((await page.request.post('/api/auth/view-as', { headers, data: { role: null } })).status()).toBe(200);
+  await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+  await expect(panel.getByRole('button', { name: 'Approve plan', exact: true })).toBeVisible();
+  await panel.getByRole('checkbox').check();
+  await panel.getByRole('button', { name: 'Approve plan', exact: true }).click();
+  await expect(panel).toContainText('Approved');
+  const updated = await page.request.post(`${peer}/api/scenarios/${scenario.id}/edit`, { headers: { ...headers, 'if-match': `"${scenario.revision}"` }, data: { edit: { op: 'removeVehicle', vehicleId: 10 } } });
+  expect(updated.status()).toBe(200);
+  await expect(page.getByText('This scenario changed in another workspace. Reload before continuing.', { exact: false })).toBeVisible();
+  await expect(panel).toContainText('Superseded');
+  expect((await page.request.post(`/api/scenarios/${scenario.id}/solve`, { headers: { ...headers, 'if-match': `"${scenario.revision}"` }, data: {} })).status()).toBe(409);
+  await expect(page.getByRole('button', { name: /^Replan/ })).toHaveCount(0);
+  expect((await get<Plan>(page.request, `${peer}/api/plans/${planId}`)).id).toBe(planId);
+  expect(await baseline(page)).toEqual(original);
 });
 
 test('restart retains authentication, plans, and exports while the peer stays ready', async ({ page }) => {

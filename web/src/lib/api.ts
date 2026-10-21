@@ -34,15 +34,15 @@ function asNetworkError(e: unknown, url: string): never {
 
 async function jget<T>(url: string): Promise<T> {
   let r: Response;
-  try { r = await fetch(url); } catch (e) { asNetworkError(e, url); }
+  try { r = await fetch(url, { cache: 'no-store' }); } catch (e) { asNetworkError(e, url); }
   return handle<T>(r, url);
 }
-async function jsend<T>(url: string, method: string, body?: unknown): Promise<T> {
+async function jsend<T>(url: string, method: string, body?: unknown, revision?: number): Promise<T> {
   let r: Response;
   try {
     r = await fetch(url, {
       method,
-      headers: body ? { 'content-type': 'application/json' } : undefined,
+      headers: { ...(body ? { 'content-type': 'application/json' } : {}), ...(revision !== undefined ? { 'if-match': `"${revision}"` } : {}) },
       body: body ? JSON.stringify(body) : undefined,
     });
   } catch (e) { asNetworkError(e, url); }
@@ -50,6 +50,9 @@ async function jsend<T>(url: string, method: string, body?: unknown): Promise<T>
 }
 
 export const api = {
+  planWorkflow: (id: string) => jget<import('../../../server/src/workflow-contract').Workflow>(`/api/plans/${id}/workflow`),
+  transitionPlan: (id: string, action: 'review' | 'approve', version: number, revision: number, acknowledgeExceptions: boolean) =>
+    jsend<import('../../../server/src/workflow-contract').Workflow>(`/api/plans/${id}/${action}`, 'POST', { version, revision, acknowledgeExceptions }),
   days: () => jget<DaySummary[]>('/api/days'),
   plan: (id: string) => jget<Plan>(`/api/plans/${id}`),
   /** Recompute one vehicle trip under a proposed stop order (no re-solve). */
@@ -64,16 +67,16 @@ export const api = {
     jsend<Scenario>('/api/scenarios', 'POST', { from, removeVehicleId, label }),
 
   /** Apply a manual override; the backend forks a copy from a base scenario. */
-  editScenario: (id: string, edit: ScenarioEdit, label?: string) =>
-    jsend<Scenario>(`/api/scenarios/${id}/edit`, 'POST', { edit, label }),
+  editScenario: (id: string, revision: number, edit: ScenarioEdit, label?: string) =>
+    jsend<Scenario>(`/api/scenarios/${id}/edit`, 'POST', { edit, label }, revision),
 
   /** Apply several overrides at once (bulk actions); forks + persists once. */
-  editScenarioBatch: (id: string, edits: ScenarioEdit[], label?: string) =>
-    jsend<Scenario>(`/api/scenarios/${id}/edits`, 'POST', { edits, ...(label ? { label } : {}) }),
+  editScenarioBatch: (id: string, revision: number, edits: ScenarioEdit[], label?: string) =>
+    jsend<Scenario>(`/api/scenarios/${id}/edits`, 'POST', { edits, ...(label ? { label } : {}) }, revision),
 
-  solve: (scenarioId: string, budgetSec?: number, objective?: Objective, fullBudget?: boolean) =>
+  solve: (scenarioId: string, revision: number, budgetSec?: number, objective?: Objective, fullBudget?: boolean) =>
     jsend<{ jobId: string; scenarioId: string; scenarioRevision: number; budgetSec: number; objective: Objective }>(
-      `/api/scenarios/${scenarioId}/solve`, 'POST', { ...(budgetSec ? { budgetSec } : {}), ...(objective ? { objective } : {}), ...(fullBudget ? { fullBudget: true } : {}) }),
+      `/api/scenarios/${scenarioId}/solve`, 'POST', { ...(budgetSec ? { budgetSec } : {}), ...(objective ? { objective } : {}), ...(fullBudget ? { fullBudget: true } : {}) }, revision),
 
   exportCsvUrl: (planId: string) => `/api/plans/${planId}/export.csv`,
   routeSheetUrl: (planId: string) => `/api/plans/${planId}/routesheet.html`,
@@ -89,8 +92,8 @@ export const api = {
 
   // ---- What-if scenario workspace ----
   scenariosForDay: (day: string) => jget<ScenarioSummary[]>(`/api/scenarios?day=${day}`),
-  renameScenario: (id: string, label: string) => jsend<Scenario>(`/api/scenarios/${id}/rename`, 'POST', { label }),
-  deleteScenario: (id: string) => jsend<{ deleted: boolean }>(`/api/scenarios/${id}`, 'DELETE'),
+  renameScenario: (id: string, revision: number, label: string) => jsend<Scenario>(`/api/scenarios/${id}/rename`, 'POST', { label }, revision),
+  deleteScenario: (id: string, revision: number) => jsend<{ deleted: boolean }>(`/api/scenarios/${id}`, 'DELETE', undefined, revision),
   exportScenario: (id: string) => jget<ScenarioExport>(`/api/scenarios/${id}/export`),
   importScenario: (bundle: unknown) => jsend<Scenario>('/api/scenarios/import', 'POST', bundle),
 

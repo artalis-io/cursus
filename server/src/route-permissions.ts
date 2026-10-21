@@ -12,6 +12,9 @@ routes('workspace.read', 'GET', ['/api/config', '/api/days', '/api/scenarios', '
   '/api/scenarios/:id/plans', '/api/jobs/:id', '/api/plans', '/api/plans/:id', '/api/compare', '/api/week',
   '/api/sage/status', '/api/import/summary', '/api/import/raw', '/api/import/canonical', '/api/import/catalog',
   '/api/import/datasets', '/tiles.vector.json', '/tiles/*']);
+routes('workspace.read', 'GET', ['/api/plans/:id/workflow']);
+routes('plan.review', 'POST', ['/api/plans/:id/review']);
+routes('plan.approve', 'POST', ['/api/plans/:id/approve']);
 routes('workspace.export', 'GET', ['/api/scenarios/:id/export', '/api/plans/:id/export.csv',
   '/api/plans/:id/routes.csv', '/api/plans/:id/routesheet.html', '/api/plans/:id/handoff.json']);
 routes('scenario.create', 'POST', ['/api/scenarios']);
