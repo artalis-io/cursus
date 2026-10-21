@@ -114,6 +114,18 @@ test('handoff.json serves a structured dispatch plan', async () => {
   assert.ok(Array.isArray(h.routes) && h.routes.length > 0);
 });
 
+test('legacy exports label their snapshot but cannot claim shared approval', async () => {
+  for (const suffix of ['export.csv', 'routes.csv', 'routesheet.html', 'handoff.json']) {
+    const r = await inj({ method: 'GET', url: `/api/plans/day1-baseline/${suffix}` });
+    assert.equal(r.statusCode, 200);
+    assert.ok(['Draft', 'Superseded'].includes(String(r.headers['x-cursus-export-status'])));
+    assert.match(String(r.headers['cache-control']), /no-store/);
+    assert.match(r.body, /planSha256/);
+    const strict = await inj({ method: 'GET', url: `/api/plans/day1-baseline/${suffix}?approval=required` });
+    assert.equal(strict.statusCode, 409);
+  }
+});
+
 test('evaluate recomputes a reordered trip without a re-solve', async () => {
   type Stop = { orderNo: string };
   type Trip = { index: number; stops: Stop[]; distanceKm: number };

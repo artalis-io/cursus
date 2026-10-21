@@ -26,6 +26,8 @@ import { importSummary, rawSample, canonicalSample } from './data/import.js';
 import { sageReachable, narratePlan, narrateComparison, type Lang } from './sage.js';
 import { loadTariff } from './cost.js';
 import { planToCsv, planToRouteSheetHtml, planToRoutesCsv, planToHandoffJson } from './export.js';
+import { legacyHandoff, exportFilename } from './handoff.js';
+import { planDigest } from './state/plan-workflow.js';
 import { magicLinkConfirmation, magicLinkLanguage, registerMagicLinkFormParser } from './magic-link.js';
 import { registerWorkspaceBranding } from './workspace-branding.js';
 import { RateLimiter } from './ratelimit.js';
@@ -395,34 +397,24 @@ app.get<{ Params: { id: string } }>('/api/plans/:id', async (req, reply) => {
 function dayLabelForPlan(plan: Plan): string {
   return DAYS.find((d) => d.isoDate === plan.day)?.label ?? plan.day;
 }
-app.get<{ Params: { id: string } }>('/api/plans/:id/export.csv', async (req, reply) => {
-  const plan = store.getPlan(req.params.id);
-  if (!plan) return reply.code(404).send({ error: 'plan not found' });
-  reply.header('content-type', 'text/csv; charset=utf-8');
-  reply.header('content-disposition', `attachment; filename="otto-plan-${plan.day}-${plan.id}.csv"`);
-  return reply.send(planToCsv(plan));
-});
-app.get<{ Params: { id: string } }>('/api/plans/:id/routesheet.html', async (req, reply) => {
-  const plan = store.getPlan(req.params.id);
-  if (!plan) return reply.code(404).send({ error: 'plan not found' });
-  reply.header('content-type', 'text/html; charset=utf-8');
-  return reply.send(planToRouteSheetHtml(plan, dayLabelForPlan(plan)));
-});
-// Outbound handoff: the tuned plan in the customer's route schema (re-importable)
-// + a clean structured dispatch-plan document. plan.day is the ISO date.
-app.get<{ Params: { id: string } }>('/api/plans/:id/routes.csv', async (req, reply) => {
-  const plan = store.getPlan(req.params.id);
-  if (!plan) return reply.code(404).send({ error: 'plan not found' });
-  reply.header('content-type', 'text/csv; charset=utf-8');
-  reply.header('content-disposition', `attachment; filename="otto-routes-${plan.day}.csv"`);
-  return reply.send(planToRoutesCsv(plan, plan.day));
-});
-app.get<{ Params: { id: string } }>('/api/plans/:id/handoff.json', async (req, reply) => {
-  const plan = store.getPlan(req.params.id);
-  if (!plan) return reply.code(404).send({ error: 'plan not found' });
-  reply.header('content-disposition', `attachment; filename="cursus-dispatch-plan-${plan.day}.json"`);
-  return planToHandoffJson(plan, plan.day);
-});
+for (const kind of ['export.csv', 'routes.csv', 'routesheet.html', 'handoff.json'] as const) {
+  app.get<{ Params: { id: string }; Querystring: { approval?: string } }>(`/api/plans/:id/${kind}`, async (req, reply) => {
+    reply.header('Cache-Control', 'private, no-store, max-age=0');
+    reply.header('X-Content-Type-Options', 'nosniff');
+    if (req.query.approval !== undefined && req.query.approval !== 'required') return reply.code(400).send({ error: 'approval must be required or omitted' });
+    const plan = store.getPlan(req.params.id);
+    if (!plan) return reply.code(404).send({ error: 'plan not found' });
+    if (req.query.approval === 'required') return reply.code(409).send({ error: 'Shared approval is unavailable in the legacy runtime.' });
+    const metadata = legacyHandoff(plan, store.getScenario(plan.scenarioId), planDigest(plan));
+    const html = kind === 'routesheet.html', json = kind === 'handoff.json';
+    reply.type(html ? 'text/html; charset=utf-8' : json ? 'application/json' : 'text/csv; charset=utf-8');
+    reply.header('X-Cursus-Export-Status', metadata.status);
+    reply.header('Content-Disposition', `${html ? 'inline' : 'attachment'}; filename="${exportFilename(plan.id, metadata.status, kind)}"`);
+    // Legacy storage is synchronous: read, classify and render without yielding.
+    return reply.send(kind === 'export.csv' ? planToCsv(plan, metadata) : kind === 'routes.csv' ? planToRoutesCsv(plan, plan.day, metadata)
+      : html ? planToRouteSheetHtml(plan, dayLabelForPlan(plan), metadata) : JSON.stringify(planToHandoffJson(plan, plan.day, metadata)));
+  });
+}
 
 /* Live re-evaluation of one vehicle trip under a proposed stop order, WITHOUT a
  * re-solve. The browser lacks the N^2 travel matrix and the (confidential) tariff,

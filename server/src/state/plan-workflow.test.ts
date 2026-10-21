@@ -5,10 +5,14 @@ import { approvalBlockers, planDigest } from './plan-workflow.js';
 
 export function validPlan(): Plan {
   return { id: 'review-plan', scenarioId: 'review-scenario', scenarioRevision: 1,
-    provenance: { inputSha256: 'a'.repeat(64), validation: { valid: true, violations: [] } },
-    stats: { servedOrders: 1, totalOrders: 1, deliveryStops: 1 }, unassigned: [],
-    vehicles: [{ id: 1, capacityKg: 1000, capacityPallets: 10, tonnage: 12, hasTailLift: true,
-      trips: [{ loadKg: 100, loadPallets: 1, stops: [{ orderNo: 'ORDER', maxTonnage: 12, requiresTailLift: true,
+    day: '2026-05-06', createdAt: '2026-05-06T00:00:00.000Z', source: 'live', objective: 'distance', cost: null,
+    depot: { name: 'Test depot', lon: 19, lat: 47 },
+    provenance: { inputSha256: 'a'.repeat(64), solverConfig: {}, termination: 'OK', validation: { valid: true, violations: [] } },
+    stats: { servedOrders: 1, totalOrders: 1, deliveryStops: 1, vehiclesUsed: 1, trips: 1, totalDistanceKm: 10, solveElapsedSeconds: 1 }, unassigned: [],
+    vehicles: [{ id: 1, ref: 'TEST-1', color: '#123456', vehicleClass: null, isSubcontractor: false,
+      distanceKm: 10, tripCount: 1, finishTimeSec: 300, capacityKg: 1000, capacityPallets: 10, tonnage: 12, hasTailLift: true,
+      trips: [{ index: 0, startSec: 0, endSec: 300, distanceKm: 10, reloadSecAfter: 0, loadKg: 100, loadPallets: 1, stops: [{ orderNo: 'ORDER', maxTonnage: 12, requiresTailLift: true,
+        seq: 1, lon: 19.1, lat: 47.1, weightKg: 100, pallets: 1, serviceMin: 1, lateBySec: 0, departureSec: 160,
         arrivalSec: 90, serviceStartSec: 100, twStartSec: 100, twEndSec: 200 }] }] }],
   } as unknown as Plan;
 }

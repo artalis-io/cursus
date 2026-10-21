@@ -50,6 +50,7 @@ async function jsend<T>(url: string, method: string, body?: unknown, revision?: 
 }
 
 export const api = {
+  approvedHandoff: (id: string) => jget<{ handoff: { status: string; planId: string } } & Record<string, unknown>>(`/api/plans/${encodeURIComponent(id)}/handoff.json?approval=required`),
   planWorkflow: (id: string) => jget<import('../../../server/src/workflow-contract').Workflow>(`/api/plans/${id}/workflow`),
   transitionPlan: (id: string, action: 'review' | 'approve', version: number, revision: number, acknowledgeExceptions: boolean) =>
     jsend<import('../../../server/src/workflow-contract').Workflow>(`/api/plans/${id}/${action}`, 'POST', { version, revision, acknowledgeExceptions }),
