@@ -161,3 +161,21 @@ coverage. Independent pure branches are explicitly tested only for isolation;
 they do not prove the future transactional publisher. API/two-instance and
 Playwright cases in the acceptance plan remain required after those production
 paths exist. No placeholder/skipped browser tests are counted as completed work.
+
+### Evaluator increment
+
+`server/src/plan/manual-evaluate.ts` evaluates internal delivery-only layouts by
+stable request IDs, recalculates all trips with explicit departure anchors and
+server-supplied reload durations, and returns fresh manual validation plus
+coverage/distance/cost totals. Reuses the existing tariff helpers; reconciles trip
+rounding to vehicle totals. Deterministic fixtures assert independent numeric
+expectations, deassign/move effects, access/capacity/time/shift/limit failures,
+missing data and duplicate display numbers. Coverage command includes this module.
+
+This is not wired to production or the approval workflow. The parent-plan adapter
+must first validate locked sequences and native precedences; the evaluator refuses
+those models for now rather than certifying them. It also refuses non-delivery,
+non-two-dimensional or non-default-depot models. Effective approved exceptions,
+dataset/tariff identities and fleet metadata must come from a trusted adapter,
+not HTTP request bodies. API publication, solver retained decisions and UI remain
+unfinished. Full-plan mapping/export and cross-instance tests are still required.
