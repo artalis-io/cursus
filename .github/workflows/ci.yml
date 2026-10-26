@@ -113,6 +113,8 @@ jobs:
         run: npm run typecheck
       - name: Unit tests (data-independent)
         run: npm run test:ci
+      - name: Manual planning command coverage (compiled production module)
+        run: npm run test:manual:coverage
 
   web:
     runs-on: ubuntu-latest

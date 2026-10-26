@@ -144,3 +144,20 @@ publication, solver integration, UI and Docker/Playwright acceptance. The pure
 core rejects a previously applied operation ID; the future publisher must resolve
 same-payload retries to the stored result under its transaction rather than
 calling the core twice. Its inputs are internal typed snapshots, not raw HTTP.
+
+### Executable coverage for the command core
+
+Run `cd server && npm run test:manual:coverage`. This compiles TypeScript and
+uses Node's built-in test coverage on the actual JavaScript module; no additional
+coverage dependency or private dataset is required. CI runs the same command.
+The expanded suite covers every command-core line, function and branch, plus a
+500-operation seeded reference-model test for request conservation, retained
+decisions, attribution and immutable snapshots. Boundary tests cover maximum
+batch length, malformed identifiers/timestamps, operation reuse, locks, exclusion,
+empty trips, multiple trips, zero IDs and rollback on partial failure.
+
+These are command-core tests, not feasibility, database concurrency or browser
+coverage. Independent pure branches are explicitly tested only for isolation;
+they do not prove the future transactional publisher. API/two-instance and
+Playwright cases in the acceptance plan remain required after those production
+paths exist. No placeholder/skipped browser tests are counted as completed work.
