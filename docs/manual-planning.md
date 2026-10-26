@@ -128,3 +128,19 @@ manual publication explicitly; never silently stage a pin and claim success.
 
 Do not expose incomplete manual controls or deploy this feature before all five
 steps pass. Production activation remains separately authorized.
+
+## Implementation progress
+
+The feature branch starts with a pure command core in `server/src/plan/manual.ts`:
+dataset-scoped numeric request identities, exact coverage checks, immutable batch
+application, retained assignment/deassignment decisions, explicit release, route
+lock/exclusion checks and actor-stamped before/after history. Tests run under the
+existing server CI pretest gate. The core deliberately provides no feasibility
+certificate, HTTP endpoint or automatic production behavior.
+
+Still required before exposing the feature: dataset/plan identity adapter,
+full-plan evaluation and constraint validation, transactional/idempotent API
+publication, solver integration, UI and Docker/Playwright acceptance. The pure
+core rejects a previously applied operation ID; the future publisher must resolve
+same-payload retries to the stored result under its transaction rather than
+calling the core twice. Its inputs are internal typed snapshots, not raw HTTP.
