@@ -179,3 +179,45 @@ non-two-dimensional or non-default-depot models. Effective approved exceptions,
 dataset/tariff identities and fleet metadata must come from a trusted adapter,
 not HTTP request bodies. API publication, solver retained decisions and UI remain
 unfinished. Full-plan mapping/export and cross-instance tests are still required.
+
+### Dataset adapter and atomic publication increment
+
+`manual-adapter.ts` binds immutable parent plans to the exact day, dataset and
+effective policy. New solver mappings persist request IDs and dataset identity;
+historical unique labels can be resolved, but ambiguous labels/access enrichment
+fail closed. Trusted fleet metadata is matched exactly. Reload handling must be
+explicitly configured, never inferred from gaps in old schedules. Locked routes
+and scenario sequences are compared against the parent; native precedence is
+checked against the recalculated schedule. Materialization emits the existing
+Plan contract, fresh constraints, stable IDs, manual history and coherent KPIs.
+
+`admittedManualDatasetLoader` uses tenant-scoped admitted records and verified
+object reads, requiring exactly one matching dataset checksum/day. No first-row
+fallback, private fixtures or new storage format is introduced. Fleet/tariff/reload
+snapshots remain trusted server configuration, not HTTP inputs.
+
+`POST /api/scenarios/:id/manual-plan` is classified as `scenario.edit` and requires
+an explicitly installed server loader; it returns 503 by default. It requires
+quoted If-Match intent, exact parent plan, dataset checksum and bounded commands.
+Initial publication requires an editable copy scenario with a matching parent
+plan; automatic base-scenario forking is not implemented yet. New-trip departure
+anchors come from shift start and prior-trip/reload propagation, not client times.
+
+Evaluation occurs outside the transaction. A short PostgreSQL transaction locks
+the operation and scenario, rechecks revision and immutable parent, then commits
+scenario decisions, new Draft plan and audit receipt together. Same actor/key/
+payload retries return the existing plan even after revision advances; conflicting
+reuse fails. Audit receipts reuse the existing ledger, without schema changes.
+Old solver completion cannot publish over a newer manually published revision.
+
+Executed isolated two-API/PostgreSQL/S3 tests cover concurrent identical retries,
+competing moves, stale revisions, edit-during-evaluation, stale solver publication,
+cross-tenant IDs, CSRF, Reviewer/View-as denial, failure at the final audit insert,
+cross-instance retrieval, valid manual review and infeasible-draft approval refusal.
+Dataset tests exercise verified immutable object reads and ambiguous source refusal.
+
+Still intentionally unfinished: retained-decision native solver integration, UI
+controls and real-image manual-workflow Playwright tests. Solve submission on a
+manually published scenario is blocked until that integration exists, rather than
+silently releasing manual decisions. No production opt-in, migration or deployment
+has occurred. This increment is not a release-ready manual-planning feature.

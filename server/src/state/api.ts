@@ -33,13 +33,14 @@ import { isRole, rolePermissions } from '../roles.js';
 import { expectedRevision, registerScenarioPreconditions } from '../revisions.js';
 import { PlanWorkflow, WorkflowError } from './plan-workflow.js';
 import { exportFilename } from '../handoff.js';
+import { ManualPlanPublisher, ManualPublicationError, parseManualRequest, type ManualDatasetLoader } from './manual.js';
 
 // Do not advertise legacy-only endpoints as usable controls in this runtime.
 function statefulPermissions(role: string) {
   return isRole(role) ? rolePermissions[role].filter(p => p !== 'optimization.cancel' && p !== 'analysis.generate' && p !== 'dataset.delete') : [];
 }
 
-export interface StatefulApiOptions { store: StatefulStore; tenantId: string; tenantName: string; auth?: StatefulAuthService; publicOrigin?: string; objects?: ObjectStore; maxUploadBytes?: number }
+export interface StatefulApiOptions { store: StatefulStore; tenantId: string; tenantName: string; auth?: StatefulAuthService; publicOrigin?: string; objects?: ObjectStore; maxUploadBytes?: number; manualPlanning?: ManualDatasetLoader }
 
 /** Stateful HTTP surface used by the runtime integration tests and, after
  * cutover, by the production entry point. Every repository is tenant-bound. */
@@ -55,6 +56,20 @@ export async function createStatefulApi(options: StatefulApiOptions): Promise<Fa
   const scenarios = new ScenarioRepository(options.store, options.tenantId);
   registerScenarioPreconditions(app, id => scenarios.get(id));
   const workflow = new PlanWorkflow(options.store, options.tenantId);
+  app.post<{ Params: { id: string } }>('/api/scenarios/:id/manual-plan', async (req, reply) => {
+    if (!options.manualPlanning) return reply.code(503).send({ error: 'Manual planning is not enabled.' });
+    if (req.headers['if-match'] === undefined) return reply.code(428).send({ error: 'If-Match revision required.' });
+    const revision = expectedRevision(req.headers);
+    if (revision === null) return reply.code(400).send({ error: 'Quoted non-negative If-Match revision required.' });
+    try {
+      const intent = parseManualRequest(req.body);
+      return reply.code(201).send(await new ManualPlanPublisher(options.store, options.tenantId, options.manualPlanning)
+        .publish(req.params.id, revision, intent, req.cursusPrincipal));
+    } catch (error) {
+      if (error instanceof ManualPublicationError) return reply.code(error.status).send({ error: error.message });
+      throw error;
+    }
+  });
   app.get<{ Params: { id: string } }>('/api/plans/:id/workflow', async (req, reply) => {
     reply.header('Cache-Control', 'private, no-store');
     try { return await workflow.get(req.params.id); }
@@ -159,6 +174,7 @@ export async function createStatefulApi(options: StatefulApiOptions): Promise<Fa
   app.post<{ Params: { id: string }; Body: { budgetSec?: number; objective?: string; fullBudget?: boolean } }>('/api/scenarios/:id/solve', async (req, reply) => {
     const scenario = await scenarios.get(req.params.id); if (!scenario) return reply.code(404).send({ error: 'scenario not found' });
     if (scenario.revision !== expectedRevision(req.headers)) return reply.code(409).send({ error: 'Scenario changed; reload before optimizing.' });
+    if (scenario.manualPlanId) return reply.code(409).send({ error: 'Replanning manually published plans requires retained-decision solver integration, which is not enabled yet.' });
     let id: string;
     try {
       id = await options.store.enqueueJob(options.tenantId, 'solve', `solve/${scenario.id}/${scenario.revision}/${randomKey()}`, {

@@ -41,6 +41,8 @@ export interface VehicleSequence { vehicleId: number; orderNos: string[]; locked
 export const MAX_SEQUENCE_LEN = 500;
 
 export interface Scenario {
+  manualPlanId?: string;
+  manualDecisions?: { datasetSha256: string; decisions: Record<string, import('./plan/manual.js').ManualDecision> };
   planningPolicy?: PlanningPolicy;
   id: string;
   day: string;            // 'day1' | 'day2'

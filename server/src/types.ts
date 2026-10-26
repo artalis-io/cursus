@@ -94,6 +94,7 @@ export interface SurgeSolution {
 /* ---- backend <-> frontend Plan contract (see docs/data-api-mapping.md) ---- */
 
 export interface PlanStop {
+  requestId?: number; // stable dataset-scoped solver identity; never infer ambiguous labels
   orderId: string | null;
   orderNo: string;
   customer: string | null;
@@ -118,6 +119,7 @@ export interface PlanStop {
 }
 
 export interface PlanTrip {
+  manualTripId?: string;
   index: number;
   startSec: number;       // depot departure for this trip
   endSec: number;         // depot return for this trip
@@ -157,9 +159,10 @@ export interface PlanVehicle {
  * PINNED_INFEASIBLE: locked to a vehicle (pin/sequence) that couldn't schedule it;
  * NEEDS_TAIL_LIFT / OVER_CAPACITY / OVERSIZE: no vehicle in the fleet can serve it;
  * CONSTRAINED: fit failed within time windows/routing across the available fleet. */
-export type UnassignedReason = 'PINNED_INFEASIBLE' | 'NEEDS_TAIL_LIFT' | 'OVER_CAPACITY' | 'OVERSIZE' | 'CONSTRAINED';
+export type UnassignedReason = 'PINNED_INFEASIBLE' | 'NEEDS_TAIL_LIFT' | 'OVER_CAPACITY' | 'OVERSIZE' | 'CONSTRAINED' | 'MANUAL_UNASSIGNED';
 
 export interface PlanUnassigned {
+  requestId?: number;
   orderId: string | null;
   orderNo: string;
   customer: string | null;
@@ -171,6 +174,7 @@ export interface PlanUnassigned {
 }
 
 export interface PlanProvenance {
+  datasetSha256?: string;
   planningPolicy?: import('./plan/policy.js').PlanningPolicy;
   inputSha256: string;
   solverConfig: Record<string, unknown>;
@@ -210,6 +214,8 @@ export interface PlanCost {
 }
 
 export interface Plan {
+  manual?: { version: 1; parentPlanId: string; layout: import('./plan/manual.js').ManualLayout;
+    evaluation: import('./plan/manual-evaluate.js').ManualEvaluation };
   id: string;
   scenarioId: string;
   scenarioRevision: number;

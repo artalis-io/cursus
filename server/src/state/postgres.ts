@@ -192,6 +192,10 @@ export class StatefulStore {
   /** The fence predicate and authoritative plan publication are one transaction. */
   async completeSolve(lease: Lease, planId: string, scenarioId: string, scenarioRevision: number, plan: unknown): Promise<void> {
     await this.tx(async (client) => {
+      const scenario = await client.query<{ revision: string; body: Scenario }>(
+        'SELECT revision,body FROM scenarios WHERE tenant_id=$1 AND id=$2 FOR UPDATE', [lease.tenantId, scenarioId]);
+      if (scenario.rows[0]?.body.manualPlanId && Number(scenario.rows[0].revision) !== scenarioRevision)
+        throw new RevisionConflictError();
       const owned = await client.query(`UPDATE jobs SET state='succeeded',result=$5,lease_owner=NULL,lease_expires_at=NULL,updated_at=now()
         WHERE tenant_id=$1 AND id=$2 AND state='running' AND lease_owner=$3 AND fence=$4 AND lease_expires_at>=now() RETURNING id`,
         [lease.tenantId, lease.id, lease.owner, lease.fence, { planId }]);

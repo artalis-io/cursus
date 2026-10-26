@@ -17,6 +17,9 @@ export interface ManualEvaluationInput {
   tariffSha256: string;
 }
 export interface ManualViolation {
+  actual?: number;
+  limit?: number;
+  dimension?: string;
   type: 'CAPACITY' | 'HARD_TW' | 'VEHICLE_SIZE' | 'TAIL_LIFT' | 'SHIFT' | 'MAX_TRIPS'
     | 'MAX_DISTANCE' | 'MAX_DURATION' | 'EXCLUDED' | 'ASSIGNMENT';
   vehicleId: number;
@@ -98,7 +101,7 @@ export function evaluateManualLayout(input: ManualEvaluationInput): ManualEvalua
       (request.depots[0] as { location_id?: number } | undefined)?.location_id === 0, 'unsupported depot model');
     for (const value of [vehicle.shift_early, vehicle.shift_late, vehicle.max_trips, vehicle.max_distance, vehicle.max_duration])
       need(value === undefined || nonnegative(value), 'invalid vehicle limit');
-    const issue = (type: ManualViolation['type'], requestId?: number) => violations.push({ type, vehicleId, ...(requestId === undefined ? {} : { requestId }), soft: false });
+    const issue = (type: ManualViolation['type'], requestId?: number, evidence: Pick<ManualViolation, 'actual'|'limit'|'dimension'> = {}) => violations.push({ type, vehicleId, ...(requestId === undefined ? {} : { requestId }), ...evidence, soft: false });
     if (layout.excludedVehicleIds.includes(vehicleId)) issue('EXCLUDED');
     if (vehicle.max_trips !== undefined && routes.length > vehicle.max_trips) issue('MAX_TRIPS');
     const trips: ManualEvaluatedTrip[] = [];
@@ -121,8 +124,8 @@ export function evaluateManualLayout(input: ManualEvaluationInput): ManualEvalua
         stops.push({ requestId, taskId: task.id, arrivalSec, serviceStartSec, departureSec,
           waitSec: serviceStartSec-arrivalSec, lateSec: task.tw_late > 0 ? Math.max(0, serviceStartSec-task.tw_late) : 0 });
         loadKg += task.demand[0]!; loadPallets += task.demand[1]!;
-        if (task.tw_late > 0 && serviceStartSec > task.tw_late) issue('HARD_TW', requestId);
-        if (requirements.maxTonnage !== null && (info.grossTonnage === null || info.grossTonnage > requirements.maxTonnage)) issue('VEHICLE_SIZE', requestId);
+        if (task.tw_late > 0 && serviceStartSec > task.tw_late) issue('HARD_TW', requestId, { actual: serviceStartSec, limit: task.tw_late });
+        if (requirements.maxTonnage !== null && (info.grossTonnage === null || info.grossTonnage > requirements.maxTonnage)) issue('VEHICLE_SIZE', requestId, { ...(info.grossTonnage === null ? {} : { actual: info.grossTonnage }), limit: requirements.maxTonnage });
         if (requirements.requiresTailLift && !info.hasTailLift) issue('TAIL_LIFT', requestId);
         const retained = layout.decisions[String(requestId)];
         if (order.allowed_vehicles?.length && !order.allowed_vehicles.includes(vehicleId) || order.forbidden_vehicles?.includes(vehicleId)
@@ -131,7 +134,8 @@ export function evaluateManualLayout(input: ManualEvaluationInput): ManualEvalua
       }
       const home = leg(position, 0); distance += home.distance; time += home.duration;
       need([loadKg, loadPallets, distance, time].every(nonnegative), 'non-finite trip result');
-      if (loadKg > vehicle.capacity[0]! || loadPallets > vehicle.capacity[1]!) issue('CAPACITY');
+      if (loadKg > vehicle.capacity[0]!) issue('CAPACITY', undefined, { actual: loadKg, limit: vehicle.capacity[0], dimension: 'kg' });
+      if (loadPallets > vehicle.capacity[1]!) issue('CAPACITY', undefined, { actual: loadPallets, limit: vehicle.capacity[1], dimension: 'pallets' });
       if (vehicle.shift_late !== undefined && time > vehicle.shift_late) issue('SHIFT');
       trips.push({ tripId: route.tripId, startSec, endSec: time, distanceKm: distance/1000,
         loadKg, loadPallets, cost: 0, stops });

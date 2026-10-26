@@ -103,6 +103,7 @@ export function mapSolutionToPlan(inp: MapInputs): Plan {
         if (info?.maxTonnage != null && (tonnage == null || tonnage > info.maxTonnage))
           violations.push({ type: 'VEHICLE_SIZE', vehicle_id: route.vehicle_id, request_id: s.request_id, orderNo, actual: tonnage, limit: info.maxTonnage });
         return {
+          requestId: s.request_id,
           orderId: info?.id ?? null,
           orderNo,
           customer: info?.customer ?? null,
@@ -186,6 +187,7 @@ export function mapSolutionToPlan(inp: MapInputs): Plan {
     const orderNo = task?.ref ?? String(rid);
     const info = inp.enrichment.get(orderNo) ?? null;
     return {
+      requestId: rid,
       orderId: info?.id ?? null,
       orderNo,
       customer: info?.customer ?? null,
@@ -231,6 +233,7 @@ export function mapSolutionToPlan(inp: MapInputs): Plan {
     source: inp.source,
     objective,
     provenance: {
+      ...(inp.day.datasetRequestSha256 ? { datasetSha256: inp.day.datasetRequestSha256 } : {}),
       ...(inp.day.planningPolicy ? { planningPolicy: structuredClone(inp.day.planningPolicy) } : {}),
       inputSha256: sha256(JSON.stringify(request)),
       solverConfig: request.config,
