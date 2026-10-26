@@ -216,8 +216,47 @@ cross-tenant IDs, CSRF, Reviewer/View-as denial, failure at the final audit inse
 cross-instance retrieval, valid manual review and infeasible-draft approval refusal.
 Dataset tests exercise verified immutable object reads and ambiguous source refusal.
 
-Still intentionally unfinished: retained-decision native solver integration, UI
-controls and real-image manual-workflow Playwright tests. Solve submission on a
-manually published scenario is blocked until that integration exists, rather than
-silently releasing manual decisions. No production opt-in, migration or deployment
-has occurred. This increment is not a release-ready manual-planning feature.
+At this increment UI controls and real-image manual-workflow Playwright tests
+remain unfinished. No production opt-in, migration or deployment has occurred.
+This is not a release-ready manual-planning feature.
+
+### Retained-decision native integration
+
+The converted/admitted dataset executor now applies stable-ID retained decisions
+after scenario sequences and access limits. Manually unassigned requests forbid
+every available vehicle; removed pinned vehicles also yield explicit forbids,
+never an empty native allowlist. Dataset allowlists and safety forbids remain
+binding. New explicit decisions supersede old label-based scenario pins, including
+on release. Seeds/frozen flags cannot restore contradictory assignments, and empty
+filtered seeds are removed because the native parser rejects empty routes.
+
+Native results are independently checked for exact request partition, task/vehicle
+identity and retained restrictions before mapping. Optimized plans contain a fresh
+`assignments` snapshot with preserved origins/manual history and the current
+dataset identity, not a copied manual evaluator certificate. The API adapter can
+subsequently edit this optimized snapshot. PostgreSQL completion rechecks retained
+decisions, request inventory, history, layout and coverage KPIs under the scenario
+lock and live lease fence. It advances the derived current-plan pointer without
+changing the scenario's planning revision. A stale lease or old scenario revision
+cannot publish over manual work.
+
+Replan submission is available for manually published scenarios only in the
+explicitly opted-in manual runtime with complete state. Production's default
+configuration still does not install the loader, expose manual controls or enable
+manual planning. Manual source selection must match exactly one admitted dataset
+checksum/day; policy and retained dataset identities cannot disagree.
+
+Executed tests use the real native population solver on a small public fixture:
+retained assignment/deassignment, explicit release, GVW/tail-lift/capacity safety,
+two independent API/store instances, verified S3-compatible objects, durable solve
+jobs, native completion after lease takeover and forged-provenance rejection at
+the authoritative transaction. These are not country-scale Gyermelyi runs or a
+claim of manual-planning Playwright coverage. UI and real-image browser acceptance
+are still required before release.
+
+Local verification was repeated against a freshly built solver from Cursus's
+unchanged vendored OTTO pin `367061d015f6776f7ea27fb01726c1a14cb4614c`, not just a
+binary from a newer adjacent checkout. CI's stateful job now builds that pinned
+solver through OTTO's existing Makefiles and runs both the native constraint
+suite and the public two-instance manual/replan workflow. Optional private
+Gyermelyi conversion tests remain separate and were not run for this increment.

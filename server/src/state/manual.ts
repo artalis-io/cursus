@@ -74,24 +74,32 @@ export class ManualPlanPublisher {
     let context: ManualDatasetContext;
     try { context = await this.load(parent, scenario); }
     catch { throw new ManualPublicationError(422, 'Pinned admitted dataset or trusted planning settings are unavailable.'); }
+    // A new explicit decision supersedes the old label-based pin. Remove it
+    // before evaluation as well as publication; release must not revive it.
+    const tasks = new Map(context.day.request.tasks.map(task => [task.id, task.ref]));
+    const refs = new Map(context.day.request.requests.map(order => [order.id, tasks.get(order.delivery_task_id)]));
+    const editedRefs = new Set(intent.batch.commands.map(command => refs.get(command.requestId)));
+    const effectiveScenario: Scenario = { ...scenario, pins: scenario.pins.filter(pin => !editedRefs.has(pin.orderNo)) };
     let input, evaluation;
     const at = new Date().toISOString();
     try {
-      input = prepareManualInput(parent, scenario, context);
+      input = prepareManualInput(parent, effectiveScenario, context);
       const original = input.layout;
       input.layout = applyManualBatch(original, intent.batch, { actorId, at });
       for (const route of input.layout.routes) {
         const key = manualTripKey(route.vehicleId, route.tripId);
         if (!input.departures.has(key)) input.departures.set(key, input.request.vehicles.find(v => v.id === route.vehicleId)?.shift_early ?? 0);
       }
-      evaluation = evaluateManualInput(input, original, scenario);
+      evaluation = evaluateManualInput(input, original, effectiveScenario);
     } catch (error) {
       if (error instanceof ManualCommandError || error instanceof ManualAdapterError)
         throw new ManualPublicationError(409, error.message);
       throw new ManualPublicationError(422, 'Manual plan cannot be evaluated with the available dataset evidence.');
     }
-    const updated: Scenario = { ...scenario, revision: revision+1, manualPlanId: `pln_${randomUUID()}`,
-      manualDecisions: { datasetSha256: input.datasetSha256, decisions: structuredClone(input.layout.decisions) } };
+    const updated: Scenario = { ...effectiveScenario, revision: revision+1, manualPlanId: `pln_${randomUUID()}`,
+      manualDecisions: { datasetSha256: input.datasetSha256, decisions: structuredClone(input.layout.decisions),
+        requestIds: [...input.layout.requestIds],
+        origins: structuredClone(input.layout.origins), history: structuredClone(input.layout.history) } };
     const plan = materializeManualPlan(parent, updated, input, evaluation, context, updated.manualPlanId!, at);
     const parentHash = planDigest(parent);
     return this.store.tx(async client => {

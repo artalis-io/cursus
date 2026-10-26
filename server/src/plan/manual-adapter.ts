@@ -24,7 +24,8 @@ export function prepareManualInput(parent: Plan, scenario: Scenario, context: Ma
   requireThat(day.def.id === scenario.day && parent.day === day.def.isoDate, 'dataset day mismatch');
   const sha = day.datasetRequestSha256;
   requireThat(sha && /^[a-f0-9]{64}$/.test(sha), 'immutable dataset identity required');
-  const recorded = parent.manual?.layout.datasetSha256 ?? parent.provenance.datasetSha256 ?? parent.provenance.planningPolicy?.datasetRequestSha256;
+  const previousAssignments = parent.manual ?? parent.assignments;
+  const recorded = previousAssignments?.layout.datasetSha256 ?? parent.provenance.datasetSha256 ?? parent.provenance.planningPolicy?.datasetRequestSha256;
   requireThat(recorded === sha, 'parent dataset identity unavailable or mismatched');
   requireThat(JSON.stringify(day.planningPolicy ?? null) === JSON.stringify(scenario.planningPolicy ?? null), 'effective policy does not match scenario');
   const { travel, ...rest } = day.request;
@@ -52,9 +53,9 @@ export function prepareManualInput(parent: Plan, scenario: Scenario, context: Ma
   const layout: ManualLayout = { datasetSha256: sha!, requestIds: full.requests.map(order => order.id),
     vehicleIds: full.vehicles.map(vehicle => vehicle.id), excludedVehicleIds: [...scenario.removedVehicleIds],
     lockedVehicleIds: scenario.sequences.filter(seq => seq.locked).map(seq => seq.vehicleId),
-    routes, unassigned: parent.unassigned.map(identify), decisions: structuredClone(parent.manual?.layout.decisions ?? {}),
-    origins: structuredClone(parent.manual?.layout.origins ?? {}), history: structuredClone(parent.manual?.layout.history ?? []) };
-  if (!parent.manual) for (const id of layout.requestIds) layout.origins[String(id)] = parent.source === 'live' ? 'optimizer' : 'historical';
+    routes, unassigned: parent.unassigned.map(identify), decisions: structuredClone(previousAssignments?.layout.decisions ?? {}),
+    origins: structuredClone(previousAssignments?.layout.origins ?? {}), history: structuredClone(previousAssignments?.layout.history ?? []) };
+  if (!previousAssignments) for (const id of layout.requestIds) layout.origins[String(id)] = parent.source === 'live' ? 'optimizer' : 'historical';
   assertManualLayout(layout);
   const requirements: ManualEvaluationInput['requirements'] = new Map();
   for (const order of full.requests) {
@@ -138,7 +139,7 @@ export function materializeManualPlan(parent: Plan, scenario: Scenario, input: M
       capacityPallets: source.capacity[1]!, tripCount: trips.length, finishTimeSec: trips.at(-1)!.endSec,
       peakKg: Math.max(...trips.map(t => t.loadKg)), peakPallets: Math.max(...trips.map(t => t.loadPallets)), distanceKm: v.distanceKm, trips };
   });
-  return { ...parent, id, scenarioId: scenario.id, scenarioRevision: scenario.revision, createdAt, source: 'live',
+  const plan: Plan = { ...parent, id, scenarioId: scenario.id, scenarioRevision: scenario.revision, createdAt, source: 'live',
     manual: { version: 1, parentPlanId: parent.id, layout: structuredClone(input.layout), evaluation: structuredClone(evaluation) },
     provenance: { ...parent.provenance, datasetSha256: input.datasetSha256,
       inputSha256: createHash('sha256').update(JSON.stringify({ dataset: input.datasetSha256, layout: input.layout, tariff: input.tariffSha256 })).digest('hex'),
@@ -158,4 +159,6 @@ export function materializeManualPlan(parent: Plan, scenario: Scenario, input: M
       return { vehicleId: vehicle.id, ref: vehicle.ref, vehicleClass: vehicle.vehicleClass, distanceKm: vehicle.distanceKm,
         fixedCost: cost.fixed, variableCost: cost.variable, totalCost: cost.total };
     }) } };
+  delete plan.assignments;
+  return plan;
 }

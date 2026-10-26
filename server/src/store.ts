@@ -42,7 +42,9 @@ export const MAX_SEQUENCE_LEN = 500;
 
 export interface Scenario {
   manualPlanId?: string;
-  manualDecisions?: { datasetSha256: string; decisions: Record<string, import('./plan/manual.js').ManualDecision> };
+  manualDecisions?: { datasetSha256: string; decisions: Record<string, import('./plan/manual.js').ManualDecision>;
+    requestIds?: number[];
+    origins?: Record<string, import('./plan/manual.js').AssignmentOrigin>; history?: import('./plan/manual.js').AssignmentEvent[] };
   planningPolicy?: PlanningPolicy;
   id: string;
   day: string;            // 'day1' | 'day2'

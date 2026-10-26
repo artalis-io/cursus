@@ -46,6 +46,13 @@ test('edited stop sequences seed native construction using compact IDs', () => {
   assert.equal(native.request.requests[1]!.delivery_task_id, 1);
 });
 
+test('forbidden sequence seeds are removed entirely, never serialized as empty native routes', () => {
+  const request = { vehicles: [{ id: 7 }], tasks: [{ id: 4, ref: 'A' }],
+    requests: [{ id: 12, delivery_task_id: 4, forbidden_vehicles: [7] }] } as unknown as SurgeRequest;
+  const native = nativeSolveRequest(request, [{ vehicleId: 7, orderNos: ['A'], locked: true }]);
+  assert.deepEqual((native.request as unknown as Record<string, unknown>).initial_routes, []);
+});
+
 test('native Surge solves a filtered day with an excluded vehicle and locked reorder',
   { skip: !process.env.CURSUS_TEST_SURGE_BIN }, async () => {
     const request: SurgeRequest = {

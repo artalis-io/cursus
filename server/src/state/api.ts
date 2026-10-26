@@ -174,7 +174,8 @@ export async function createStatefulApi(options: StatefulApiOptions): Promise<Fa
   app.post<{ Params: { id: string }; Body: { budgetSec?: number; objective?: string; fullBudget?: boolean } }>('/api/scenarios/:id/solve', async (req, reply) => {
     const scenario = await scenarios.get(req.params.id); if (!scenario) return reply.code(404).send({ error: 'scenario not found' });
     if (scenario.revision !== expectedRevision(req.headers)) return reply.code(409).send({ error: 'Scenario changed; reload before optimizing.' });
-    if (scenario.manualPlanId) return reply.code(409).send({ error: 'Replanning manually published plans requires retained-decision solver integration, which is not enabled yet.' });
+    if (scenario.manualPlanId && (!options.manualPlanning || !scenario.manualDecisions))
+      return reply.code(409).send({ error: 'Manual replanning requires the enabled retained-decision runtime.' });
     let id: string;
     try {
       id = await options.store.enqueueJob(options.tenantId, 'solve', `solve/${scenario.id}/${scenario.revision}/${randomKey()}`, {

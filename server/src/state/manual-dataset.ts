@@ -11,7 +11,7 @@ import type { ManualDatasetLoader } from './manual.js';
 export function admittedManualDatasetLoader(store: StatefulStore, objects: ObjectStore, tenantId: string,
   settings: Omit<ManualDatasetContext, 'day'>): ManualDatasetLoader {
   return async (parent: Plan, scenario: Scenario) => {
-    const sha = parent.manual?.layout.datasetSha256 ?? parent.provenance.datasetSha256 ?? parent.provenance.planningPolicy?.datasetRequestSha256;
+    const sha = parent.manual?.layout.datasetSha256 ?? parent.assignments?.layout.datasetSha256 ?? parent.provenance.datasetSha256 ?? parent.provenance.planningPolicy?.datasetRequestSha256;
     if (!sha || !/^[a-f0-9]{64}$/.test(sha)) throw new Error('parent dataset identity is unavailable');
     const rows = await store.listDatasets(tenantId, true);
     const matches = rows.map(row => row.manifest as ConvertedManifest).filter(manifest =>

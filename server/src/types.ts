@@ -214,6 +214,7 @@ export interface PlanCost {
 }
 
 export interface Plan {
+  assignments?: { version: 1; parentPlanId: string; layout: import('./plan/manual.js').ManualLayout };
   manual?: { version: 1; parentPlanId: string; layout: import('./plan/manual.js').ManualLayout;
     evaluation: import('./plan/manual-evaluate.js').ManualEvaluation };
   id: string;

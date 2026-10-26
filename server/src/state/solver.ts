@@ -14,6 +14,7 @@ import type { SurgeSolution } from '../types.js';
 import type { Lease } from './postgres.js';
 import type { SolveOutput } from './worker.js';
 import { nativeSolveRequest } from './solver-ids.js';
+import { verifyRetainedSolution, withRetainedProvenance } from '../plan/retained.js';
 
 const run = promisify(execFile);
 interface SolvePayload { scenario: Scenario; scenarioId: string; scenarioRevision: number; budgetSec?: number; objective?: Objective; fullBudget?: boolean }
@@ -38,10 +39,12 @@ export async function executeSurgeLease(lease: Lease, signal: AbortSignal): Prom
     if (!Array.isArray(solution.routes) || !Array.isArray(solution.unassigned) || !['OK', 'LIMIT', 'INFEASIBLE'].includes(solution.status))
       throw new Error(`surge_solve produced no usable solution (${solution.status ?? 'unknown'})`);
     solution = native.restore(solution);
+    verifyRetainedSolution(built.request, payload.scenario, solution);
     const planId = `pln_${randomUUID().slice(0, 8)}`;
-    const plan = mapSolutionToPlan({ day: built.day, request: built.request, solution, enrichment: built.day.enrichment,
+    const mapped = mapSolutionToPlan({ day: built.day, request: built.request, solution, enrichment: built.day.enrichment,
       vehicleInfo: loadVehicleInfo(), scenarioId: payload.scenarioId, scenarioRevision: payload.scenarioRevision,
       planId, source: 'live', createdAt: new Date().toISOString() });
+    const plan = withRetainedProvenance(mapped, payload.scenario, built.day.request.vehicles.map(vehicle => vehicle.id));
     if (plan.provenance.validation.violations.some(v => ['VEHICLE_SIZE', 'TAIL_LIFT'].includes((v as {type?: string}).type ?? '')))
       throw new Error('solver violated mandatory destination access or tail-lift requirements');
     await fillPlanGeometry(plan).catch(() => false);

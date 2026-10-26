@@ -75,6 +75,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - name: Build pinned native Surge using OTTO machinery
+        working-directory: vendor/otto
+        run: make -C shared lib && make -C arbor lib && make -C surge surge_solve
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
@@ -82,6 +87,11 @@ jobs:
           cache-dependency-path: server/package-lock.json
       - run: npm ci
         working-directory: server
+      - name: Native retained assignments, constraints and ID regression tests
+        working-directory: server
+        env:
+          CURSUS_TEST_SURGE_BIN: ${{ github.workspace }}/vendor/otto/surge/surge_solve
+        run: node --import tsx --test src/plan/retained.test.ts src/plan/access.test.ts src/state/solver-ids.test.ts
       - name: Start isolated PostgreSQL and S3 protocol fixture
         run: docker compose -p cursus-ci-stateful -f compose.integration.yaml up -d --wait
       - name: Stateful concurrency and recovery integration tests
@@ -89,6 +99,7 @@ jobs:
         env:
           CURSUS_TEST_DATABASE_URL: postgres://cursus:integration-only@127.0.0.1:55432/cursus
           CURSUS_TEST_S3_ENDPOINT: http://127.0.0.1:59000
+          CURSUS_TEST_SURGE_BIN: ${{ github.workspace }}/vendor/otto/surge/surge_solve
         run: npm run test:stateful
       - name: Stop integration environment
         if: always()
