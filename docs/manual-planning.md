@@ -260,3 +260,37 @@ binary from a newer adjacent checkout. CI's stateful job now builds that pinned
 solver through OTTO's existing Makefiles and runs both the native constraint
 suite and the public two-instance manual/replan workflow. Optional private
 Gyermelyi conversion tests remain separate and were not run for this increment.
+
+### Workspace implementation
+
+An explicit **Manual planning** toggle in the existing fleet panel preserves the
+legacy staged-replan workflow until opted in. Manual drafts always use the manual
+controls. The fleet groups Assigned/Available/Excluded use server-returned fleet
+metadata, including unused vehicles. The inspector supports move/assign, return to
+unassigned and release, with retained-decision badges and actor/time history.
+Drag/drop and bulk assignment use the same dialog and API as keyboard controls.
+
+The dialog calculates a server-side preview before enabling Apply. Any changed
+parameters invalidate it; late responses after unmount/permission loss are ignored.
+Save invalid draft remains explicit and does not bypass review/approval blockers.
+Preview does not publish plans/scenarios/jobs. Apply forks a baseline atomically
+without modifying it, or advances an existing copy with If-Match/idempotency guards.
+Exclusion confirms affected orders, deassigns them atomically and retains those
+decisions; restore does not resurrect assignments. Undo restores the previous
+arrangement as a new audited draft rather than deleting history or saved plans.
+Draft identifiers (not dataset bytes) are stored in a tenant-scoped browser
+preference for reload recovery, with authoritative server reads on restoration.
+
+Runtime opt-in requires `CURSUS_MANUAL_SETTINGS_FILE`, an external JSON file with
+`tariff` (the existing Tariff contract) and `vehicles` entries containing `id`,
+`ref`, `vehicleClass`, `isSubcontractor`, `tonnage`, `hasTailLift`, and `reloadSec`.
+Mount it read-only; do not commit customer fleet or pricing information. Missing
+configuration leaves the feature disabled. Invalid/stale/ambiguous dataset
+evidence never produces an enabled control. Tariff and fleet snapshots are
+recorded with manual decisions and reused by subsequent solves; tariff identities
+are canonical across PostgreSQL JSON key reordering on separate replicas.
+
+All UI strings have EN/HU translations. Production is unchanged: no settings,
+Cloudflare resources, containers, database migrations or customer data are deployed
+by this implementation. Real-image acceptance uses synthetic external settings
+and dedicated temporary Compose projects, never production credentials.

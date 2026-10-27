@@ -11,7 +11,7 @@ export interface AssignmentEvent {
   operationId: string;
   index: number;
   requestId: number;
-  action: ManualCommand['op'];
+  action: ManualCommand['op'] | 'undo';
   actorId: string;
   at: string;
   from: AssignmentLocation | null;

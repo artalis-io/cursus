@@ -9,11 +9,12 @@ import type { StatefulStore } from './postgres.js';
 import type { PoolClient } from 'pg';
 import { planDigest } from './plan-workflow.js';
 import { hasPermission } from '../roles.js';
+import { isDeepStrictEqual } from 'node:util';
 
 export class ManualPublicationError extends Error {
   constructor(public status: number, message: string) { super(message); }
 }
-export interface ManualPublicationRequest { parentPlanId: string; batch: ManualBatch }
+export interface ManualPublicationRequest { parentPlanId: string; batch: ManualBatch; vehicle?: { id: number; excluded: boolean };undo?:true }
 export type ManualDatasetLoader = (plan: Plan, scenario: Scenario) => Promise<ManualDatasetContext>;
 
 export function parseManualRequest(value: unknown): ManualPublicationRequest {
@@ -21,12 +22,14 @@ export function parseManualRequest(value: unknown): ManualPublicationRequest {
   const object = (x: unknown): x is Record<string, unknown> => !!x && typeof x === 'object' && !Array.isArray(x);
   const keys = (x: Record<string, unknown>, allowed: string[]) => Object.keys(x).every(key => allowed.includes(key));
   const id = (x: unknown) => typeof x === 'number' && Number.isSafeInteger(x) && x >= 0;
-  if (!object(value) || !keys(value, ['parentPlanId', 'batch']) || typeof value.parentPlanId !== 'string' || value.parentPlanId.length > 128 || !value.parentPlanId) throw invalid();
+  if (!object(value) || !keys(value, ['parentPlanId', 'batch', 'vehicle','undo']) || typeof value.parentPlanId !== 'string' || value.parentPlanId.length > 128 || !value.parentPlanId) throw invalid();
+  if(value.undo!==undefined&&(value.undo!==true||value.vehicle!==undefined))throw invalid();
+  if (value.vehicle !== undefined && (!object(value.vehicle) || !keys(value.vehicle,['id','excluded']) || !id(value.vehicle.id) || typeof value.vehicle.excluded !== 'boolean')) throw invalid();
   const batch = value.batch;
   if (!object(batch) || !keys(batch, ['operationId', 'datasetSha256', 'commands']) ||
     typeof batch.operationId !== 'string' || !/^[A-Za-z0-9_-]{1,128}$/.test(batch.operationId) ||
     typeof batch.datasetSha256 !== 'string' || !/^[a-f0-9]{64}$/.test(batch.datasetSha256) ||
-    !Array.isArray(batch.commands) || !batch.commands.length || batch.commands.length > 1000) throw invalid();
+    !Array.isArray(batch.commands) || (!batch.commands.length && !value.vehicle&&!value.undo) || batch.commands.length > 1000 || value.undo&&batch.commands.length) throw invalid();
   for (const command of batch.commands) {
     if (!object(command) || !id(command.requestId)) throw invalid();
     if (command.op === 'assign') {
@@ -54,21 +57,20 @@ export class ManualPlanPublisher {
     return result.rows[0].body;
   }
 
-  async publish(scenarioId: string, revision: number, intent: ManualPublicationRequest, actor?: Principal): Promise<Plan> {
+  async publish(scenarioId: string, revision: number, intent: ManualPublicationRequest, actor?: Principal, preview = false): Promise<Plan> {
     if (actor && actor.tenantId !== this.tenantId) throw new ManualPublicationError(403, 'Tenant mismatch.');
     if (actor && !hasPermission(actor.role, 'scenario.edit')) throw new ManualPublicationError(403, 'Manual planning permission required.');
     if (!Number.isSafeInteger(revision) || revision < 0) throw new ManualPublicationError(400, 'Invalid expected revision.');
     intent = parseManualRequest(intent);
     const actorId = actor?.userId ?? 'local';
     const payloadHash = planDigest({ scenarioId, revision, intent });
-    const replay = await this.store.tx(client => this.receipt(client, intent.batch.operationId, payloadHash, actorId));
+    const replay = preview ? null : await this.store.tx(client => this.receipt(client, intent.batch.operationId, payloadHash, actorId));
     if (replay) return replay;
     const [scenario, parentRows] = await Promise.all([this.store.getScenario(this.tenantId, scenarioId),
       this.store.pool.query<{ body: Plan }>('SELECT body FROM plans WHERE tenant_id=$1 AND id=$2', [this.tenantId, intent.parentPlanId])]);
     // Hash actual immutable bytes, not read-time normalization of old plans.
     const parent = parentRows.rows[0]?.body;
     if (!scenario || !parent || parent.scenarioId !== scenarioId) throw new ManualPublicationError(404, 'Scenario or parent plan not found.');
-    if (scenario.kind !== 'copy') throw new ManualPublicationError(409, 'Create an editable scenario copy before manual planning.');
     if (scenario.revision !== revision || parent.scenarioRevision !== revision || scenario.manualPlanId && scenario.manualPlanId !== parent.id)
       throw new ManualPublicationError(409, 'Parent plan is stale; reload before planning.');
     let context: ManualDatasetContext;
@@ -79,28 +81,58 @@ export class ManualPlanPublisher {
     const tasks = new Map(context.day.request.tasks.map(task => [task.id, task.ref]));
     const refs = new Map(context.day.request.requests.map(order => [order.id, tasks.get(order.delivery_task_id)]));
     const editedRefs = new Set(intent.batch.commands.map(command => refs.get(command.requestId)));
-    const effectiveScenario: Scenario = { ...scenario, pins: scenario.pins.filter(pin => !editedRefs.has(pin.orderNo)) };
+    let effectiveScenario: Scenario = { ...scenario, pins: scenario.pins.filter(pin => !editedRefs.has(pin.orderNo)) };
+    if (intent.vehicle) {
+      if (!context.day.request.vehicles.some(vehicle => vehicle.id === intent.vehicle!.id)) throw new ManualPublicationError(400,'Unknown vehicle.');
+      effectiveScenario.removedVehicleIds = scenario.removedVehicleIds.filter(id => id !== intent.vehicle!.id);
+      if (intent.vehicle.excluded) effectiveScenario.removedVehicleIds.push(intent.vehicle.id);
+    }
     let input, evaluation;
     const at = new Date().toISOString();
     try {
       input = prepareManualInput(parent, effectiveScenario, context);
       const original = input.layout;
-      input.layout = applyManualBatch(original, intent.batch, { actorId, at });
+      if(intent.undo){
+        if(!parent.manual?.parentScenario)throw new ManualPublicationError(409,'No manual change is available to undo.');
+        const targetRows=await this.store.pool.query<{body:Plan}>('SELECT body FROM plans WHERE tenant_id=$1 AND id=$2',[this.tenantId,parent.manual.parentPlanId]);
+        const target=targetRows.rows[0]?.body;
+        if(!target)throw new ManualPublicationError(409,'Undo parent is unavailable.');
+        input=prepareManualInput(target,parent.manual.parentScenario,context);
+        effectiveScenario={...parent.manual.parentScenario,id:scenario.id,revision:scenario.revision,kind:scenario.kind,parentId:scenario.parentId,label:scenario.label};
+        const targetLayout=input.layout;
+        const locate=(layout:typeof original,id:number)=>{for(const route of layout.routes){const position=route.requestIds.indexOf(id);if(position>=0)return {vehicleId:route.vehicleId,tripId:route.tripId,position};}return null;};
+        targetLayout.history=structuredClone(original.history);
+        for(const requestId of original.requestIds)if(!isDeepStrictEqual(locate(original,requestId),locate(targetLayout,requestId))||
+          !isDeepStrictEqual(original.decisions[String(requestId)],targetLayout.decisions[String(requestId)]))
+          targetLayout.history.push({operationId:intent.batch.operationId,index:targetLayout.history.length-original.history.length,requestId,action:'undo',actorId,at,from:locate(original,requestId),to:locate(targetLayout,requestId)});
+        evaluation=evaluateManualInput(input,targetLayout,effectiveScenario);
+      }else{
+      const vehicleCommands = intent.vehicle?.excluded ? original.routes.filter(route => route.vehicleId === intent.vehicle!.id)
+        .flatMap(route => route.requestIds.map(requestId => ({ op: 'deassign' as const, requestId }))) : [];
+      const commands = [...vehicleCommands, ...intent.batch.commands];
+      input.layout = commands.length ? applyManualBatch(original, { ...intent.batch, commands }, { actorId, at }) : structuredClone(original);
       for (const route of input.layout.routes) {
         const key = manualTripKey(route.vehicleId, route.tripId);
         if (!input.departures.has(key)) input.departures.set(key, input.request.vehicles.find(v => v.id === route.vehicleId)?.shift_early ?? 0);
       }
       evaluation = evaluateManualInput(input, original, effectiveScenario);
+      }
     } catch (error) {
+      if(error instanceof ManualPublicationError)throw error;
       if (error instanceof ManualCommandError || error instanceof ManualAdapterError)
         throw new ManualPublicationError(409, error.message);
       throw new ManualPublicationError(422, 'Manual plan cannot be evaluated with the available dataset evidence.');
     }
-    const updated: Scenario = { ...effectiveScenario, revision: revision+1, manualPlanId: `pln_${randomUUID()}`,
+    const updated: Scenario = { ...effectiveScenario,
+      ...(scenario.kind === 'base' ? { id: `scn_${randomUUID()}`, kind: 'copy' as const, parentId: scenario.id, label: `${scenario.label} (manual)` } : {}),
+      revision: revision+1, manualPlanId: `pln_${randomUUID()}`,
       manualDecisions: { datasetSha256: input.datasetSha256, decisions: structuredClone(input.layout.decisions),
+        tariff:structuredClone(context.tariff),tariffSha256:input.tariffSha256,fleetInfo:structuredClone([...context.vehicleInfo]),
         requestIds: [...input.layout.requestIds],
         origins: structuredClone(input.layout.origins), history: structuredClone(input.layout.history) } };
     const plan = materializeManualPlan(parent, updated, input, evaluation, context, updated.manualPlanId!, at);
+    plan.manual!.parentScenario=structuredClone(scenario);
+    if (preview) return plan;
     const parentHash = planDigest(parent);
     return this.store.tx(async client => {
       const again = await this.receipt(client, intent.batch.operationId, payloadHash, actorId);
@@ -109,8 +141,9 @@ export class ManualPlanPublisher {
       if (Number(current.rows[0]?.revision) !== revision) throw new ManualPublicationError(409, 'Scenario changed during evaluation.');
       const base = await client.query<{ body: Plan }>('SELECT body FROM plans WHERE tenant_id=$1 AND id=$2', [this.tenantId, parent.id]);
       if (!base.rows[0] || planDigest(base.rows[0].body) !== parentHash) throw new ManualPublicationError(409, 'Parent plan changed during evaluation.');
-      await client.query('UPDATE scenarios SET revision=$3,body=$4,updated_at=now() WHERE tenant_id=$1 AND id=$2', [this.tenantId, scenarioId, updated.revision, updated]);
-      await client.query('INSERT INTO plans(tenant_id,id,scenario_id,scenario_revision,body) VALUES($1,$2,$3,$4,$5)', [this.tenantId, plan.id, scenarioId, updated.revision, plan]);
+      if (updated.id === scenarioId) await client.query('UPDATE scenarios SET revision=$3,body=$4,updated_at=now() WHERE tenant_id=$1 AND id=$2', [this.tenantId, scenarioId, updated.revision, updated]);
+      else await client.query('INSERT INTO scenarios(tenant_id,id,revision,body) VALUES($1,$2,$3,$4)', [this.tenantId, updated.id, updated.revision, updated]);
+      await client.query('INSERT INTO plans(tenant_id,id,scenario_id,scenario_revision,body) VALUES($1,$2,$3,$4,$5)', [this.tenantId, plan.id, updated.id, updated.revision, plan]);
       await client.query("INSERT INTO audit_events(tenant_id,user_id,action,detail) VALUES($1,$2,'plan.manual',$3)",
         [this.tenantId, actor?.userId ?? null, { operationId: intent.batch.operationId, actorId, payloadHash, planId: plan.id, parentPlanId: parent.id, scenarioId, revision: updated.revision }]);
       return plan;

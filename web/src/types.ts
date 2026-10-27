@@ -7,6 +7,7 @@
 export type PlanSource = 'saved' | 'live' | 'sample';
 
 export interface PlanProvenance {
+  datasetSha256?: string;
   planningPolicy?: { id: string; date: string; exceptions: { orderNo: string; reason: string; maxTonnage?: number; requiresTailLift?: boolean }[] };
   inputSha256: string;
   solverConfig: Record<string, unknown>; // raw Surge config (seed, max_time_seconds, hard_*, ...)
@@ -41,6 +42,7 @@ export interface Depot { name: string; lon: number; lat: number }
 export type StopType = 'delivery' | 'pickup' | 'service' | 'depot';
 
 export interface Stop {
+  requestId?: number;
   orderId: string | null;
   orderNo: string;
   customer: string | null;
@@ -65,6 +67,7 @@ export interface Stop {
 }
 
 export interface Trip {
+  manualTripId?: string;
   index: number;
   startSec: number;
   endSec: number;
@@ -99,6 +102,7 @@ export interface Vehicle {
 
 export type UnassignedReason = 'PINNED_INFEASIBLE' | 'NEEDS_TAIL_LIFT' | 'OVER_CAPACITY' | 'OVERSIZE' | 'CONSTRAINED' | 'MANUAL_UNASSIGNED';
 export interface UnassignedOrder {
+  requestId?: number;
   orderId: string | null;
   orderNo: string;
   customer: string | null;
@@ -130,6 +134,8 @@ export interface PlanCost {
 export type Objective = 'vehicles' | 'distance';
 
 export interface Plan {
+  manual?: { parentPlanId:string; layout:ManualLayout };
+  assignments?: { parentPlanId:string; layout:ManualLayout };
   id: string;
   scenarioId: string;
   scenarioRevision: number;
@@ -144,6 +150,17 @@ export interface Plan {
   vehicles: Vehicle[];
   unassigned: UnassignedOrder[];
 }
+
+export interface ManualLayout {
+  datasetSha256:string;
+  decisions:Record<string,{kind:'vehicle';vehicleId:number}|{kind:'unassigned'}>;
+  origins:Record<string,string>;
+  history:{operationId:string;requestId:number;actorId:string;at:string;action:string;from:{vehicleId:number}|null;to:{vehicleId:number}|null}[];
+}
+export type ManualCommand = {op:'assign';requestId:number;vehicleId:number;tripId:string;position:number}|{op:'deassign'|'release';requestId:number};
+export interface ManualIntent {parentPlanId:string;batch:{operationId:string;datasetSha256:string;commands:ManualCommand[]};vehicle?:{id:number;excluded:boolean};undo?:true}
+export interface ManualContext {enabled:boolean;datasetSha256?:string;fleet?:Vehicle[];canUndo?:boolean}
+export interface ManualPreview {stats:PlanStats;cost:PlanCost|null;validation:PlanProvenance['validation']}
 
 /* ---- API shapes ---- */
 export interface DaySummary {
@@ -171,6 +188,7 @@ export interface VehicleOverride {
 export type VehicleConstraintPatch = Omit<VehicleOverride, 'vehicleId'>;
 
 export interface Scenario {
+  manualPlanId?:string;
   id: string;
   day: string;
   kind: 'base' | 'copy';

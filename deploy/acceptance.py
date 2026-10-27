@@ -92,6 +92,13 @@ def main():
                 (path / name).write_text(value + '\n')
                 (path / name).chmod(0o444)
             pg, s3, a, b = free_ports(4)
+            (path / 'manual-settings.json').write_text(json.dumps({
+                'vehicles': [{'id': i, 'ref': f'ACCEPT-{i}', 'vehicleClass': None, 'isSubcontractor': False,
+                              'tonnage': 12 if i == 30 else 3.5, 'hasTailLift': i == 30, 'reloadSec': 120} for i in [10, 30, 50]],
+                'tariff': {'currency': 'HUF', 'source': 'demo', 'model': 'per_vehicle', 'perKmDefault': 260,
+                           'fixedPerVehicle': 38000, 'perKmByClass': {}, 'fixedByClass': {}, 'perTripBase': 500,
+                           'perKm': 10, 'perDrop': 50, 'includedDrops': 0, 'subcontractorMultiplier': 1, 'ownFleetMultiplier': 1}}))
+            (path / 'manual-settings.json').chmod(0o444)
             environment.update(CURSUS_ACCEPTANCE_IMAGE=inspected['Id'], CURSUS_ACCEPTANCE_SCRATCH=scratch,
                                CURSUS_TEST_POSTGRES_PORT=str(pg), CURSUS_TEST_S3_PORT=str(s3),
                                CURSUS_ACCEPTANCE_PORT_A=str(a), CURSUS_ACCEPTANCE_PORT_B=str(b),

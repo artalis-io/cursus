@@ -21,6 +21,7 @@ import { nativeSolveRequest } from './solver-ids.js';
 import { applyAccessLimits } from '../plan/access.js';
 import { withPlanningPolicy } from '../plan/policy.js';
 import { populationConfig } from '../solver-config.js';
+import { tariffIdentity } from '../cost.js';
 import { applyRetainedDecisions, datasetAllowances, verifyRetainedSolution, withRetainedProvenance } from '../plan/retained.js';
 
 const OUTPUT_SCHEMA_VERSION = 1;
@@ -144,7 +145,10 @@ export async function solveConvertedDataset(objects: ObjectStore, tenantId: stri
   if (scenario.removedVehicleIds.length) request.vehicles = request.vehicles.filter((v) => !scenario.removedVehicleIds.includes(v.id));
   const available = new Set(request.vehicles.map((v) => v.id));
   applyOverrides(request, scenario, available); applyVehicleOverrides(request, scenario); applySequences(request, scenario, available);
-  const vehicleInfo = loadVehicleInfo();
+  const retained=scenario.manualDecisions;
+  if(retained&&(!retained.tariff||!retained.fleetInfo||tariffIdentity(retained.tariff)!==retained.tariffSha256))
+    throw new Error('manual solve tariff/fleet snapshot is missing or inconsistent');
+  const vehicleInfo = retained?.fleetInfo?new Map(retained.fleetInfo):loadVehicleInfo();
   applyAccessLimits(request, day.enrichment, vehicleInfo);
   applyRetainedDecisions(request, scenario, day.datasetRequestSha256, baseline);
   request.config = populationConfig({ ...request.config, max_time_seconds: budgetSec, seed: 42, lexicographic_objective: objective !== 'distance',
@@ -161,9 +165,10 @@ export async function solveConvertedDataset(objects: ObjectStore, tenantId: stri
     if (!Array.isArray(solution.routes) || !Array.isArray(solution.unassigned) || !['OK', 'LIMIT', 'INFEASIBLE'].includes(solution.status))
       throw new Error('converted dataset solve produced an invalid solution');
     verifyRetainedSolution(request, scenario, solution);
-    const mapped = mapSolutionToPlan({ day, request, solution, enrichment: day.enrichment, vehicleInfo, scenarioId: scenario.id,
+    const mapped = mapSolutionToPlan({ day, request, solution, enrichment: day.enrichment, vehicleInfo, tariff:retained?.tariff, scenarioId: scenario.id,
       scenarioRevision: scenario.revision, planId: `pln_${randomUUID().slice(0, 8)}`, source: 'live', createdAt: new Date().toISOString() });
     const plan = withRetainedProvenance(mapped, scenario, datasetVehicles);
+    if(retained?.tariffSha256)plan.provenance.tariffSha256=retained.tariffSha256;
     if (scenario.planningPolicy) plan.provenance.planningPolicy = structuredClone(scenario.planningPolicy);
     plan.stats.solveElapsedSeconds = Math.round((Date.now() - startedAt) / 100) / 10;
     if (plan.provenance.validation.violations.some(v => ['VEHICLE_SIZE', 'TAIL_LIFT'].includes((v as {type?: string}).type ?? '')))

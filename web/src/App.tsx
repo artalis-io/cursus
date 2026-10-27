@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { WorkspaceTenantContext } from '@/workspace';
 import { ChevronLeft, ChevronRight, ChevronUp, ChevronDown, RotateCcw } from 'lucide-react';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import { Button } from '@/components/ui/button';
@@ -10,6 +11,7 @@ import { ResizeHandle } from '@/components/ResizeHandle';
 import { useWorkspaceLayout } from '@/useWorkspaceLayout';
 import { FleetPanel } from '@/components/FleetPanel';
 import { Inspector } from '@/components/Inspector';
+import { ManualPlanningDialog, ManualOrderActions, type ManualRequest } from '@/components/ManualPlanning';
 import { Timeline } from '@/components/Timeline';
 import { MapView } from '@/map/MapView';
 import { CompareDialog } from '@/components/CompareDialog';
@@ -22,7 +24,7 @@ import { ScenariosDialog } from '@/components/ScenariosDialog';
 import { HelpOverlay } from '@/components/HelpOverlay';
 import { api, ApiError, pollJob } from '@/lib/api';
 import { useT, describeApiError } from '@/i18n';
-import type { DaySummary, Job, Objective, Plan, Scenario, ScenarioEdit, Selection } from '@/types';
+import type { DaySummary, Job, Objective, Plan, Scenario, ScenarioEdit, Selection, ManualContext, ManualIntent } from '@/types';
 import { StaleWorkspaceContext, usePermission } from '@/permissions';
 
 /* The live solve budget for UI-triggered solves. The saved baseline used ~240s
@@ -128,6 +130,8 @@ function sameSel(a: Selection, b: Selection): boolean {
 }
 
 export default function App() {
+  const tenant=useContext(WorkspaceTenantContext);
+  const manualStorageKey=`cursus.manual-workspace.v1:${tenant??'local'}`;
   const [freshnessError, setFreshnessError] = useState<string | null>(null);
   const [workspaceLoading, setWorkspaceLoading] = useState(false);
   const navigationGeneration = useRef(0);
@@ -155,6 +159,18 @@ export default function App() {
   const [plan, setPlan] = useState<Plan | null>(null);
   const [baseline, setBaseline] = useState<Plan | null>(null);
   const [pendingEdits, setPendingEdits] = useState(0);
+  const [manualContext,setManualContext]=useState<ManualContext|null>(null);
+  const [manualOptIn,setManualOptIn]=useState(false);
+  const manualMode=manualOptIn||!!plan?.manual||!!plan?.assignments;
+  const [manualRequest,setManualRequest]=useState<ManualRequest|null>(null);
+  const [manualBusy,setManualBusy]=useState(false);
+  const manualBusyRef=useRef(false);
+  useEffect(()=>{
+    let alive=true;setManualContext(null);setManualRequest(null);
+    if(plan&&scenario&&plan.scenarioRevision===scenario.revision)void api.manualContext(plan.id).then(value=>{if(alive)setManualContext(value);}).catch(()=>{});
+    return()=>{alive=false;};
+  },[plan,scenario]);
+  useEffect(()=>{if(!canEdit)setManualRequest(null);},[canEdit]);
   // Selection history: browser-style back/forward through inspected items.
   const [nav, setNav] = useState<{ stack: Selection[]; idx: number }>({ stack: [null], idx: 0 });
   const selection = nav.stack[nav.idx] ?? null;
@@ -272,13 +288,32 @@ export default function App() {
   useEffect(() => {
     (async () => {
       try {
+        let saved:{planId:string;day:string}|null=null;
+        try{saved=JSON.parse(localStorage.getItem(manualStorageKey)??'null');}catch{/* optional preference */}
         const ds = await api.days();
         setDays(ds);
-        if (!(await tryResume(ds))) await loadDay(ds.find((d) => d.id === 'day1') ?? ds[0]!);
+        if (!(await tryResume(ds))) {
+          await loadDay(ds.find(d=>d.id===saved?.day)??ds.find((d) => d.id === 'day1') ?? ds[0]!);
+          if(saved?.planId){
+            const generation=navigationGeneration.current;
+            try{
+              let p=await api.plan(saved.planId);const sc=await api.scenario(p.scenarioId);
+              if(sc.manualPlanId&&sc.manualPlanId!==p.id)p=await api.plan(sc.manualPlanId);
+              if(generation===navigationGeneration.current&&writeAccess.current.mounted&&(p.manual||p.assignments)){
+                scenarioRef.current=sc;planRef.current=p;setScenario(sc);setPlan(p);
+              }
+            }catch{/* a deleted or inaccessible draft must not prevent loading */}
+          }
+        }
       } catch (e) { setError(describeApiError(e, t)); }
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+  useEffect(()=>{
+    if(!plan)return;
+    try{if(plan.manual||plan.assignments)localStorage.setItem(manualStorageKey,JSON.stringify({planId:plan.id,day:scenario?.day??dayId}));
+      else localStorage.removeItem(manualStorageKey);}catch{/* storage may be unavailable */}
+  },[plan,manualStorageKey,scenario,dayId]);
 
   const loadDay = useCallback(async (d: DaySummary) => {
     const generation = ++navigationGeneration.current;
@@ -394,7 +429,7 @@ export default function App() {
   // staged edit so the tune loop has positive feedback (nothing else changes
   // on the map until Replan).
   const applyEdit = useCallback((edit: ScenarioEdit): Promise<boolean> => {
-    if (!writeAccess.current.mounted || !writeAccess.current.edit) return Promise.resolve(false);
+    if (manualBusyRef.current || !writeAccess.current.mounted || !writeAccess.current.edit) return Promise.resolve(false);
     setPendingEdits(n => n + 1);
     const epoch = writeAccess.current.epoch;
     const queued = editQueue.current.then(async () => {
@@ -417,7 +452,7 @@ export default function App() {
 
   // Apply several staged edits at once (bulk actions); one fork + one revision.
   const applyEdits = useCallback((edits: ScenarioEdit[], toastMsg?: string): Promise<boolean> => {
-    if (!writeAccess.current.mounted || !writeAccess.current.edit) return Promise.resolve(false);
+    if (manualBusyRef.current || !writeAccess.current.mounted || !writeAccess.current.edit) return Promise.resolve(false);
     const epoch = writeAccess.current.epoch;
     if (edits.length === 0) return Promise.resolve(true);
     setPendingEdits(n => n + 1);
@@ -448,6 +483,7 @@ export default function App() {
   // Replan: solve the current (edited) scenario, then surface the comparison if
   // it is an edited copy. Staged edits are applied together here.
   const replan = useCallback(async () => {
+    if(manualBusyRef.current)return;
     if (!writeAccess.current.mounted || !writeAccess.current.solve || !scenarioRef.current || solveActive) return;
     const epoch = writeAccess.current.epoch;
     setSolveActive(true);
@@ -554,6 +590,29 @@ export default function App() {
   useEffect(() => { if (plan) planRef.current = plan; }, [plan]);
   useEffect(() => { scenarioRef.current = scenario; }, [scenario]);
   const previewTotals = usePreviewTotals(canEvaluate ? plan : null, scenario);
+  function openManual(request:ManualRequest){
+    if(!canEdit||manualBusyRef.current||solveActive||job?.status==='running'||job?.status==='pending'||!manualContext?.enabled)return;
+    if(!plan||!scenario||plan.scenarioRevision!==scenario.revision||pendingEditsRef.current){setError(t('manual.pending'));return;}
+    setManualRequest(request);
+  }
+  function manualOrders(orderNos:string[],vehicleId:number){
+    const orders=[...(plan?.vehicles.flatMap(v=>v.trips.flatMap(tr=>tr.stops))??[]),...(plan?.unassigned??[])];
+    const resolved=orderNos.map(orderNo=>orders.filter(o=>o.orderNo===orderNo));
+    if(resolved.some(matches=>matches.length!==1||matches[0]?.requestId===undefined)){setError(t('manual.identity'));return;}
+    openManual({action:'assign',requestIds:resolved.map(matches=>matches[0]!.requestId!),targetVehicleId:vehicleId});
+  }
+  async function applyManual(intent:ManualIntent){
+    if(!writeAccess.current.edit||!writeAccess.current.mounted||manualBusyRef.current||scenarioRef.current?.revision!==scenario?.revision||planRef.current?.id!==intent.parentPlanId)throw new Error(t('manual.pending'));
+    const current=scenarioRef.current!,epoch=writeAccess.current.epoch,generation=navigationGeneration.current;
+    manualBusyRef.current=true;setManualBusy(true);
+    try{
+      const next=await api.manualApply(current.id,current.revision,intent),updated=await api.scenario(next.scenarioId);
+      if(!writeAccess.current.mounted||epoch!==writeAccess.current.epoch||generation!==navigationGeneration.current)return;
+      scenarioRef.current=updated;planRef.current=next;setScenario(updated);setPlan(next);resetSelection();setManualRequest(null);
+      setPlaying(false);setClockSec(null);setError(null);
+    }catch(e){rejectStaleIntent(e);throw e;}
+    finally{manualBusyRef.current=false;if(writeAccess.current.mounted)setManualBusy(false);}
+  }
 
   if (error && !plan) return <div className="flex h-full items-center justify-center text-sm text-destructive">{t('app.failed', { e: error })}</div>;
   if (!plan || !baseline || !scenario) return <div className="flex h-full items-center justify-center text-sm text-muted-foreground">{t('app.loading')}</div>;
@@ -567,9 +626,18 @@ export default function App() {
   const okToSwitch = (): boolean => !(scenario.kind === 'copy' && changesCount > 0) || window.confirm(t('app.discardConfirm', { n: changesCount }));
   // The plan no longer reflects the scenario once it has been edited since solve.
   const dirty = scenario.revision !== plan.scenarioRevision;
+  const selectedOrder=selection?.kind==='unassigned'?plan.unassigned.find(o=>o.orderNo===selection.orderNo)
+    :selection?.kind==='stop'?plan.vehicles.find(v=>v.id===selection.vehicleId)?.trips.find(tr=>tr.index===selection.tripIndex)?.stops.find(s=>s.seq===selection.seq):null;
+  const manualActions=manualMode&&manualContext?.enabled&&selectedOrder?.requestId!==undefined?<ManualOrderActions plan={plan} requestId={selectedOrder.requestId}
+    assigned={selection?.kind==='stop'} disabled={!!solving||manualBusy||dirty||pendingEdits>0}
+    onAction={action=>openManual({action,requestIds:[selectedOrder.requestId!]})}/>:undefined;
+  function changeVehicle(id:number,excluded:boolean){
+    if(manualMode&&manualContext?.enabled)openManual({action:'deassign',requestIds:plan!.vehicles.find(v=>v.id===id)?.trips.flatMap(tr=>tr.stops.map(s=>s.requestId!))??[],vehicle:{id,excluded}});
+    else void applyEdit({op:excluded?'removeVehicle':'restoreVehicle',vehicleId:id});
+  }
 
   return (
-    <StaleWorkspaceContext.Provider value={!!freshnessError || workspaceLoading}><TooltipProvider delayDuration={200}>
+    <StaleWorkspaceContext.Provider value={!!freshnessError || workspaceLoading || !!(plan.manual||plan.assignments)&&!manualContext?.enabled}><TooltipProvider delayDuration={200}>
       <div className="flex h-full flex-col overflow-hidden">
         <TopBar
           days={days} dayId={dayId} onDayChange={(id) => { if (!okToSwitch()) return; const d = days.find((x) => x.id === id); if (d) void loadDay(d); }}
@@ -618,11 +686,14 @@ export default function App() {
           {leftOpen && (
             <aside id="cursus-fleet-pane" className="w-[310px] shrink-0 overflow-hidden border-r border-divider" style={{ width: workspace.layout.fleet }}>
               <FleetPanel plan={plan} scenario={scenario} selection={selection} onSelect={navigate}
-                onMarkUnavailable={(id) => void applyEdit({ op: 'removeVehicle', vehicleId: id })}
-                onRestoreVehicle={(id) => void applyEdit({ op: 'restoreVehicle', vehicleId: id })} solving={!!solving}
+                fleet={manualMode&&manualContext?.enabled?manualContext.fleet:undefined}
+                manualMode={manualMode} onToggleManual={manualContext?.enabled?()=>setManualOptIn(value=>!value):undefined}
+                onUndoManual={manualMode&&manualContext?.canUndo?()=>openManual({undo:true,action:'release',requestIds:[]}):undefined}
+                onMarkUnavailable={(id) => changeVehicle(id,true)}
+                onRestoreVehicle={(id) => changeVehicle(id,false)} solving={!!solving||manualBusy}
                 onFilterChange={setVisibleVehicleIds}
-                onAssignOrder={(orderNo, vehicleId) => void applyEdit({ op: 'pin', orderNo, vehicleId })}
-                onBulkAssign={onBulkAssign} />
+                onAssignOrder={(orderNo, vehicleId) => manualMode&&manualContext?.enabled?manualOrders([orderNo],vehicleId):void applyEdit({ op: 'pin', orderNo, vehicleId })}
+                onBulkAssign={manualMode&&manualContext?.enabled?manualOrders:onBulkAssign} />
             </aside>
           )}
           {leftOpen && workspace.layout.desktop && <ResizeHandle label={t('layout.fleet')} help={t('layout.help')} controls="cursus-fleet-pane"
@@ -666,10 +737,10 @@ export default function App() {
 
           {rightOpen && (
             <aside id="cursus-inspector-pane" className="w-[340px] shrink-0 overflow-hidden border-l border-divider" style={{ width: workspace.layout.inspector }}>
-              <Inspector plan={plan} baseline={baseline} scenario={scenario} selection={selection} onSelect={navigate} solving={!!solving}
+              <Inspector plan={plan} baseline={baseline} scenario={scenario} selection={selection} onSelect={navigate} solving={!!solving||manualBusy} manualActions={manualActions}
                 onBack={goBack} onForward={goForward} canGoBack={canGoBack} canGoForward={canGoForward}
-                onMarkUnavailable={(id) => void applyEdit({ op: 'removeVehicle', vehicleId: id })}
-                onRestoreVehicle={(id) => void applyEdit({ op: 'restoreVehicle', vehicleId: id })}
+                onMarkUnavailable={(id) => changeVehicle(id,true)}
+                onRestoreVehicle={(id) => changeVehicle(id,false)}
                 onSetConstraint={(vehicleId, patch) => void applyEdit({ op: 'setVehicleConstraint', vehicleId, patch })}
                 onClearConstraint={(vehicleId) => void applyEdit({ op: 'clearVehicleConstraint', vehicleId })}
                 onPin={(orderNo, vehicleId) => void applyEdit({ op: 'pin', orderNo, vehicleId })}
@@ -682,6 +753,9 @@ export default function App() {
           )}
         </div>
       </div>
+
+      {manualRequest&&manualContext?.enabled&&<ManualPlanningDialog datasetSha256={manualContext.datasetSha256!} plan={plan} scenario={scenario} fleet={manualContext.fleet??plan.vehicles} request={manualRequest}
+        onClose={()=>setManualRequest(null)} onApply={applyManual}/>}
 
       {isReplan && plan.source === 'live' && (
         <CompareDialog

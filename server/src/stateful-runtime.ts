@@ -10,6 +10,8 @@ import { workOneSolve, type SolveOutput } from './state/worker.js';
 import { solveConvertedDataset, workOneDatasetAdmission } from './state/conversion.js';
 import { deliverOne, ResendSender } from './state/outbox.js';
 import type { Scenario } from './store.js';
+import { manualSettings } from './state/manual-settings.js';
+import { admittedManualDatasetLoader } from './state/manual-dataset.js';
 
 const required = (name: string, value: string): string => {
   if (!value) throw new Error(`${name} is required in stateful mode`);
@@ -40,7 +42,9 @@ const auth = config.authRequired ? new StatefulAuthService(store, {
   tenantId: config.authTenantId, tenantName: config.authTenantName,
   secureCookies: config.authPublicOrigin.startsWith('https://'),
 }) : undefined;
-const app = await createStatefulApi({ store, objects, auth, tenantId: config.authTenantId,
+const manualPlanning = process.env.CURSUS_MANUAL_SETTINGS_FILE ? admittedManualDatasetLoader(store,objects,config.authTenantId,
+  manualSettings(JSON.parse(await readFile(process.env.CURSUS_MANUAL_SETTINGS_FILE,'utf8')))) : undefined;
+const app = await createStatefulApi({ store, objects, auth, manualPlanning, tenantId: config.authTenantId,
   tenantName: config.authTenantName, publicOrigin: config.authPublicOrigin, maxUploadBytes: config.maxUploadMB * 1024 * 1024 });
 await app.register(fastifyStatic, { root: config.webDist, wildcard: false });
 app.setNotFoundHandler((req, reply) => req.method === 'GET' && !req.url.startsWith('/api/') && !req.url.startsWith('/health/')

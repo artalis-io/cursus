@@ -1,6 +1,14 @@
 import { readFileSync, existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { config } from './config.js';
+import { createHash } from 'node:crypto';
+
+/** Stable across JSONB/object key reordering on independent replicas. */
+export function tariffIdentity(tariff:Tariff):string {
+  const canonical=(value:unknown):unknown=>value&&typeof value==='object'&&!Array.isArray(value)
+    ?Object.fromEntries(Object.entries(value).sort(([a],[b])=>a<b?-1:a>b?1:0).map(([key,item])=>[key,canonical(item)])):value;
+  return createHash('sha256').update(JSON.stringify(canonical(tariff))).digest('hex');
+}
 
 /*
  * Plan cost estimation under a carrier tariff.

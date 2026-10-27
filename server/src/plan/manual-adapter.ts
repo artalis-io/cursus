@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import type { LoadedDay, VehicleInfo } from '../data/dataset.js';
 import type { Tariff } from '../cost.js';
-import { vehicleCostFor } from '../cost.js';
+import { vehicleCostFor, tariffIdentity } from '../cost.js';
 import type { Plan, PlanStop, PlanUnassigned } from '../types.js';
 import type { Scenario } from '../store.js';
 import { applyOverrides, applyVehicleOverrides } from '../solve.js';
@@ -79,7 +79,7 @@ export function prepareManualInput(parent: Plan, scenario: Scenario, context: Ma
   // Explicit new-trip IDs are scheduled no earlier than shift start and all
   // preceding trips, using server-owned reload data; clients cannot submit times.
   return { layout, datasetSha256: sha!, request: full, requirements, fleet, departures, tariff,
-    tariffSha256: createHash('sha256').update(JSON.stringify(tariff)).digest('hex') };
+    tariffSha256: tariffIdentity(tariff) };
 }
 
 /** Check parent locks and scenario sequences before issuing validation evidence. */
@@ -141,7 +141,7 @@ export function materializeManualPlan(parent: Plan, scenario: Scenario, input: M
   });
   const plan: Plan = { ...parent, id, scenarioId: scenario.id, scenarioRevision: scenario.revision, createdAt, source: 'live',
     manual: { version: 1, parentPlanId: parent.id, layout: structuredClone(input.layout), evaluation: structuredClone(evaluation) },
-    provenance: { ...parent.provenance, datasetSha256: input.datasetSha256,
+    provenance: { ...parent.provenance, datasetSha256: input.datasetSha256,tariffSha256:input.tariffSha256,
       inputSha256: createHash('sha256').update(JSON.stringify({ dataset: input.datasetSha256, layout: input.layout, tariff: input.tariffSha256 })).digest('hex'),
       termination: 'MANUAL', solverConfig: { evaluator: 'manual-v1' }, validation: {
         valid: evaluation.validation.valid, violations: evaluation.validation.violations.map(violation => ({ ...violation,

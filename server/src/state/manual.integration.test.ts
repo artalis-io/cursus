@@ -79,6 +79,35 @@ test('manual API rejects Reviewer, Admin View-as Reviewer and CSRF before loadin
   }finally{await app.close();await store.close();}
 });
 
+test('manual preview is non-publishing; base fork, exclusion, restore and undo preserve baseline and history', {skip:!process.env.CURSUS_TEST_DATABASE_URL},async()=>{
+  const store=new StatefulStore(process.env.CURSUS_TEST_DATABASE_URL!),tenant=`ui-${randomUUID()}`,f=manualFixture();
+  await store.ensureTenant(tenant,'UI');f.scenario.kind='base';
+  await store.createScenario(tenant,f.scenario.id,f.scenario);
+  await store.pool.query('INSERT INTO plans(tenant_id,id,scenario_id,scenario_revision,body) VALUES($1,$2,$3,1,$4)',[tenant,f.parent.id,f.scenario.id,f.parent]);
+  const app=await createStatefulApi({store,tenantId:tenant,tenantName:'UI',manualPlanning:async()=>f.context});
+  const intent={parentPlanId:f.parent.id,vehicle:{id:7,excluded:true},batch:{operationId:'exclude',datasetSha256:'a'.repeat(64),commands:[]}};
+  try{
+    const capabilities=await app.inject({method:'GET',url:`/api/plans/${f.parent.id}/manual-context`});
+    assert.equal(capabilities.json().fleet.length,2);
+    const preview=await app.inject({method:'POST',url:`/api/scenarios/${f.scenario.id}/manual-preview`,headers:{'if-match':'"1"'},payload:intent});
+    assert.equal(preview.statusCode,200,preview.body);assert.equal(preview.json().stats.servedOrders,0);
+    assert.equal((await store.listPlans(tenant)).length,1);assert.equal((await store.listScenarios(tenant)).length,1);
+    const applied=await app.inject({method:'POST',url:`/api/scenarios/${f.scenario.id}/manual-plan`,headers:{'if-match':'"1"'},payload:intent});
+    assert.equal(applied.statusCode,201,applied.body);const excluded=applied.json();
+    assert.notEqual(excluded.scenarioId,f.scenario.id);assert.equal(excluded.cost.total,0);
+    assert.equal((await store.getScenario(tenant,f.scenario.id))?.revision,1);
+    assert.equal(excluded.manual.layout.history.length,2);
+    const undone=await app.inject({method:'POST',url:`/api/scenarios/${excluded.scenarioId}/manual-plan`,headers:{'if-match':'"2"'},payload:{parentPlanId:excluded.id,undo:true,batch:{...intent.batch,operationId:'undo'}}});
+    assert.equal(undone.statusCode,201,undone.body);const restored=undone.json();
+    assert.equal(restored.stats.servedOrders,2);assert.equal(restored.cost.total,1045);
+    assert.ok(restored.manual.layout.history.some((e:{action:string})=>e.action==='undo'));
+    assert.deepEqual((await store.getScenario(tenant,restored.scenarioId))?.removedVehicleIds,[]);
+    const before=(await store.listPlans(tenant)).length;
+    const stale=await app.inject({method:'POST',url:`/api/scenarios/${restored.scenarioId}/manual-plan`,headers:{'if-match':'"2"'},payload:{...intent,parentPlanId:restored.id}});
+    assert.equal(stale.statusCode,409);assert.equal((await store.listPlans(tenant)).length,before);
+  }finally{await app.close();await store.close();}
+});
+
 test('edit during evaluation and stale worker completion cannot supersede manual publication', {skip:!process.env.CURSUS_TEST_DATABASE_URL},async()=>{
   const a=new StatefulStore(process.env.CURSUS_TEST_DATABASE_URL!),b=new StatefulStore(process.env.CURSUS_TEST_DATABASE_URL!);
   const tenant=`edit-race-${randomUUID()}`, f=manualFixture();

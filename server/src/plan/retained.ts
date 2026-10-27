@@ -100,6 +100,7 @@ export function assertRetainedPlan(plan: Plan, scenario: Scenario): void {
   if (!retained) return;
   need(plan.scenarioId === scenario.id && plan.scenarioRevision === scenario.revision, 'publication scenario identity changed');
   const assignments = plan.assignments;
+  if(retained.tariffSha256)need(plan.provenance.tariffSha256===retained.tariffSha256,'publication changed tariff identity');
   need(assignments?.version === 1 && assignments.layout.datasetSha256 === retained.datasetSha256 &&
     plan.provenance?.datasetSha256 === retained.datasetSha256, 'publication missing dataset/provenance evidence');
   assertManualLayout(assignments.layout);

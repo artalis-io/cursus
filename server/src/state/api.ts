@@ -34,6 +34,7 @@ import { expectedRevision, registerScenarioPreconditions } from '../revisions.js
 import { PlanWorkflow, WorkflowError } from './plan-workflow.js';
 import { exportFilename } from '../handoff.js';
 import { ManualPlanPublisher, ManualPublicationError, parseManualRequest, type ManualDatasetLoader } from './manual.js';
+import { prepareManualInput } from '../plan/manual-adapter.js';
 
 // Do not advertise legacy-only endpoints as usable controls in this runtime.
 function statefulPermissions(role: string) {
@@ -56,15 +57,32 @@ export async function createStatefulApi(options: StatefulApiOptions): Promise<Fa
   const scenarios = new ScenarioRepository(options.store, options.tenantId);
   registerScenarioPreconditions(app, id => scenarios.get(id));
   const workflow = new PlanWorkflow(options.store, options.tenantId);
-  app.post<{ Params: { id: string } }>('/api/scenarios/:id/manual-plan', async (req, reply) => {
+  app.get<{ Params: { id: string } }>('/api/plans/:id/manual-context', async (req, reply) => {
+    reply.header('Cache-Control','private, no-store');
+    if (!options.manualPlanning) return { enabled: false };
+    const plan = await options.store.getPlan(options.tenantId,req.params.id);
+    if (!plan) return reply.code(404).send({error:'Plan not found.'});
+    const scenario = await scenarios.get(plan.scenarioId);
+    if (!scenario || scenario.revision !== plan.scenarioRevision) return {enabled:false};
+    try {
+      const context=await options.manualPlanning(plan,scenario), input=prepareManualInput(plan,scenario,context);
+      const fleet=input.request.vehicles.map(vehicle=>({...(plan.vehicles.find(v=>v.id===vehicle.id) ?? {
+        id:vehicle.id,ref:vehicle.ref,vehicleClass:input.fleet.get(vehicle.id)!.vehicleClass,isSubcontractor:input.fleet.get(vehicle.id)!.isSubcontractor,
+        tonnage:input.fleet.get(vehicle.id)!.grossTonnage,hasTailLift:input.fleet.get(vehicle.id)!.hasTailLift,color:'#2d7b55',
+        capacityKg:vehicle.capacity[0],capacityPallets:vehicle.capacity[1],tripCount:0,finishTimeSec:0,peakKg:0,peakPallets:0,distanceKm:0,trips:[] })}));
+      return {enabled:true, datasetSha256:input.datasetSha256, fleet,canUndo:!!plan.manual?.parentScenario};
+    } catch { return {enabled:false}; }
+  });
+  for (const suffix of ['manual-plan','manual-preview'] as const) app.post<{ Params: { id: string } }>(`/api/scenarios/:id/${suffix}`, async (req, reply) => {
     if (!options.manualPlanning) return reply.code(503).send({ error: 'Manual planning is not enabled.' });
     if (req.headers['if-match'] === undefined) return reply.code(428).send({ error: 'If-Match revision required.' });
     const revision = expectedRevision(req.headers);
     if (revision === null) return reply.code(400).send({ error: 'Quoted non-negative If-Match revision required.' });
     try {
       const intent = parseManualRequest(req.body);
-      return reply.code(201).send(await new ManualPlanPublisher(options.store, options.tenantId, options.manualPlanning)
-        .publish(req.params.id, revision, intent, req.cursusPrincipal));
+      const plan=await new ManualPlanPublisher(options.store, options.tenantId, options.manualPlanning)
+        .publish(req.params.id, revision, intent, req.cursusPrincipal, suffix === 'manual-preview');
+      return suffix === 'manual-preview' ? {stats:plan.stats,cost:plan.cost,validation:plan.provenance.validation} : reply.code(201).send(plan);
     } catch (error) {
       if (error instanceof ManualPublicationError) return reply.code(error.status).send({ error: error.message });
       throw error;

@@ -10,6 +10,18 @@ export type Lang = 'en' | 'hu';
 type Dict = Record<string, string>;
 
 const en: Dict = {
+  'manual.undo':'Undo manual change','manual.undoConfirm':'Restore the previous arrangement as a new draft? History and saved plans will be preserved.',
+  'manual.title':'Manual planning','manual.assignment':'Assignment decisions','manual.assign':'Assign to vehicle…','manual.move':'Move to vehicle…',
+  'manual.deassign':'Return to unassigned','manual.release':'Let optimizer decide','manual.retained':'Manual decision retained','manual.automatic':'Optimizer-controlled',
+  'manual.retentionHint':'Manual vehicle choices and unassignments persist through Replan until released.','manual.history':'Assignment history',
+  'manual.description':'Calculate the complete draft before applying. No optimization runs on Apply.','manual.vehicle':'Vehicle','manual.trip':'Trip',
+  'manual.newTrip':'New trip','manual.position':'Position','manual.append':'At the end','manual.before':'Before #{order}',
+  'manual.preview':'Calculated draft','manual.coverage':'Served / Total','manual.vehiclesTrips':'Vehicles / Trips',
+  'manual.invalid':'Invalid draft: constraint violations remain visible and approval is blocked.','manual.calculate':'Calculate preview',
+  'manual.apply':'Apply manual change','manual.saveInvalid':'Save invalid draft','manual.cancel':'Cancel','manual.retry':'Retry the same operation safely, or reload to inspect its status.',
+  'manual.excludeConfirm':'Exclude this vehicle and return its {n} orders to unassigned?','manual.restoreConfirm':'Restore this vehicle to the available fleet? Existing unassigned orders will not move.',
+  'manual.assigned':'Assigned','manual.available':'Available','manual.excluded':'Excluded',
+  'manual.pending':'Apply or discard pending scenario edits before manual planning.','manual.identity':'This delivery has no unambiguous request identity. Reload the dataset before editing.',
   'freshness.changed': 'This scenario changed in another workspace. Reload before continuing.',
   'freshness.unverified': 'Unable to verify the current scenario. Reload before making changes.',
   'freshness.reload': 'Reload scenario', 'freshness.confirm': 'Reload the latest scenario? Unsubmitted local changes will be discarded.',
@@ -273,6 +285,18 @@ const en: Dict = {
 };
 
 const hu: Dict = {
+  'manual.undo':'Kézi módosítás visszavonása','manual.undoConfirm':'Visszaállítja az előző kiosztást új tervezetként? Az előzmények és a mentett tervek megmaradnak.',
+  'manual.title':'Kézi tervezés','manual.assignment':'Kiosztási döntések','manual.assign':'Járműhöz rendelés…','manual.move':'Áthelyezés másik járműre…',
+  'manual.deassign':'Vissza a kiosztatlanokhoz','manual.release':'Döntsön az optimalizáló','manual.retained':'Kézi döntés megőrizve','manual.automatic':'Optimalizáló által kiosztott',
+  'manual.retentionHint':'A kézi járműválasztás és leválasztás újratervezéskor is megmarad, amíg fel nem oldja.','manual.history':'Kiosztási előzmények',
+  'manual.description':'Alkalmazás előtt számítsa ki a teljes tervezetet. Az alkalmazás nem indít optimalizálást.','manual.vehicle':'Jármű','manual.trip':'Forduló',
+  'manual.newTrip':'Új forduló','manual.position':'Sorrend','manual.append':'A végére','manual.before':'#{order} elé',
+  'manual.preview':'Kiszámított tervezet','manual.coverage':'Kiszolgált / Összes','manual.vehiclesTrips':'Járművek / Fordulók',
+  'manual.invalid':'Érvénytelen tervezet: a korlátsértések láthatók maradnak, és a jóváhagyás tiltott.','manual.calculate':'Előnézet kiszámítása',
+  'manual.apply':'Kézi módosítás alkalmazása','manual.saveInvalid':'Érvénytelen tervezet mentése','manual.cancel':'Mégse','manual.retry':'Ugyanez a művelet biztonságosan újrapróbálható; az állapot frissítéssel ellenőrizhető.',
+  'manual.excludeConfirm':'Kizárja ezt a járművet, és visszahelyezi {n} megrendelését a kiosztatlanok közé?','manual.restoreConfirm':'Visszaállítja a járművet az elérhető flottába? A kiosztatlan megrendelések nem változnak.',
+  'manual.assigned':'Kiosztott','manual.available':'Elérhető','manual.excluded':'Kizárt',
+  'manual.pending':'Kézi tervezés előtt alkalmazza vagy vesse el a függő módosításokat.','manual.identity':'A szállítás nem azonosítható egyértelműen. Szerkesztés előtt töltse újra az adatokat.',
   'freshness.changed': 'A forgatókönyv másik munkaterületen megváltozott. Folytatás előtt töltse újra.',
   'freshness.unverified': 'A forgatókönyv aktualitása nem ellenőrizhető. Módosítás előtt töltse újra.',
   'freshness.reload': 'Forgatókönyv újratöltése', 'freshness.confirm': 'Betölti a legújabb forgatókönyvet? A még el nem küldött helyi módosítások elvesznek.',
