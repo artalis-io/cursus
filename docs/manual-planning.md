@@ -366,3 +366,13 @@ trip, explicit zero trips means unlimited, and zero distance/duration limits are
 unlimited. Independent matrix/tariff tests cover 36 placement/model combinations;
 browser checks reconcile actual delivery counts, uniqueness, trip/vehicle totals,
 loads, timing and trip/vehicle/plan costs after edits, Undo and native Replan.
+
+Hardened source `d34f826` passed the complete local ARM64 production-image suite:
+**64/64 Playwright tests, zero retries, skips or flaky results**, against image
+`sha256:746c251c4bf148207f486f2b3655e4e4e3b6a974f7ebcb6b95c57d4f674e70d4`.
+Server verification passed 170/170 tests; stateful integration passed 30 tests
+with two optional private-data tests skipped; focused coverage passed 47/47.
+Frontend build and lint passed (five existing hook warnings). An initial Debian
+package-signature failure during image build resolved on an ordinary retry;
+signature verification was not bypassed. No production deployment or private
+Gyermelyi run is implied by this synthetic acceptance evidence.
