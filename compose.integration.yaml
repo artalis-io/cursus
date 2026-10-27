@@ -16,6 +16,7 @@ services:
     tmpfs: ["/var/lib/postgresql/data"]
 
   s3-test:
+    init: true
     # Test-only S3 protocol fixture. Production is Cloudflare R2.
     image: chrislusf/seaweedfs:3.97
     command: server -s3 -dir=/data
@@ -25,4 +26,10 @@ services:
       interval: 2s
       timeout: 2s
       retries: 30
-    tmpfs: ["/data"]
+    # SeaweedFS reserves large extents even for tiny objects. A RAM-backed
+    # directory pins those pages and can starve unrelated local map services.
+    # This named volume is project-scoped and removed by test teardown (-v).
+    volumes: [s3-test-data:/data]
+
+volumes:
+  s3-test-data: {}

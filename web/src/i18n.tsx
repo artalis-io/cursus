@@ -10,6 +10,10 @@ export type Lang = 'en' | 'hu';
 type Dict = Record<string, string>;
 
 const en: Dict = {
+  'manual.violation.SHIFT':'Vehicle shift exceeded','manual.violation.MAX_TRIPS':'Vehicle trip limit exceeded',
+  'manual.violation.MAX_DISTANCE':'Vehicle distance limit exceeded','manual.violation.MAX_DURATION':'Vehicle duration limit exceeded',
+  'manual.violation.EXCLUDED':'Work remains on an excluded vehicle','manual.violation.ASSIGNMENT':'Assignment conflicts with a retained decision or restriction',
+  'manual.origin':'Initial source','manual.origin.optimizer':'Optimizer','manual.origin.import':'Imported','manual.origin.manual':'Manual','manual.origin.historical':'Historical / unknown',
   'manual.undo':'Undo manual change','manual.undoConfirm':'Restore the previous arrangement as a new draft? History and saved plans will be preserved.',
   'manual.title':'Manual planning','manual.assignment':'Assignment decisions','manual.assign':'Assign to vehicle…','manual.move':'Move to vehicle…',
   'manual.deassign':'Return to unassigned','manual.release':'Let optimizer decide','manual.retained':'Manual decision retained','manual.automatic':'Optimizer-controlled',
@@ -285,6 +289,10 @@ const en: Dict = {
 };
 
 const hu: Dict = {
+  'manual.violation.SHIFT':'Jármű műszakideje túllépve','manual.violation.MAX_TRIPS':'Fordulókorlát túllépve',
+  'manual.violation.MAX_DISTANCE':'Távolságkorlát túllépve','manual.violation.MAX_DURATION':'Időtartamkorlát túllépve',
+  'manual.violation.EXCLUDED':'Kiosztott munka maradt egy kizárt járművön','manual.violation.ASSIGNMENT':'A kiosztás ütközik egy megőrzött döntéssel vagy korlátozással',
+  'manual.origin':'Eredeti forrás','manual.origin.optimizer':'Optimalizáló','manual.origin.import':'Importált','manual.origin.manual':'Kézi','manual.origin.historical':'Korábbi / ismeretlen',
   'manual.undo':'Kézi módosítás visszavonása','manual.undoConfirm':'Visszaállítja az előző kiosztást új tervezetként? Az előzmények és a mentett tervek megmaradnak.',
   'manual.title':'Kézi tervezés','manual.assignment':'Kiosztási döntések','manual.assign':'Járműhöz rendelés…','manual.move':'Áthelyezés másik járműre…',
   'manual.deassign':'Vissza a kiosztatlanokhoz','manual.release':'Döntsön az optimalizáló','manual.retained':'Kézi döntés megőrizve','manual.automatic':'Optimalizáló által kiosztott',

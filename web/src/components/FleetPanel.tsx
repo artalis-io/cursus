@@ -33,12 +33,13 @@ function CapacityBar({ label, used, cap, color }: { label: string; used: number;
 }
 
 function VehicleCard({
-  vehicle, selection, onSelect, onMarkUnavailable, onRestore, removed, expanded, onToggle, solving, onAssignOrder,
+  vehicle, selection, onSelect, onMarkUnavailable, onRestore, removed, expanded, onToggle, solving, onAssignOrder, manual,
 }: {
   vehicle: Vehicle; selection: Selection; onSelect: (s: Selection) => void;
   onMarkUnavailable: (id: number) => void; onRestore: (id: number) => void; removed: boolean;
   expanded: boolean; onToggle: () => void; solving: boolean;
   onAssignOrder?: (orderNo: string, vehicleId: number) => void;
+  manual?:boolean;
 }) {
   const t = useT();
   const selThisVeh = selection && selection.kind !== 'unassigned' && selection.vehicleId === vehicle.id;
@@ -61,7 +62,7 @@ function VehicleCard({
         </button>
         <span className="h-3 w-3 shrink-0 rounded-sm" style={{ backgroundColor: vehicle.color }} />
         <span className={`font-semibold ${removed ? 'line-through' : ''}`}>{vehicle.ref}</span>
-        {removed && <Badge variant="warning" className="px-1 py-0 text-[9px]">{t('fleet.staged')}</Badge>}
+        {removed && <Badge variant="warning" className="px-1 py-0 text-[9px]">{t(manual?'manual.excluded':'fleet.staged')}</Badge>}
         <span className="truncate text-[11px] text-muted-foreground">{(vehicle.vehicleClass ?? '').replace(/_/g, ' ')}</span>
         <span className="tnum ml-auto text-[11px] text-muted-foreground">{vehicle.tripCount === 1 ? t('fleet.tripOne', { n: vehicle.tripCount }) : t('fleet.trips', { n: vehicle.tripCount })}</span>
       </div>
@@ -187,7 +188,7 @@ export function FleetPanel({
           ]:[{label:'',items:vehicles}]).map(group=><section key={group.label} aria-label={group.label||undefined} className="space-y-2">
           {group.label&&<h3 className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">{group.label} · {group.items.length}</h3>}
           {group.items.map((v) => (
-            <VehicleCard key={v.id} vehicle={v} selection={selection} onSelect={onSelect}
+            <VehicleCard key={v.id} vehicle={v} selection={selection} onSelect={onSelect} manual={!!fleet}
               onMarkUnavailable={onMarkUnavailable} onRestore={onRestoreVehicle} removed={scenario.removedVehicleIds.includes(v.id)} solving={solving}
               expanded={expanded.has(v.id)} onAssignOrder={onAssignOrder}
               onToggle={() => setExpanded((prev) => { const n = new Set(prev); if (n.has(v.id)) n.delete(v.id); else n.add(v.id); return n; })} />

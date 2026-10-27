@@ -70,7 +70,10 @@ export async function createStatefulApi(options: StatefulApiOptions): Promise<Fa
         id:vehicle.id,ref:vehicle.ref,vehicleClass:input.fleet.get(vehicle.id)!.vehicleClass,isSubcontractor:input.fleet.get(vehicle.id)!.isSubcontractor,
         tonnage:input.fleet.get(vehicle.id)!.grossTonnage,hasTailLift:input.fleet.get(vehicle.id)!.hasTailLift,color:'#2d7b55',
         capacityKg:vehicle.capacity[0],capacityPallets:vehicle.capacity[1],tripCount:0,finishTimeSec:0,peakKg:0,peakPallets:0,distanceKm:0,trips:[] })}));
-      return {enabled:true, datasetSha256:input.datasetSha256, fleet,canUndo:!!plan.manual?.parentScenario};
+      const actorIds=[...new Set((plan.manual??plan.assignments)?.layout.history.map(event=>event.actorId).filter(id=>/^[a-f0-9-]{36}$/.test(id))??[])];
+      const actors=actorIds.length?await options.store.pool.query<{id:string;email:string}>(
+        'SELECT u.id::text,u.email FROM users u JOIN memberships m ON m.user_id=u.id WHERE m.tenant_id=$1 AND u.id=ANY($2::uuid[])',[options.tenantId,actorIds]):{rows:[]};
+      return {enabled:true, datasetSha256:input.datasetSha256, fleet,canUndo:!!plan.manual?.parentScenario,actors:Object.fromEntries(actors.rows.map(actor=>[actor.id,actor.email]))};
     } catch { return {enabled:false}; }
   });
   for (const suffix of ['manual-plan','manual-preview'] as const) app.post<{ Params: { id: string } }>(`/api/scenarios/:id/${suffix}`, async (req, reply) => {

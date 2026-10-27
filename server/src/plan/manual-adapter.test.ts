@@ -6,6 +6,8 @@ import { applyManualBatch } from './manual.js';
 import { parseManualRequest } from '../state/manual.js';
 import { createStatefulApi } from '../state/api.js';
 import type { StatefulStore } from '../state/postgres.js';
+import { manualSettings } from '../state/manual-settings.js';
+import { tariffIdentity } from '../cost.js';
 
 test('adapter maps stable IDs and materializes coherent manual plan, provenance and KPIs', () => {
   const {parent,scenario,context}=manualFixture();
@@ -71,4 +73,16 @@ test('new publication API is disabled unless explicitly configured by the server
     assert.equal(response.statusCode,503);
     assert.equal(response.json().error,'Manual planning is not enabled.');
   }finally{await app.close();}
+});
+
+test('external manual settings fail closed and tariff identity is canonical across replicas',()=>{
+  const {context}=manualFixture();
+  const settings={tariff:context.tariff,vehicles:[{id:7,ref:'V-7',vehicleClass:null,isSubcontractor:false,tonnage:12,hasTailLift:true,reloadSec:120}]};
+  assert.equal(manualSettings(settings).vehicleInfo.get('V7')?.tonnage,12);
+  for(const bad of [null,{...settings,vehicles:[]},{...settings,vehicles:[...settings.vehicles,...settings.vehicles]},
+    {...settings,vehicles:[{...settings.vehicles[0],reloadSec:-1}]},{...settings,tariff:{...settings.tariff,perKmDefault:-1}},
+    {...settings,vehicles:[{...settings.vehicles[0],hasTailLift:undefined}]},{...settings,tariff:{...settings.tariff,currency:'invalid'}}])assert.throws(()=>manualSettings(bad));
+  const reordered=Object.fromEntries(Object.entries(settings.tariff).reverse()) as unknown as typeof settings.tariff;
+  assert.equal(tariffIdentity(reordered),tariffIdentity(settings.tariff));
+  assert.notEqual(tariffIdentity({...settings.tariff,perKmDefault:123}),tariffIdentity(settings.tariff));
 });

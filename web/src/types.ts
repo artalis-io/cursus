@@ -159,7 +159,7 @@ export interface ManualLayout {
 }
 export type ManualCommand = {op:'assign';requestId:number;vehicleId:number;tripId:string;position:number}|{op:'deassign'|'release';requestId:number};
 export interface ManualIntent {parentPlanId:string;batch:{operationId:string;datasetSha256:string;commands:ManualCommand[]};vehicle?:{id:number;excluded:boolean};undo?:true}
-export interface ManualContext {enabled:boolean;datasetSha256?:string;fleet?:Vehicle[];canUndo?:boolean}
+export interface ManualContext {enabled:boolean;datasetSha256?:string;fleet?:Vehicle[];canUndo?:boolean;actors?:Record<string,string>}
 export interface ManualPreview {stats:PlanStats;cost:PlanCost|null;validation:PlanProvenance['validation']}
 
 /* ---- API shapes ---- */

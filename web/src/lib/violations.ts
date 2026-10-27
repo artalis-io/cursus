@@ -10,5 +10,6 @@ export function violationDetail(v: ValidationViolation, t: TFn): string {
   if (v.type === 'CAPACITY') return t('issues.overBy', { n: Math.round((v.actual ?? 0) - (v.limit ?? 0)), dim: v.dimension ?? '' });
   if (v.type === 'TAIL_LIFT') return t('issues.tailLift');
   if (v.type === 'VEHICLE_SIZE') return t('issues.oversize', { a: v.actual ?? '—', b: v.limit ?? '—' });
+  if(['SHIFT','MAX_TRIPS','MAX_DISTANCE','MAX_DURATION','EXCLUDED','ASSIGNMENT'].includes(v.type))return t(`manual.violation.${v.type}`);
   return v.type;
 }

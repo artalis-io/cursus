@@ -11,7 +11,7 @@ import type { ManualIntent, ManualPreview, Plan, Scenario, Vehicle } from '@/typ
 
 export type ManualAction = 'assign'|'deassign'|'release';
 export interface ManualRequest {requestIds:number[];action:ManualAction;targetVehicleId?:number;vehicle?:{id:number;excluded:boolean};undo?:true}
-export function ManualOrderActions({plan,requestId,assigned,disabled,onAction}:{plan:Plan;requestId:number;assigned:boolean;disabled:boolean;onAction:(action:ManualAction)=>void}){
+export function ManualOrderActions({plan,requestId,assigned,disabled,onAction,actors}:{plan:Plan;requestId:number;assigned:boolean;disabled:boolean;onAction:(action:ManualAction)=>void;actors?:Record<string,string>}){
   const t=useT(),canEdit=usePermission('scenario.edit');
   const layout=(plan.manual??plan.assignments)?.layout,decision=layout?.decisions[String(requestId)];
   const history=layout?.history.filter(event=>event.requestId===requestId)??[];
@@ -19,6 +19,7 @@ export function ManualOrderActions({plan,requestId,assigned,disabled,onAction}:{
   return <section aria-label={t('manual.assignment')} className="space-y-2 rounded-md border border-divider bg-muted/30 p-2.5">
     <div className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">{t('manual.assignment')}</div>
     <Badge variant="outline">{t(decision?'manual.retained':'manual.automatic')}</Badge>
+    <p className="text-[10px] text-muted-foreground">{t('manual.origin')}: {t(`manual.origin.${layout?.origins[String(requestId)]??(plan.source==='live'?'optimizer':'historical')}`)}</p>
     {canEdit&&<div className="flex flex-wrap gap-2">
       <Button size="sm" variant="outline" disabled={disabled} onClick={()=>onAction('assign')}>{t(assigned?'manual.move':'manual.assign')}</Button>
       {assigned&&<Button size="sm" variant="outline" disabled={disabled} onClick={()=>onAction('deassign')}>{t('manual.deassign')}</Button>}
@@ -28,7 +29,7 @@ export function ManualOrderActions({plan,requestId,assigned,disabled,onAction}:{
     {!!history.length&&<details className="text-xs"><summary className="cursor-pointer">{t('manual.history')} ({history.length})</summary>
       <ol className="mt-2 space-y-2 break-words">{history.map((event,i)=><li key={`${event.operationId}-${i}`}>
         {t(`manual.${event.action}`)} · {event.from?ref(event.from.vehicleId):t('fleet.unassigned')} → {event.to?ref(event.to.vehicleId):t('fleet.unassigned')}
-        <div className="text-[10px] text-muted-foreground">{event.actorId} · {new Date(event.at).toLocaleString()}</div>
+        <div className="text-[10px] text-muted-foreground">{actors?.[event.actorId]??event.actorId} · {new Date(event.at).toLocaleString()}</div>
       </li>)}</ol></details>}
   </section>;
 }

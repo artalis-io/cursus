@@ -294,3 +294,9 @@ All UI strings have EN/HU translations. Production is unchanged: no settings,
 Cloudflare resources, containers, database migrations or customer data are deployed
 by this implementation. Real-image acceptance uses synthetic external settings
 and dedicated temporary Compose projects, never production credentials.
+
+The S3 protocol fixture uses a disposable project-scoped disk volume (removed by
+`docker compose ... down -v`), not tmpfs: SeaweedFS can reserve gigabytes for tiny
+objects, pinning RAM and starving unrelated local map services. Run standalone
+integration and full-image acceptance stacks sequentially and tear each down;
+neither test workflow stops the operator's local or production deployments.

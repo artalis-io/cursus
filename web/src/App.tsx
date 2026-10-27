@@ -628,9 +628,9 @@ export default function App() {
   const dirty = scenario.revision !== plan.scenarioRevision;
   const selectedOrder=selection?.kind==='unassigned'?plan.unassigned.find(o=>o.orderNo===selection.orderNo)
     :selection?.kind==='stop'?plan.vehicles.find(v=>v.id===selection.vehicleId)?.trips.find(tr=>tr.index===selection.tripIndex)?.stops.find(s=>s.seq===selection.seq):null;
-  const manualActions=manualMode&&manualContext?.enabled&&selectedOrder?.requestId!==undefined?<ManualOrderActions plan={plan} requestId={selectedOrder.requestId}
+  const manualActions=manualMode&&manualContext?.enabled&&selectedOrder?.requestId!==undefined?<ManualOrderActions plan={plan} requestId={selectedOrder.requestId} actors={manualContext.actors}
     assigned={selection?.kind==='stop'} disabled={!!solving||manualBusy||dirty||pendingEdits>0}
-    onAction={action=>openManual({action,requestIds:[selectedOrder.requestId!]})}/>:undefined;
+    onAction={action=>openManual({action,requestIds:[selectedOrder.requestId!]})}/>:manualMode&&selectedOrder?<p className="text-xs text-muted-foreground">{t(dirty?'manual.pending':'manual.identity')}</p>:undefined;
   function changeVehicle(id:number,excluded:boolean){
     if(manualMode&&manualContext?.enabled)openManual({action:'deassign',requestIds:plan!.vehicles.find(v=>v.id===id)?.trips.flatMap(tr=>tr.stops.map(s=>s.requestId!))??[],vehicle:{id,excluded}});
     else void applyEdit({op:excluded?'removeVehicle':'restoreVehicle',vehicleId:id});
