@@ -35,7 +35,11 @@ export function nativeSolveRequest(request: SurgeRequest, sequences: Scenario['s
       .map(r => ({ ...r, request_ids: r.request_ids.filter(id => !seededRequests.has(id)) })), ...seeds];
   }
   if (extra.initial_routes) extra.initial_routes = extra.initial_routes.filter(r => vehicles.has(r.vehicle_id))
-    .map(r => ({ ...r, vehicle_id: vehicles.get(r.vehicle_id)!, request_ids: r.request_ids.filter(id => requests.has(id)).map(id => requests.get(id)!) }));
+    .map(r => ({ ...r, vehicle_id: vehicles.get(r.vehicle_id)!, request_ids: r.request_ids.filter(id => {
+      const index = requests.get(id), order = index === undefined ? undefined : request.requests[index];
+      return order && !order.forbidden_vehicles?.includes(r.vehicle_id) &&
+        (!order.allowed_vehicles?.length || order.allowed_vehicles.includes(r.vehicle_id));
+    }).map(id => requests.get(id)!) })).filter(route => route.request_ids.length > 0);
   for (const key of ['committed_requests', 'frozen_requests'] as const)
     if (extra[key]) extra[key] = extra[key]!.filter(id => requests.has(id)).map(id => requests.get(id)!);
   return { request: native, restore: solution => ({ ...solution,

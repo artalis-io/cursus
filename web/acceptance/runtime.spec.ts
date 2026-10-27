@@ -6,6 +6,218 @@ import type { DaySummary, Plan, Scenario } from '../src/types';
 const peer = process.env.CURSUS_ACCEPTANCE_PEER!;
 const compose = JSON.parse(process.env.CURSUS_ACCEPTANCE_COMPOSE ?? 'null') as string[] | null;
 const expectedOrders = ['PUBLIC-1', 'PUBLIC-2', 'PUBLIC-3', 'PUBLIC-5', 'PUBLIC-6', 'PUBLIC-7'];
+
+async function manualStop(page:Page,plan:Plan,orderNo:string){
+  const vehicle=plan.vehicles.find(v=>v.trips.some(tr=>tr.stops.some(s=>s.orderNo===orderNo)))!;
+  const trip=vehicle.trips.find(tr=>tr.stops.some(s=>s.orderNo===orderNo))!;
+  const stop=trip.stops.find(s=>s.orderNo===orderNo)!;
+  await page.locator('aside').first().getByText(vehicle.ref,{exact:true}).click();
+  const inspector=page.locator('aside').last();
+  await inspector.getByRole('button',{name:new RegExp(`Trip ${trip.index+1} ·`)}).click();
+  await inspector.locator('ol li > button').filter({hasText:stop.customer!}).click();
+}
+async function applyManualDialog(page:Page):Promise<Plan>{
+  const dialog=page.getByRole('dialog',{name:'Manual planning',exact:true});
+  const before=await get<Plan[]>(page.request,'/api/plans');
+  await dialog.getByRole('button',{name:'Calculate preview',exact:true}).click();
+  await expect(dialog.getByTestId('manual-preview')).toBeVisible();
+  expect((await get<Plan[]>(page.request,'/api/plans')).length).toBe(before.length);
+  const response=page.waitForResponse(r=>r.request().method()==='POST'&&r.url().endsWith('/manual-plan'));
+  await dialog.getByRole('button',{name:/^(Apply manual change|Save invalid draft)$/}).click();
+  const result=await response;expect(result.status()).toBe(201);
+  const plan=await result.json() as Plan;
+  await expect(dialog).toHaveCount(0);
+  return plan;
+}
+function independentManualKpis(plan:Plan){
+  let distance=0,tripCount=0;
+  const stops=plan.vehicles.flatMap(v=>v.trips.flatMap(t=>t.stops));
+  expect(plan.stats.servedOrders).toBe(stops.length);
+  expect(plan.stats.deliveryStops).toBe(stops.length);
+  expect(plan.stats.vehiclesUsed).toBe(plan.vehicles.length);
+  expect(new Set([...stops,...plan.unassigned].map(s=>s.requestId)).size).toBe(6);
+  expect(plan.stats.totalOrders).toBe(6);
+  for(const vehicle of plan.vehicles){
+    expect(vehicle.tripCount).toBe(vehicle.trips.length);
+    expect(vehicle.distanceKm).toBeCloseTo(vehicle.trips.reduce((sum,t)=>sum+t.distanceKm,0),8);
+    expect(vehicle.peakKg).toBe(Math.max(...vehicle.trips.map(t=>t.loadKg)));
+    for(const trip of vehicle.trips){
+      expect(trip.loadKg).toBe(trip.stops.reduce((sum,s)=>sum+s.weightKg,0));
+      expect(trip.loadPallets).toBe(trip.stops.reduce((sum,s)=>sum+s.pallets,0));
+      for(const stop of trip.stops){expect(stop.serviceStartSec).toBeGreaterThanOrEqual(stop.arrivalSec);expect(stop.departureSec).toBeGreaterThanOrEqual(stop.serviceStartSec);}
+    }
+  }
+  for(const vehicle of plan.vehicles)for(const trip of vehicle.trips){
+    let previous=0;tripCount++;
+    for(const stop of trip.stops){const location=Number(stop.orderNo.split('-')[1]);if(location!==previous)distance+=1+(previous*7+location*3)%9;previous=location;}
+    if(previous)distance+=1+(previous*7)%9;
+  }
+  expect(plan.stats.totalDistanceKm).toBe(distance);
+  expect(plan.stats.trips).toBe(tripCount);
+  expect(plan.stats.servedOrders+plan.unassigned.length).toBe(6);
+  expect(plan.cost?.total).toBe(plan.vehicles.length*38000+260*distance);
+  expect(plan.cost!.fixed+plan.cost!.variable).toBe(plan.cost!.total);
+  expect(plan.cost!.perVehicle.reduce((sum,v)=>sum+v.totalCost,0)).toBe(plan.cost!.total);
+  expect(plan.vehicles.flatMap(v=>v.trips).reduce((sum,t)=>sum+(t.costFt??0),0)).toBe(plan.cost!.total);
+}
+
+test('manual: same-trip stop insertion refreshes schedule, distance, costs and peer retrieval',async({page})=>{
+  await login(page);const base=await baseline(page);
+  const vehicle=base.vehicles.find(v=>v.trips.some(t=>t.stops.length>=2))!;
+  const trip=vehicle.trips.find(t=>t.stops.length>=2)!,first=trip.stops[0]!;
+  await page.getByRole('button',{name:'Manual planning',exact:true}).click();
+  await manualStop(page,base,first.orderNo);
+  await page.getByRole('button',{name:'Move to vehicle…',exact:true}).click();
+  const dialog=page.getByRole('dialog',{name:'Manual planning',exact:true});
+  await dialog.getByRole('combobox',{name:'Trip',exact:true}).selectOption(trip.manualTripId??`trip-${trip.index}`);
+  await dialog.getByRole('combobox',{name:'Position',exact:true}).selectOption('');
+  const moved=await applyManualDialog(page);independentManualKpis(moved);
+  expect(moved.vehicles.find(v=>v.id===vehicle.id)!.trips.find(t=>t.manualTripId===(trip.manualTripId??`trip-${trip.index}`))!.stops.map(s=>s.requestId))
+    .toEqual([...trip.stops.slice(1).map(s=>s.requestId),first.requestId]);
+  const peerPlan=await get<Plan>(page.request,`${peer}/api/plans/${moved.id}`);
+  expect(peerPlan.stats).toEqual(moved.stats);expect(peerPlan.cost).toEqual(moved.cost);
+});
+
+for(const role of ['admin','planner'] as const){
+test(`manual ${role}: keyboard move, deassign, reload, release and native replan preserve real state and KPIs`,async({page})=>{
+  await login(page,`${role}@acceptance.example.test`);await shortBudget(page);
+  const base=await baseline(page);
+  await page.getByRole('button',{name:'Manual planning',exact:true}).click();
+  await expect(page.getByRole('region',{name:'Available',exact:true})).toBeVisible();
+  await manualStop(page,base,'PUBLIC-2');
+  await page.getByRole('button',{name:'Move to vehicle…',exact:true}).focus();await page.keyboard.press('Enter');
+  const dialog=page.getByRole('dialog',{name:'Manual planning',exact:true});
+  await dialog.getByRole('combobox',{name:'Vehicle',exact:true}).selectOption('30');
+  await dialog.getByRole('combobox',{name:'Trip',exact:true}).selectOption('');
+  const moved=await applyManualDialog(page);independentManualKpis(moved);
+  expect(moved.scenarioId).not.toBe(base.scenarioId);
+  expect(moved.vehicles.find(v=>v.id===30)?.trips.some(t=>t.stops.some(s=>s.orderNo==='PUBLIC-2'))).toBe(true);
+  expect((await get<Plan>(page.request,`${peer}/api/plans/${moved.id}`)).manual?.layout.history.length).toBe(1);
+  expect((await get<Plan>(page.request,`/api/plans/${base.id}`)).stats).toEqual(base.stats);
+  await manualStop(page,moved,'PUBLIC-2');
+  await expect(page.getByText('Manual decision retained',{exact:true})).toBeVisible();
+  await page.getByRole('button',{name:'Return to unassigned',exact:true}).click();
+  const unassigned=await applyManualDialog(page);independentManualKpis(unassigned);
+  expect(unassigned.stats.servedOrders).toBe(5);
+  expect(unassigned.unassigned.find(o=>o.orderNo==='PUBLIC-2')?.reasonCode).toBe('MANUAL_UNASSIGNED');
+  await page.reload();await expect(page.getByText('5 / 6',{exact:true})).toBeVisible();
+  const fleet=page.locator('aside').first();
+  await fleet.getByRole('button',{name:/Unassigned orders/i}).click();
+  await fleet.getByRole('button').filter({hasText:'#PUBLIC-2'}).click();
+  await page.getByRole('button',{name:'Let optimizer decide',exact:true}).click();
+  const released=await applyManualDialog(page);expect(released.manual?.layout.history.length).toBe(3);
+  const replanned=await finishSolve(page,()=>page.getByRole('button',{name:'Replan',exact:true}).click());
+  independentManualKpis(replanned);expect(replanned.stats.servedOrders).toBe(6);
+  expect(replanned.assignments?.layout.history.length).toBe(3);
+});
+}
+
+test('manual: invalid drafts expose real access violations and cannot be approved',async({page})=>{
+  await login(page);const base=await baseline(page);
+  await page.getByRole('button',{name:'Manual planning',exact:true}).click();
+  await manualStop(page,base,'PUBLIC-1');
+  await page.getByRole('button',{name:'Move to vehicle…',exact:true}).click();
+  const dialog=page.getByRole('dialog',{name:'Manual planning',exact:true});
+  await dialog.getByRole('combobox',{name:'Vehicle',exact:true}).selectOption('30');
+  const invalid=await applyManualDialog(page);expect(invalid.provenance.validation.valid).toBe(false);
+  expect(invalid.provenance.validation.violations.some(v=>v.type==='VEHICLE_SIZE')).toBe(true);
+  independentManualKpis(invalid);
+  const workflow=await get<{blockers:string[]}>(page.request,`/api/plans/${invalid.id}/workflow`);expect(workflow.blockers.length).toBeGreaterThan(0);
+  await expect(page.getByRole('button',{name:/Approve plan/})).toHaveCount(0);
+});
+
+test('manual: Reviewer can inspect groups but cannot preview or publish',async({page})=>{
+  await login(page,'reviewer@acceptance.example.test');const base=await baseline(page);
+  await page.getByRole('button',{name:'Manual planning',exact:true}).click();await manualStop(page,base,'PUBLIC-2');
+  await expect(page.getByRole('button',{name:'Move to vehicle…',exact:true})).toHaveCount(0);
+  for(const suffix of ['manual-preview','manual-plan'])expect((await page.request.post(`/api/scenarios/${base.scenarioId}/${suffix}`,{
+    headers:{origin:new URL(page.url()).origin,'if-match':`"${base.scenarioRevision}"`},data:{}})).status()).toBe(403);
+});
+
+test('manual: exclusion, restore, bulk assignment and undo publish complete immutable drafts',async({page})=>{
+  await login(page);const base=await baseline(page),vehicle=base.vehicles[0]!;
+  await page.getByRole('button',{name:'Manual planning',exact:true}).click();
+  await page.locator('aside').first().getByText(vehicle.ref,{exact:true}).click();
+  await page.getByRole('button',{name:`Mark ${vehicle.ref} unavailable`,exact:true}).click();
+  const excluded=await applyManualDialog(page);expect(excluded.vehicles.some(v=>v.id===vehicle.id)).toBe(false);independentManualKpis(excluded);
+  const region=page.getByRole('region',{name:'Excluded',exact:true});
+  await region.getByRole('button',{name:'Expand trips',exact:true}).click();
+  await region.getByRole('button',{name:'Restore',exact:true}).click();
+  const restored=await applyManualDialog(page);expect(restored.stats.servedOrders).toBe(excluded.stats.servedOrders);
+  const unassigned=restored.unassigned;
+  const header=page.locator('aside').first().getByRole('button',{name:/Unassigned orders/i});
+  if(!(await page.getByRole('checkbox').count()))await header.click();
+  await page.getByRole('button',{name:'Select all',exact:true}).click();
+  await page.getByRole('combobox',{name:'Assign to vehicle…',exact:true}).selectOption(String(vehicle.id));
+  await page.getByRole('button',{name:'Assign',exact:true}).click();
+  const assigned=await applyManualDialog(page);expect(assigned.stats.servedOrders).toBe(restored.stats.servedOrders+unassigned.length);independentManualKpis(assigned);
+  await page.getByRole('button',{name:'Undo manual change',exact:true}).click();
+  const undone=await applyManualDialog(page);expect(undone.unassigned.map(o=>o.requestId).sort()).toEqual(restored.unassigned.map(o=>o.requestId).sort());
+  independentManualKpis(undone);expect(undone.manual?.layout.history.some(e=>e.action==='undo')).toBe(true);
+});
+
+test('manual: Hungarian narrow-screen dialog is accessible and a cancelled preview never writes',async({page})=>{
+  await login(page);const base=await baseline(page);
+  await page.getByRole('button',{name:'Manual planning',exact:true}).click();await manualStop(page,base,'PUBLIC-2');
+  await page.getByRole('group',{name:'Language',exact:true}).getByRole('button',{name:'HU',exact:true}).click();
+  await page.setViewportSize({width:375,height:780});
+  await page.getByRole('button',{name:'Collapse fleet panel',exact:true}).click();
+  await page.getByRole('button',{name:'Áthelyezés másik járműre…',exact:true}).click();
+  const dialog=page.getByRole('dialog',{name:'Kézi tervezés',exact:true});
+  await expect(dialog.getByRole('combobox',{name:'Jármű',exact:true})).toBeVisible();
+  await expect(dialog.getByRole('button',{name:'Kézi módosítás alkalmazása',exact:true})).toBeDisabled();
+  const before=await get<unknown[]>(page.request,'/api/plans');
+  await dialog.getByRole('button',{name:'Előnézet kiszámítása',exact:true}).click();
+  await expect(dialog.getByTestId('manual-preview')).toBeVisible();
+  expect(await dialog.evaluate(el=>el.getBoundingClientRect().width<=innerWidth)).toBe(true);
+  await dialog.getByRole('button',{name:'Mégse',exact:true}).click();
+  expect((await get<unknown[]>(page.request,'/api/plans')).length).toBe(before.length);
+});
+
+test('manual: permission revocation while preview is in flight cannot expose Apply or publish',async({page})=>{
+  await chaosLogin(page);const base=await baseline(page);
+  await page.getByRole('button',{name:'Manual planning',exact:true}).click();await manualStop(page,base,'PUBLIC-2');
+  await page.getByRole('button',{name:'Move to vehicle…',exact:true}).click();
+  const held=gate(),captured=gate();let writes=0;
+  page.on('request',r=>{if(r.method()==='POST'&&r.url().endsWith('/manual-plan'))writes++;});
+  await page.route('**/manual-preview',async route=>{const response=await route.fetch();captured.release();await held.wait;await route.fulfill({response});});
+  try{
+    await page.getByRole('button',{name:'Calculate preview',exact:true}).click();await captured.wait;
+    chaosRole('reviewer');await page.evaluate(()=>window.dispatchEvent(new Event('focus')));
+    await expect(page.getByText('Read-only access',{exact:true})).toBeVisible();
+    held.release();await expect(page.getByRole('dialog',{name:'Manual planning',exact:true})).toHaveCount(0);
+    expect(writes).toBe(0);
+  }finally{held.release();chaosRole('planner');}
+});
+
+test('manual: dragging a delivery to an available vehicle uses the same validated dialog',async({page})=>{
+  await login(page);const base=await baseline(page),vehicle=base.vehicles.find(v=>v.trips.some(tr=>tr.stops.some(s=>s.orderNo==='PUBLIC-2')))!;
+  await page.getByRole('button',{name:'Manual planning',exact:true}).click();
+  await page.locator('aside').first().getByText(vehicle.ref,{exact:true}).click();
+  await page.locator('aside').last().getByRole('button',{name:/Trip 1 ·/}).click();
+  const source=page.locator('aside').last().locator('ol li > button').filter({hasText:'Public fixture 2'});
+  await source.dragTo(page.locator('[data-vehicle-id="30"]'));
+  const moved=await applyManualDialog(page);
+  expect(moved.vehicles.find(v=>v.id===30)?.trips.some(tr=>tr.stops.some(s=>s.orderNo==='PUBLIC-2'))).toBe(true);
+  independentManualKpis(moved);
+});
+
+test('manual: lost Apply response retries the same operation without duplicate plans',async({page})=>{
+  await login(page);const base=await baseline(page);
+  await page.getByRole('button',{name:'Manual planning',exact:true}).click();await manualStop(page,base,'PUBLIC-2');
+  await page.getByRole('button',{name:'Return to unassigned',exact:true}).click();
+  const dialog=page.getByRole('dialog',{name:'Manual planning',exact:true});
+  await dialog.getByRole('button',{name:'Calculate preview',exact:true}).click();await expect(dialog.getByTestId('manual-preview')).toBeVisible();
+  const before=(await get<unknown[]>(page.request,'/api/plans')).length;let first=true;const keys:string[]=[];
+  await page.route('**/manual-plan',async route=>{
+    keys.push((route.request().postDataJSON() as {batch:{operationId:string}}).batch.operationId);
+    if(first){first=false;await route.fetch();await route.abort('failed');}else await route.continue();
+  });
+  await dialog.getByRole('button',{name:'Apply manual change',exact:true}).click();await expect(dialog.getByRole('alert')).toBeVisible();
+  await dialog.getByRole('button',{name:'Apply manual change',exact:true}).click();await expect(dialog).toHaveCount(0);
+  expect((await get<unknown[]>(page.request,'/api/plans')).length).toBe(before+1);
+  expect(keys).toHaveLength(2);expect(keys[0]).toBe(keys[1]);
+});
 type Job = { status: string; error?: string; planId?: string; scenarioRevision: number };
 
 function dc(...args: string[]): string {

@@ -10,6 +10,8 @@ import { workOneSolve, type SolveOutput } from './state/worker.js';
 import { solveConvertedDataset, workOneDatasetAdmission } from './state/conversion.js';
 import { deliverOne, ResendSender } from './state/outbox.js';
 import type { Scenario } from './store.js';
+import { manualSettings } from './state/manual-settings.js';
+import { admittedManualDatasetLoader } from './state/manual-dataset.js';
 
 const required = (name: string, value: string): string => {
   if (!value) throw new Error(`${name} is required in stateful mode`);
@@ -40,7 +42,9 @@ const auth = config.authRequired ? new StatefulAuthService(store, {
   tenantId: config.authTenantId, tenantName: config.authTenantName,
   secureCookies: config.authPublicOrigin.startsWith('https://'),
 }) : undefined;
-const app = await createStatefulApi({ store, objects, auth, tenantId: config.authTenantId,
+const manualPlanning = process.env.CURSUS_MANUAL_SETTINGS_FILE ? admittedManualDatasetLoader(store,objects,config.authTenantId,
+  manualSettings(JSON.parse(await readFile(process.env.CURSUS_MANUAL_SETTINGS_FILE,'utf8')))) : undefined;
+const app = await createStatefulApi({ store, objects, auth, manualPlanning, tenantId: config.authTenantId,
   tenantName: config.authTenantName, publicOrigin: config.authPublicOrigin, maxUploadBytes: config.maxUploadMB * 1024 * 1024 });
 await app.register(fastifyStatic, { root: config.webDist, wildcard: false });
 app.setNotFoundHandler((req, reply) => req.method === 'GET' && !req.url.startsWith('/api/') && !req.url.startsWith('/health/')
@@ -52,9 +56,14 @@ async function solve(lease: Lease, signal: AbortSignal): Promise<SolveOutput> {
   const payload = lease.payload as { scenario?: Scenario; budgetSec?: number; objective?: 'vehicles' | 'distance'; fullBudget?: boolean };
   if (!payload.scenario) throw new Error('solve job has no scenario snapshot');
   const datasets = await store.listDatasets(lease.tenantId, true);
-  const dataset = datasets.find((item) => ((item.manifest as { days?: { dayId: string }[] })?.days ?? [])
-    .some((day) => day.dayId === payload.scenario!.day) && (!payload.scenario!.planningPolicy ||
-      (item.manifest as { artifacts?: { request?: { sha256?: string } } }).artifacts?.request?.sha256 === payload.scenario!.planningPolicy.datasetRequestSha256));
+  const wantedSha = payload.scenario.manualDecisions?.datasetSha256 ?? payload.scenario.planningPolicy?.datasetRequestSha256;
+  if (payload.scenario.manualDecisions && payload.scenario.planningPolicy && wantedSha !== payload.scenario.planningPolicy.datasetRequestSha256)
+    throw new Error('manual decisions and policy reference different datasets');
+  const matches = datasets.filter((item) => ((item.manifest as { days?: { dayId: string }[] })?.days ?? [])
+    .some((day) => day.dayId === payload.scenario!.day) && (!wantedSha ||
+      (item.manifest as { artifacts?: { request?: { sha256?: string } } }).artifacts?.request?.sha256 === wantedSha));
+  if (payload.scenario.manualDecisions && matches.length !== 1) throw new Error('manual replanning requires exactly one pinned admitted dataset');
+  const dataset = matches[0];
   if (!dataset) throw new Error(`no admitted dataset contains day ${payload.scenario.day}`);
   const plan = await solveConvertedDataset(objects, lease.tenantId, dataset.manifest as never, payload.scenario,
     Math.max(1, payload.budgetSec ?? config.solveTimeSeconds), payload.objective ?? 'vehicles', signal, payload.fullBudget ?? false);

@@ -6,6 +6,7 @@ import pg, { type Pool, type PoolClient } from 'pg';
 import type { Plan } from '../types.js';
 import type { Scenario } from '../store.js';
 import { withNormalizedPlanStats } from '../plan/stats.js';
+import { assertRetainedPlan } from '../plan/retained.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const migration = resolve(here, '../../migrations/001_stateful.sql');
@@ -192,12 +193,24 @@ export class StatefulStore {
   /** The fence predicate and authoritative plan publication are one transaction. */
   async completeSolve(lease: Lease, planId: string, scenarioId: string, scenarioRevision: number, plan: unknown): Promise<void> {
     await this.tx(async (client) => {
+      const scenario = await client.query<{ revision: string; body: Scenario }>(
+        'SELECT revision,body FROM scenarios WHERE tenant_id=$1 AND id=$2 FOR UPDATE', [lease.tenantId, scenarioId]);
+      if (scenario.rows[0]?.body.manualPlanId && Number(scenario.rows[0].revision) !== scenarioRevision)
+        throw new RevisionConflictError();
+      if (scenario.rows[0]?.body.manualDecisions) {
+        if ((plan as Plan).id !== planId) throw new Error('manual replan result identity mismatch');
+        assertRetainedPlan(plan as Plan, scenario.rows[0].body);
+      }
       const owned = await client.query(`UPDATE jobs SET state='succeeded',result=$5,lease_owner=NULL,lease_expires_at=NULL,updated_at=now()
         WHERE tenant_id=$1 AND id=$2 AND state='running' AND lease_owner=$3 AND fence=$4 AND lease_expires_at>=now() RETURNING id`,
         [lease.tenantId, lease.id, lease.owner, lease.fence, { planId }]);
       if (owned.rowCount !== 1) throw new StaleFenceError();
       await client.query(`INSERT INTO plans(tenant_id,id,scenario_id,scenario_revision,body) VALUES($1,$2,$3,$4,$5)
         ON CONFLICT(tenant_id,id) DO NOTHING`, [lease.tenantId, planId, scenarioId, scenarioRevision, plan]);
+      if (scenario.rows[0]?.body.manualPlanId) {
+        const body = { ...scenario.rows[0].body, manualPlanId: planId };
+        await client.query('UPDATE scenarios SET body=$3,updated_at=now() WHERE tenant_id=$1 AND id=$2', [lease.tenantId, scenarioId, body]);
+      }
     });
   }
 

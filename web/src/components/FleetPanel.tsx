@@ -33,12 +33,13 @@ function CapacityBar({ label, used, cap, color }: { label: string; used: number;
 }
 
 function VehicleCard({
-  vehicle, selection, onSelect, onMarkUnavailable, onRestore, removed, expanded, onToggle, solving, onAssignOrder,
+  vehicle, selection, onSelect, onMarkUnavailable, onRestore, removed, expanded, onToggle, solving, onAssignOrder, manual,
 }: {
   vehicle: Vehicle; selection: Selection; onSelect: (s: Selection) => void;
   onMarkUnavailable: (id: number) => void; onRestore: (id: number) => void; removed: boolean;
   expanded: boolean; onToggle: () => void; solving: boolean;
   onAssignOrder?: (orderNo: string, vehicleId: number) => void;
+  manual?:boolean;
 }) {
   const t = useT();
   const selThisVeh = selection && selection.kind !== 'unassigned' && selection.vehicleId === vehicle.id;
@@ -53,7 +54,7 @@ function VehicleCard({
     onDrop: (e: React.DragEvent) => { e.preventDefault(); setDragOver(false); const o = readDraggedOrder(e); if (o) onAssignOrder!(o, vehicle.id); },
   } : {};
   return (
-    <div {...dropProps}
+    <div {...dropProps} data-vehicle-id={vehicle.id}
       className={`rounded-md border bg-card transition-colors ${dragOver ? 'border-primary ring-2 ring-primary/40' : removed ? 'border-warning/40 opacity-60' : selThisVeh ? 'border-ring ring-1 ring-ring' : 'border-divider hover:bg-accent/50'}`}>
       <div className="flex cursor-pointer items-center gap-2 p-2.5" onClick={() => onSelect({ kind: 'vehicle', vehicleId: vehicle.id })}>
         <button type="button" aria-label={expanded ? 'Collapse trips' : 'Expand trips'} onClick={(e) => { e.stopPropagation(); onToggle(); }} className="-ml-1 text-muted-foreground hover:text-foreground">
@@ -61,7 +62,7 @@ function VehicleCard({
         </button>
         <span className="h-3 w-3 shrink-0 rounded-sm" style={{ backgroundColor: vehicle.color }} />
         <span className={`font-semibold ${removed ? 'line-through' : ''}`}>{vehicle.ref}</span>
-        {removed && <Badge variant="warning" className="px-1 py-0 text-[9px]">{t('fleet.staged')}</Badge>}
+        {removed && <Badge variant="warning" className="px-1 py-0 text-[9px]">{t(manual?'manual.excluded':'fleet.staged')}</Badge>}
         <span className="truncate text-[11px] text-muted-foreground">{(vehicle.vehicleClass ?? '').replace(/_/g, ' ')}</span>
         <span className="tnum ml-auto text-[11px] text-muted-foreground">{vehicle.tripCount === 1 ? t('fleet.tripOne', { n: vehicle.tripCount }) : t('fleet.trips', { n: vehicle.tripCount })}</span>
       </div>
@@ -109,9 +110,12 @@ function VehicleCard({
 /* Left fleet panel: search, vehicle cards (expandable to trips + mark-unavailable),
  * and a collapsible unassigned-orders section. Selection is lifted to App. */
 export function FleetPanel({
-  plan, scenario, selection, onSelect, onMarkUnavailable, onRestoreVehicle, solving, onFilterChange, onAssignOrder, onBulkAssign,
+  plan, scenario, selection, onSelect, onMarkUnavailable, onRestoreVehicle, solving, onFilterChange, onAssignOrder, onBulkAssign, fleet, onToggleManual, manualMode, onUndoManual,
 }: {
   plan: Plan; scenario: Scenario; selection: Selection; onSelect: (s: Selection) => void;
+  fleet?:Vehicle[];
+  onToggleManual?:()=>void;manualMode?:boolean;
+  onUndoManual?:()=>void;
   onMarkUnavailable: (id: number) => void; onRestoreVehicle: (id: number) => void; solving: boolean;
   onFilterChange?: (visibleVehicleIds: number[] | null) => void;
   onAssignOrder?: (orderNo: string, vehicleId: number) => void;
@@ -142,7 +146,7 @@ export function FleetPanel({
     return v.trips.some((t) => t.stops.some((s) =>
       (s.customer ?? '').toLowerCase().includes(q) || s.orderNo.toLowerCase().includes(q) || (s.city ?? '').toLowerCase().includes(q)));
   };
-  const vehicles = plan.vehicles.filter(matches);
+  const vehicles = (fleet??plan.vehicles).filter(matches);
 
   // Report the visible vehicle set to the map so it filters routes/stops to
   // match the list. null = no filter active (show all). Keyed on the id list so
@@ -162,7 +166,9 @@ export function FleetPanel({
   return (
     <div className="flex h-full flex-col bg-card">
       <div className="shrink-0 p-3">
-        <h2 className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">{t('fleet.title')} · {plan.vehicles.length}</h2>
+        <h2 className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">{t('fleet.title')} · {(fleet??plan.vehicles).length}</h2>
+        {onToggleManual&&<button type="button" aria-pressed={!!manualMode} onClick={onToggleManual} className="mb-2 rounded border border-divider px-2 py-1 text-xs hover:bg-accent">{t('manual.title')}</button>}
+        {canEdit&&onUndoManual&&<button type="button" disabled={solving} onClick={onUndoManual} className="mb-2 ml-2 rounded border border-divider px-2 py-1 text-xs hover:bg-accent">{t('manual.undo')}</button>}
         <div className="relative">
           <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
           <Input value={query} onChange={(e) => setQuery(e.target.value)} placeholder={t('fleet.search')} className="h-8 pl-8" />
@@ -175,12 +181,18 @@ export function FleetPanel({
       <Separator />
       <ScrollArea className="min-h-0 flex-1">
         <div className="space-y-2 p-3">
-          {vehicles.map((v) => (
-            <VehicleCard key={v.id} vehicle={v} selection={selection} onSelect={onSelect}
+          {(fleet?[
+            {label:t('manual.assigned'),items:vehicles.filter(v=>v.trips.length&&!scenario.removedVehicleIds.includes(v.id))},
+            {label:t('manual.available'),items:vehicles.filter(v=>!v.trips.length&&!scenario.removedVehicleIds.includes(v.id))},
+            {label:t('manual.excluded'),items:vehicles.filter(v=>scenario.removedVehicleIds.includes(v.id))},
+          ]:[{label:'',items:vehicles}]).map(group=><section key={group.label} aria-label={group.label||undefined} className="space-y-2">
+          {group.label&&<h3 className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">{group.label} · {group.items.length}</h3>}
+          {group.items.map((v) => (
+            <VehicleCard key={v.id} vehicle={v} selection={selection} onSelect={onSelect} manual={!!fleet}
               onMarkUnavailable={onMarkUnavailable} onRestore={onRestoreVehicle} removed={scenario.removedVehicleIds.includes(v.id)} solving={solving}
               expanded={expanded.has(v.id)} onAssignOrder={onAssignOrder}
               onToggle={() => setExpanded((prev) => { const n = new Set(prev); if (n.has(v.id)) n.delete(v.id); else n.add(v.id); return n; })} />
-          ))}
+          ))}</section>)}
           {vehicles.length === 0 && <p className="px-1 py-6 text-center text-xs text-muted-foreground">{t('fleet.noMatch')}</p>}
         </div>
       </ScrollArea>
@@ -235,7 +247,7 @@ export function FleetPanel({
                   aria-label={t('bulk.toVehicle')}
                   className="h-7 min-w-0 flex-1 rounded border border-divider bg-card px-1 text-[11px] disabled:opacity-40">
                   <option value="">{t('bulk.toVehicle')}</option>
-                  {plan.vehicles.filter((v) => !scenario.removedVehicleIds.includes(v.id)).map((v) => (
+                  {(fleet??plan.vehicles).filter((v) => !scenario.removedVehicleIds.includes(v.id)).map((v) => (
                     <option key={v.id} value={v.id}>{v.ref}{v.vehicleClass ? ` · ${v.vehicleClass.replace(/_/g, ' ')}` : ''}</option>
                   ))}
                 </select>

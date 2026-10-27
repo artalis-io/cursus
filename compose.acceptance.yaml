@@ -22,6 +22,7 @@ x-app: &app
     CURSUS_AUTH_ALLOWED_EMAILS_FILE: /acceptance-config/allowlist
     CURSUS_TENANT_ID: acceptance
     CURSUS_TENANT_NAME: Acceptance workspace
+    CURSUS_MANUAL_SETTINGS_FILE: /acceptance-config/manual-settings.json
     CURSUS_PUBLIC_ORIGIN: ${CURSUS_ACCEPTANCE_ORIGIN:?set by runner}
     CURSUS_WORKER_POLL_MS: "200"
     CURSUS_WORKER_LEASE_SEC: "10"

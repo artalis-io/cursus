@@ -454,7 +454,8 @@ function LoadTab({ vehicle }: { vehicle: Vehicle }) {
   );
 }
 
-export function Inspector({ plan, scenario, selection, onSelect, onBack, onForward, canGoBack, canGoForward, onMarkUnavailable, onRestoreVehicle, onSetConstraint, onClearConstraint, solving, onPin, onUnpin, onForbid, onClearOverrides, onSetSequence, onClearSequence }: {
+export function Inspector({ plan, scenario, selection, onSelect, onBack, onForward, canGoBack, canGoForward, onMarkUnavailable, onRestoreVehicle, onSetConstraint, onClearConstraint, solving, onPin, onUnpin, onForbid, onClearOverrides, onSetSequence, onClearSequence, manualActions }: {
+  manualActions?:React.ReactNode;
   plan: Plan; baseline: Plan; scenario: Scenario; selection: Selection; onSelect: (s: Selection) => void; onMarkUnavailable: (id: number) => void; solving: boolean;
   onBack: () => void; onForward: () => void; canGoBack: boolean; canGoForward: boolean;
   onRestoreVehicle: (id: number) => void;
@@ -485,9 +486,9 @@ export function Inspector({ plan, scenario, selection, onSelect, onBack, onForwa
             <div className="tnum text-xs text-muted-foreground">#{u.orderNo}{u.city ? ` · ${u.city}` : ''}</div>
             <Separator />
             <Badge variant="warning">{t('inspector.unassignedBadge')}</Badge>
-            <p className="text-xs text-muted-foreground">{u.reason ?? t('inspector.unassignedReason')}</p>
+            <p className="text-xs text-muted-foreground">{u.reasonCode?t(`unassigned.${u.reasonCode}`):u.reason ?? t('inspector.unassignedReason')}</p>
             {/* Assign by hand: pin this unassigned order to a chosen vehicle, applied on Replan. */}
-            {canEdit && <div className="space-y-2 rounded-md border border-divider bg-muted/30 p-2.5">
+            {manualActions??(canEdit && <div className="space-y-2 rounded-md border border-divider bg-muted/30 p-2.5">
               <div className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">{t('inspector.assignByHand')}</div>
               {pin ? (
                 <div className="flex items-center justify-between gap-2">
@@ -502,7 +503,7 @@ export function Inspector({ plan, scenario, selection, onSelect, onBack, onForwa
                 </select>
               )}
               <p className="text-[10px] text-muted-foreground">{t('inspector.overrideHint')}</p>
-            </div>}
+            </div>)}
           </div>
         ) : <Empty planId={plan.id} />}
       </Panel>
@@ -560,10 +561,10 @@ export function Inspector({ plan, scenario, selection, onSelect, onBack, onForwa
                       onSetSequence(vehicle.id, full);
                     } : undefined} />
                   : <VehicleSummary vehicle={vehicle} plan={plan} onSelectTrip={(i) => onSelect({ kind: 'trip', vehicleId: vehicle.id, tripIndex: i })} />}
-              {canEdit && stop && (
+              {manualActions??(canEdit && stop && (
                 <AssignmentSection plan={plan} scenario={scenario} orderNo={stop.orderNo} currentVehicleId={vehicle.id}
                   onPin={onPin} onUnpin={onUnpin} onForbid={onForbid} disabled={solving} />
-              )}
+              ))}
               <Separator />
               <ValidationRow plan={plan} vehicle={vehicle} />
               {canEdit && !stop && !trip && (

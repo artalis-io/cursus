@@ -50,6 +50,9 @@ async function jsend<T>(url: string, method: string, body?: unknown, revision?: 
 }
 
 export const api = {
+  manualContext:(id:string)=>jget<import('@/types').ManualContext>(`/api/plans/${encodeURIComponent(id)}/manual-context`),
+  manualPreview:(id:string,revision:number,intent:import('@/types').ManualIntent)=>jsend<import('@/types').ManualPreview>(`/api/scenarios/${encodeURIComponent(id)}/manual-preview`,'POST',intent,revision),
+  manualApply:(id:string,revision:number,intent:import('@/types').ManualIntent)=>jsend<Plan>(`/api/scenarios/${encodeURIComponent(id)}/manual-plan`,'POST',intent,revision),
   approvedHandoff: async (id: string, revision: number) => {
     const value = await jget<{ handoff?: { status: string; planId: string; scenarioRevision: number; planSha256: string; checkedAt: string;
       approval?: { workflowVersion: number } } } & Record<string, unknown>>(`/api/plans/${encodeURIComponent(id)}/handoff.json?approval=required`);

@@ -41,6 +41,12 @@ export interface VehicleSequence { vehicleId: number; orderNos: string[]; locked
 export const MAX_SEQUENCE_LEN = 500;
 
 export interface Scenario {
+  manualPlanId?: string;
+  manualDecisions?: { datasetSha256: string; decisions: Record<string, import('./plan/manual.js').ManualDecision>;
+    requestIds?: number[];
+    tariff?: import('./cost.js').Tariff; tariffSha256?:string; fleetInfo?:[string, import('./data/dataset.js').VehicleInfo][];
+    reloadSeconds?:[number,number][];
+    origins?: Record<string, import('./plan/manual.js').AssignmentOrigin>; history?: import('./plan/manual.js').AssignmentEvent[] };
   planningPolicy?: PlanningPolicy;
   id: string;
   day: string;            // 'day1' | 'day2'

@@ -11,6 +11,7 @@ import { applyAccessLimits } from './plan/access.js';
 import { nativeSolveRequest } from './state/solver-ids.js';
 import { populationConfig } from './solver-config.js';
 import { withPlanningPolicy } from './plan/policy.js';
+import { applyRetainedDecisions, datasetAllowances } from './plan/retained.js';
 
 let legacyStore: ReturnType<typeof createLegacyStore> | undefined;
 export const store: ReturnType<typeof createLegacyStore> = new Proxy({} as ReturnType<typeof createLegacyStore>, {
@@ -61,6 +62,7 @@ export function buildRequest(scenario: Scenario, budgetSec: number, objective: O
   applyVehicleOverrides(request, scenario);
   applySequences(request, scenario, available);
   applyAccessLimits(request, day.enrichment, loadVehicleInfo());
+  applyRetainedDecisions(request, scenario, day.datasetRequestSha256, datasetAllowances(day.request));
 
   request.config = populationConfig({
     ...request.config,
