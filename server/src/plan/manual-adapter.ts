@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
 import { applyFleetSettings } from '../state/manual-settings.js';
+import { metersToKm } from '../units.js';
 import type { LoadedDay, VehicleInfo } from '../data/dataset.js';
 import type { Tariff } from '../cost.js';
 import { vehicleCostFor, tariffIdentity } from '../cost.js';
@@ -174,7 +175,8 @@ export function materializeManualPlan(parent: Plan, scenario: Scenario, input: M
         reason: input.layout.decisions[String(requestId)]?.kind === 'unassigned' ? 'Manually unassigned' : null,
         reasonCode: input.layout.decisions[String(requestId)]?.kind === 'unassigned' ? 'MANUAL_UNASSIGNED' as const : null }; }),
     cost: { ...evaluation.cost, perVehicle: vehicles.map(vehicle => {
-      const cost = vehicleCostFor(input.tariff, { ...vehicle, trips: vehicle.trips.map(trip => ({ distanceKm: trip.distanceKm, drops: trip.stops.length })) });
+      const cost = vehicleCostFor(input.tariff, { ...vehicle,distanceKm:metersToKm(vehicle.distanceKm*1000),
+        trips: vehicle.trips.map(trip => ({ distanceKm:metersToKm(trip.distanceKm*1000), drops: trip.stops.length })) });
       return { vehicleId: vehicle.id, ref: vehicle.ref, vehicleClass: vehicle.vehicleClass, distanceKm: vehicle.distanceKm,
         fixedCost: cost.fixed, variableCost: cost.variable, totalCost: cost.total };
     }) } };

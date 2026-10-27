@@ -428,5 +428,8 @@ Native and manual mapping share rounding reconciliation: trip allocations sum
 to the unchanged authoritative vehicle and plan totals. The real-data check
 caught a one-currency-unit discrepancy in independent trip rounding; a fractional
 tariff regression now checks the mapper as well as the common allocation helper.
+Manual metrics retain matrix precision; tariff calculations use the same
+nearest-0.1-km convention as existing native plan mapping, so identical routes
+do not acquire a different price when switching between native and manual modes.
 The test object store explicitly disables the image entrypoint's disk
 preallocation, keeping tiny fixtures from reserving gigabytes per empty bucket.
