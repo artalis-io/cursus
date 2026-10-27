@@ -333,3 +333,14 @@ it for a customer requires validated fleet/tariff settings and separate rollout
 approval. Plan JSON handoff includes assignment provenance; the legacy
 scenario-configuration export is not a manual-workspace backup or round-trip
 format.
+
+Final application source `c7e2445` was built locally as ARM64 image
+`sha256:c0e0c25649febc79a6e8127882c3a4fee5c569d32f97541164c3b0829a16e4f6`.
+All nine manual browser cases passed on that image. Two attempts to finish its
+entire suite were interrupted by host sleep (including a logged macOS thermal
+sleep despite an idle-sleep assertion), so neither is a complete passing
+certificate for this image. Their reports remain failed; do not substitute the
+earlier 61/61 certificate for this source. Repeat the full acceptance command on
+an awake, stable host before release. The server suite passed 167/167; focused
+manual coverage passed 44/44 with 100% line/branch coverage for the command core
+and 100% line coverage for the evaluator. No production rollout occurred.
