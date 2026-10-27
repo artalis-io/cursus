@@ -13,7 +13,7 @@ export function manualSettings(value: unknown): Omit<ManualDatasetContext,'day'>
     if(!v)throw new Error('Invalid manual fleet settings');
     const key=typeof v.ref==='string'?v.ref.replace(/[^a-z0-9]/gi,'').toUpperCase():'';
     if(!key||!Number.isSafeInteger(v.id)||v.id<0||reloadSeconds.has(v.id)||vehicleInfo.has(key)||
-      typeof v.hasTailLift!=='boolean'||typeof v.isSubcontractor!=='boolean'||!Number.isFinite(v.reloadSec)||v.reloadSec<0||
+      typeof v.hasTailLift!=='boolean'||typeof v.isSubcontractor!=='boolean'||!Number.isSafeInteger(v.reloadSec)||v.reloadSec<0||v.reloadSec>2147483647||
       v.vehicleClass!==null&&typeof v.vehicleClass!=='string'||
       v.tonnage!==null&&(!Number.isFinite(v.tonnage)||v.tonnage<=0))throw new Error('Invalid manual fleet settings');
     vehicleInfo.set(key,{plate:v.ref,vehicleClass:v.vehicleClass,isSubcontractor:v.isSubcontractor,tonnage:v.tonnage,hasTailLift:v.hasTailLift});

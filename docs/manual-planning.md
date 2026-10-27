@@ -300,3 +300,9 @@ The S3 protocol fixture uses a disposable project-scoped disk volume (removed by
 objects, pinning RAM and starving unrelated local map services. Run standalone
 integration and full-image acceptance stacks sequentially and tear each down;
 neither test workflow stops the operator's local or production deployments.
+
+Reload seconds are also snapshotted and passed via Surge's actual
+`trip_reload_seconds` vehicle field. Explicit dataset reload times must match the
+manual settings; mismatches fail closed. Native regression coverage forces two
+capacity-limited trips and verifies the intervening dwell. Authoritative result
+publication rejects a shorter reload gap instead of accepting inconsistent timing.

@@ -14,6 +14,7 @@ export interface SurgeTask {
 }
 
 export interface SurgeRequestVehicle {
+  trip_reload_seconds?:number;
   id: number;
   ref: string; // e.g. "RIC-124"
   gross_weight_kg?: number; // application metadata: GVW, never payload capacity

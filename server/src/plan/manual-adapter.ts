@@ -69,7 +69,8 @@ export function prepareManualInput(parent: Plan, scenario: Scenario, context: Ma
   for (const vehicle of full.vehicles) {
     const info = vehicleInfo.get(vehicle.ref.replace(/[^a-z0-9]/gi, '').toUpperCase());
     const reloadSec = context.reloadSeconds.get(vehicle.id);
-    requireThat(info && typeof reloadSec === 'number' && Number.isFinite(reloadSec) && reloadSec >= 0, 'trusted fleet/reload evidence required');
+    requireThat(info && typeof reloadSec === 'number' && Number.isSafeInteger(reloadSec) && reloadSec >= 0 && reloadSec <= 2147483647 &&
+      (vehicle.trip_reload_seconds===undefined||vehicle.trip_reload_seconds===reloadSec), 'trusted fleet/reload evidence required');
     fleet.set(vehicle.id, { vehicleClass: info!.vehicleClass, isSubcontractor: info!.isSubcontractor,
       grossTonnage: grossTonnage(vehicle, vehicleInfo), hasTailLift: hasTailLift(vehicle, vehicleInfo), reloadSec: reloadSec! });
   }
@@ -142,7 +143,8 @@ export function materializeManualPlan(parent: Plan, scenario: Scenario, input: M
   const plan: Plan = { ...parent, id, scenarioId: scenario.id, scenarioRevision: scenario.revision, createdAt, source: 'live',
     manual: { version: 1, parentPlanId: parent.id, layout: structuredClone(input.layout), evaluation: structuredClone(evaluation) },
     provenance: { ...parent.provenance, datasetSha256: input.datasetSha256,tariffSha256:input.tariffSha256,
-      inputSha256: createHash('sha256').update(JSON.stringify({ dataset: input.datasetSha256, layout: input.layout, tariff: input.tariffSha256 })).digest('hex'),
+      inputSha256: createHash('sha256').update(JSON.stringify({ dataset: input.datasetSha256, layout: input.layout, tariff: input.tariffSha256,
+        vehicles:input.request.vehicles,fleet:[...input.fleet],requirements:[...input.requirements],restrictions:input.request.requests })).digest('hex'),
       termination: 'MANUAL', solverConfig: { evaluator: 'manual-v1' }, validation: {
         valid: evaluation.validation.valid, violations: evaluation.validation.violations.map(violation => ({ ...violation,
           vehicle_id: violation.vehicleId, ...(violation.requestId === undefined ? {} : {

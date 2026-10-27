@@ -120,6 +120,12 @@ export function assertRetainedPlan(plan: Plan, scenario: Scenario): void {
   need(JSON.stringify(actual) === JSON.stringify(assignments.layout.routes) &&
     JSON.stringify(plan.unassigned.map(order => order.requestId)) === JSON.stringify(assignments.layout.unassigned), 'publication layout does not match plan');
   const served = actual.reduce((count, route) => count+route.requestIds.length, 0);
+  need(Array.isArray(retained.reloadSeconds),'publication missing reload evidence');
+  const reload=new Map(retained.reloadSeconds);
+  for(const vehicle of plan.vehicles){const seconds=reload.get(vehicle.id);
+    for(let i=1;i<vehicle.trips.length;i++)need(typeof seconds==='number'&&
+      vehicle.trips[i]!.startSec>=vehicle.trips[i-1]!.endSec+seconds-1,'publication violated depot reload time');
+  }
   need(plan.stats.totalOrders === assignments.layout.requestIds.length && plan.stats.servedOrders === served &&
     plan.stats.deliveryStops === served && plan.stats.trips === actual.length && plan.stats.vehiclesUsed === plan.vehicles.length,
     'publication coverage/KPIs do not match request inventory');

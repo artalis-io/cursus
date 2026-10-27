@@ -149,6 +149,13 @@ export async function solveConvertedDataset(objects: ObjectStore, tenantId: stri
   if(retained&&(!retained.tariff||!retained.fleetInfo||tariffIdentity(retained.tariff)!==retained.tariffSha256))
     throw new Error('manual solve tariff/fleet snapshot is missing or inconsistent');
   const vehicleInfo = retained?.fleetInfo?new Map(retained.fleetInfo):loadVehicleInfo();
+  if(retained){
+    const reload=new Map(retained.reloadSeconds);
+    for(const vehicle of request.vehicles){const seconds=reload.get(vehicle.id);
+      if(typeof seconds!=='number'||!Number.isSafeInteger(seconds)||seconds<0||seconds>2147483647)throw new Error('manual reload snapshot is missing or invalid');
+      vehicle.trip_reload_seconds=seconds;
+    }
+  }
   applyAccessLimits(request, day.enrichment, vehicleInfo);
   applyRetainedDecisions(request, scenario, day.datasetRequestSha256, baseline);
   request.config = populationConfig({ ...request.config, max_time_seconds: budgetSec, seed: 42, lexicographic_objective: objective !== 'distance',

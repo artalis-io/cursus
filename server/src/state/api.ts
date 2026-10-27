@@ -63,7 +63,7 @@ export async function createStatefulApi(options: StatefulApiOptions): Promise<Fa
     const plan = await options.store.getPlan(options.tenantId,req.params.id);
     if (!plan) return reply.code(404).send({error:'Plan not found.'});
     const scenario = await scenarios.get(plan.scenarioId);
-    if (!scenario || scenario.revision !== plan.scenarioRevision) return {enabled:false};
+    if (!scenario || scenario.revision !== plan.scenarioRevision || scenario.manualPlanId&&scenario.manualPlanId!==plan.id) return {enabled:false};
     try {
       const context=await options.manualPlanning(plan,scenario), input=prepareManualInput(plan,scenario,context);
       const fleet=input.request.vehicles.map(vehicle=>({...(plan.vehicles.find(v=>v.id===vehicle.id) ?? {

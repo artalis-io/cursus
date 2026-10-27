@@ -45,6 +45,7 @@ export interface Scenario {
   manualDecisions?: { datasetSha256: string; decisions: Record<string, import('./plan/manual.js').ManualDecision>;
     requestIds?: number[];
     tariff?: import('./cost.js').Tariff; tariffSha256?:string; fleetInfo?:[string, import('./data/dataset.js').VehicleInfo][];
+    reloadSeconds?:[number,number][];
     origins?: Record<string, import('./plan/manual.js').AssignmentOrigin>; history?: import('./plan/manual.js').AssignmentEvent[] };
   planningPolicy?: PlanningPolicy;
   id: string;
