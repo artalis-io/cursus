@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { vehicleCost, vehicleCostFor, type Tariff } from './cost.js';
+import { vehicleCost, vehicleCostFor,reconcileTripCosts, type Tariff } from './cost.js';
 
 const TARIFF: Tariff = {
   currency: 'HUF', source: 'demo', model: 'per_vehicle',
@@ -10,6 +10,14 @@ const TARIFF: Tariff = {
   perTripBase: 49_000, perKm: 337, perDrop: 7_200, includedDrops: 2,
   subcontractorMultiplier: 1.1, ownFleetMultiplier: 1.0,
 };
+
+test('trip allocations preserve authoritative totals under either rounding direction and tiny charges',()=>{
+  assert.deepEqual(reconcileTripCosts(3,[1,1,1,1,1]),[1,1,1,0,0]);
+  assert.deepEqual(reconcileTripCosts(5,[2,2]),[2,3]);
+  assert.deepEqual(reconcileTripCosts(3,[2,2]),[2,1]);
+  assert.deepEqual(reconcileTripCosts(0,[]),[]);
+  for(const args of [[-1,[0]],[1,[NaN]],[1,[]]] as [number,number[]][])assert.throws(()=>reconcileTripCosts(...args));
+});
 
 test('vehicleCost: default rates when class is unknown', () => {
   const c = vehicleCost(TARIFF, null, false, 100);

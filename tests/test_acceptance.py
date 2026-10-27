@@ -41,3 +41,9 @@ class AcceptanceRunnerTests(unittest.TestCase):
         self.assertIn('read_only: true', compose)
         self.assertNotIn('/var/run/docker.sock', compose)
         self.assertNotIn('network_mode: host', compose)
+
+    def test_s3_fixture_does_not_preallocate_customer_scale_disk_or_ram(self):
+        compose = (ROOT / 'compose.integration.yaml').read_text()
+        self.assertIn('-master.volumePreallocate=false', compose)
+        self.assertIn('s3-test-data:/data', compose)
+        self.assertNotIn('tmpfs: ["/data', compose)

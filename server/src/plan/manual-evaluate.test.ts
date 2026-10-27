@@ -202,3 +202,15 @@ test('native limit conventions: omitted trips means one; explicit zero limits ar
   vehicle.max_trips=1.5;
   assert.throws(()=>evaluateManualLayout(input),/invalid trip limit/);
 });
+
+test('manual tariffs preserve native distance rounding while physical distance retains matrix precision',()=>{
+  for(const model of ['per_vehicle','per_trip'] as const){
+    const input=fixture();input.tariff.model=model;input.tariff.perKmDefault=1000;input.tariff.perKm=1000;
+    input.request.travel.distances[1]=input.request.travel.distances[3]=1001;
+    input.request.travel.distances[2]=input.request.travel.distances[6]=2002;
+    const out=evaluateManualLayout(input);
+    assert.ok(Math.abs(out.stats.totalDistanceKm-6.006)<1e-9);
+    assert.equal(out.cost.total,model==='per_vehicle'?7000:7100);
+    assert.equal(out.vehicles.flatMap(v=>v.trips).reduce((sum,t)=>sum+t.cost,0),out.cost.total);
+  }
+});

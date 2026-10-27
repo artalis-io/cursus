@@ -1,6 +1,7 @@
-import { vehicleCostFor, tripCost, type Tariff } from '../cost.js';
+import { vehicleCostFor, tripCost, reconcileTripCosts, type Tariff } from '../cost.js';
 import type { SurgeRequest, SurgeTask } from '../types.js';
 import { assertManualLayout, type ManualLayout } from './manual.js';
+import { metersToKm } from '../units.js';
 
 /** Internal, server-owned inputs only. Policy exceptions must already have been
  * applied/verified by the dataset adapter. No client-supplied feasibility facts. */
@@ -148,15 +149,12 @@ export function evaluateManualLayout(input: ManualEvaluationInput): ManualEvalua
     const distanceKm = trips.reduce((sum, trip) => sum+trip.distanceKm, 0);
     if (vehicle.max_distance && distanceKm*1000 > vehicle.max_distance) issue('MAX_DISTANCE');
     if (vehicle.max_duration && previousEnd-trips[0]!.startSec > vehicle.max_duration) issue('MAX_DURATION');
-    const cost = vehicleCostFor(tariff, { ...info, distanceKm, trips: trips.map(trip => ({ distanceKm: trip.distanceKm, drops: trip.stops.length })) });
-    let allocated = 0;
-    for (const [index, trip] of trips.entries()) {
-      // Reconcile rounding so displayed trip totals equal authoritative vehicle cost.
-      const proposed = tripCost(tariff, info, { distanceKm: trip.distanceKm, drops: trip.stops.length }, trips.length);
-      need(nonnegative(proposed), 'non-finite trip cost');
-      trip.cost = index === trips.length-1 ? cost.total-allocated : Math.min(cost.total-allocated, proposed);
-      allocated += trip.cost;
-    }
+    // Preserve the native mapper's tariff convention (nearest 0.1 km), while
+    // keeping matrix precision in the evaluated distance metrics themselves.
+    const pricedKm=(km:number)=>metersToKm(km*1000);
+    const cost = vehicleCostFor(tariff, { ...info, distanceKm:pricedKm(distanceKm), trips: trips.map(trip => ({ distanceKm:pricedKm(trip.distanceKm), drops: trip.stops.length })) });
+    const allocation=reconcileTripCosts(cost.total,trips.map(trip=>tripCost(tariff,info,{distanceKm:pricedKm(trip.distanceKm),drops:trip.stops.length},trips.length)));
+    for(const [index,trip] of trips.entries())trip.cost=allocation[index]!;
     need([cost.total, cost.fixed, cost.variable, previousEnd, distanceKm].every(nonnegative), 'non-finite evaluation result');
     result.vehicles.push({ vehicleId, trips, distanceKm, cost: cost.total });
     result.stats.trips += trips.length; result.stats.totalDistanceKm += distanceKm;

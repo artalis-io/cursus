@@ -82,6 +82,7 @@ export interface Trip {
 }
 
 export interface Vehicle {
+  unavailable?: boolean;
   id: number;
   ref: string;
   vehicleClass: string | null;
@@ -159,7 +160,7 @@ export interface ManualLayout {
 }
 export type ManualCommand = {op:'assign';requestId:number;vehicleId:number;tripId:string;position:number}|{op:'deassign'|'release';requestId:number};
 export interface ManualIntent {parentPlanId:string;batch:{operationId:string;datasetSha256:string;commands:ManualCommand[]};vehicle?:{id:number;excluded:boolean};undo?:true}
-export interface ManualContext {enabled:boolean;datasetSha256?:string;fleet?:Vehicle[];canUndo?:boolean;actors?:Record<string,string>}
+export interface ManualContext {enabled:boolean;reason?:'fresh_plan_required';requiresRevalidation?:boolean;datasetSha256?:string;fleet?:Vehicle[];canUndo?:boolean;actors?:Record<string,string>}
 export interface ManualPreview {stats:PlanStats;cost:PlanCost|null;validation:PlanProvenance['validation']}
 
 /* ---- API shapes ---- */
@@ -253,5 +254,5 @@ export type Selection =
   | { kind: 'vehicle'; vehicleId: number }
   | { kind: 'trip'; vehicleId: number; tripIndex: number }
   | { kind: 'stop'; vehicleId: number; tripIndex: number; seq: number }
-  | { kind: 'unassigned'; orderNo: string }
+  | { kind: 'unassigned'; orderNo: string;requestId?:number }
   | null;

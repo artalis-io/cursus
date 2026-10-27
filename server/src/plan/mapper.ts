@@ -8,7 +8,7 @@ import { vehicleInfoFor } from '../data/dataset.js';
 import { colorForIndex } from '../colors.js';
 import { metersToKm } from '../units.js';
 import { makeLeg, waitSec, lateSec } from './schedule.js';
-import { loadTariff, vehicleCostFor, tripCost, type Tariff } from '../cost.js';
+import { loadTariff, vehicleCostFor, tripCost,reconcileTripCosts, type Tariff } from '../cost.js';
 import { grossTonnage, hasTailLift } from './access.js';
 
 export interface FleetLimits { maxKg: number; maxPallets: number; anyTailLift: boolean; minTonnage: number }
@@ -212,6 +212,8 @@ export function mapSolutionToPlan(inp: MapInputs): Plan {
       vehicleClass: v.vehicleClass, isSubcontractor: v.isSubcontractor, distanceKm: v.distanceKm,
       trips: v.trips.map((t) => ({ distanceKm: t.distanceKm, drops: t.stops.length })),
     });
+    const allocation=reconcileTripCosts(c.total,v.trips.map(trip=>trip.costFt!));
+    for(const [index,trip] of v.trips.entries())trip.costFt=allocation[index]!;
     return { vehicleId: v.id, ref: v.ref, vehicleClass: v.vehicleClass, distanceKm: v.distanceKm, fixedCost: c.fixed, variableCost: c.variable, totalCost: c.total };
   });
   const cost: PlanCost = {

@@ -168,6 +168,7 @@ export function vehicleInfoFor(ref: string, table: Map<string, VehicleInfo>): Ve
 }
 
 export interface LoadedDay {
+  verifiedSharedAccessRefs?:Set<string>; // duplicate labels whose source safety facts agree
   datasetRequestSha256?: string; // immutable admitted input identity for server-owned approvals
   planningPolicy?: import('../plan/policy.js').PlanningPolicy;
   def: DayDef;
@@ -177,6 +178,20 @@ export interface LoadedDay {
   scopeTaskIds: Set<number>;   // tasks whose order falls on this day
   depot: { name: string; lon: number; lat: number };
   enrichment: Map<string, OrderInfo>;   // order_no -> OrderInfo for display
+}
+
+/** Duplicate display references may share safety facts only when every source
+ * record independently declares the same GVW/lift requirements. Identity still
+ * comes from stable request IDs, never from the duplicated reference. */
+export function verifiedSharedAccessReferences(records:Record<string,unknown>[]):Set<string> {
+  const facts=new Map<string,{signature:string;count:number;consistent:boolean}>();
+  for(const record of records){
+    const info=[...enrichmentFromRecords([record]).values()][0]!;
+    const signature=JSON.stringify([info.maxTonnage,info.requiresTailLift]),previous=facts.get(info.orderNo);
+    if(previous){previous.count++;previous.consistent&&=previous.signature===signature;}
+    else facts.set(info.orderNo,{signature,count:1,consistent:true});
+  }
+  return new Set([...facts].filter(([,v])=>v.count>1&&v.consistent).map(([ref])=>ref));
 }
 
 let _enrichment: Map<string, OrderInfo> | null = null;

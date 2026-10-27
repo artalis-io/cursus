@@ -15,6 +15,7 @@ import { solveConvertedDataset } from './conversion.js';
 import type { Lease } from './postgres.js';
 import type { Scenario } from '../store.js';
 import { config } from '../config.js';
+import { tariffIdentity } from '../cost.js';
 
 test('manual publication through two real APIs is atomic, idempotent and revision fenced', { skip: !process.env.CURSUS_TEST_DATABASE_URL }, async () => {
   const a=new StatefulStore(process.env.CURSUS_TEST_DATABASE_URL!), b=new StatefulStore(process.env.CURSUS_TEST_DATABASE_URL!);
@@ -77,6 +78,57 @@ test('manual API rejects Reviewer, Admin View-as Reviewer and CSRF before loadin
     assert.equal((await app.inject(request)).statusCode,400);
     assert.equal(loads,0);
   }finally{await app.close();await store.close();}
+});
+
+test('unavailable fleet policy cannot be assigned, restored or erased by undo across APIs', {skip:!process.env.CURSUS_TEST_DATABASE_URL},async()=>{
+  const store=new StatefulStore(process.env.CURSUS_TEST_DATABASE_URL!),tenant=`unavailable-${randomUUID()}`,f=manualFixture();
+  f.context.unavailableVehicleIds=[42];
+  await store.ensureTenant(tenant,'Unavailable fleet');await store.createScenario(tenant,f.scenario.id,f.scenario);
+  await store.pool.query('INSERT INTO plans(tenant_id,id,scenario_id,scenario_revision,body) VALUES($1,$2,$3,1,$4)',[tenant,f.parent.id,f.scenario.id,f.parent]);
+  const apps=await Promise.all([0,1].map(()=>createStatefulApi({store,tenantId:tenant,tenantName:'Unavailable fleet',manualPlanning:async()=>f.context})));
+  const url=`/api/scenarios/${f.scenario.id}`,batch={operationId:'blocked',datasetSha256:'a'.repeat(64),commands:[]};
+  try{
+    const context=(await apps[0]!.inject({method:'GET',url:`/api/plans/${f.parent.id}/manual-context`})).json();
+    assert.equal(context.fleet.find((v:{id:number})=>v.id===42).unavailable,true);
+    for(const app of apps)for(const suffix of ['manual-plan','manual-preview']){
+      const restore=await app.inject({method:'POST',url:`${url}/${suffix}`,headers:{'if-match':'"1"'},payload:{parentPlanId:f.parent.id,batch,vehicle:{id:42,excluded:false}}});
+      assert.equal(restore.statusCode,409);
+      const assign=await app.inject({method:'POST',url:`${url}/${suffix}`,headers:{'if-match':'"1"'},payload:{parentPlanId:f.parent.id,batch:{...batch,commands:[{op:'assign',requestId:91,vehicleId:42,tripId:'new',position:0}]}}});
+      assert.equal(assign.statusCode,409);
+    }
+    assert.equal((await store.listPlans(tenant)).length,1);
+    const applied=await apps[0]!.inject({method:'POST',url:`${url}/manual-plan`,headers:{'if-match':'"1"'},payload:{parentPlanId:f.parent.id,batch:{...batch,operationId:'allowed',commands:[{op:'deassign',requestId:91}]}}});
+    assert.equal(applied.statusCode,201,applied.body);
+    const plan=applied.json(),scenario=(await store.getScenario(tenant,f.scenario.id))!;
+    assert.ok(scenario.removedVehicleIds.includes(42));assert.deepEqual(scenario.manualDecisions!.unavailableVehicleIds,[42]);
+    const undo=await apps[1]!.inject({method:'POST',url:`${url}/manual-plan`,headers:{'if-match':'"2"'},payload:{parentPlanId:plan.id,undo:true,batch:{...batch,operationId:'undo'}}});
+    assert.equal(undo.statusCode,201,undo.body);assert.ok(undo.json().manual.layout.excludedVehicleIds.includes(42));
+    assert.ok((await store.getScenario(tenant,f.scenario.id))!.removedVehicleIds.includes(42));
+  }finally{await Promise.all(apps.map(app=>app.close()));await store.close();}
+});
+
+test('corrected fleet settings supersede old approvals and prohibit Approved exports on either API', {skip:!process.env.CURSUS_TEST_DATABASE_URL},async()=>{
+  const store=new StatefulStore(process.env.CURSUS_TEST_DATABASE_URL!),tenant=`policy-${randomUUID()}`,f=manualFixture();
+  f.parent.provenance.tariffSha256=tariffIdentity(f.context.tariff);
+  await store.ensureTenant(tenant,'Policy correction');await store.createScenario(tenant,f.scenario.id,f.scenario);
+  await store.pool.query('INSERT INTO plans(tenant_id,id,scenario_id,scenario_revision,body) VALUES($1,$2,$3,1,$4)',[tenant,f.parent.id,f.scenario.id,f.parent]);
+  const old=new PlanWorkflow(store,tenant);await old.transition(f.parent.id,'plan.review',0,1,true);await old.transition(f.parent.id,'plan.approve',1,1,true);
+  delete f.context.day.request.vehicles[0]!.gross_weight_kg;f.context.vehicleInfo.get('V7')!.tonnage=40;
+  const apps=await Promise.all([0,1].map(()=>createStatefulApi({store,tenantId:tenant,tenantName:'Policy correction',fleetSettings:f.context,manualPlanning:async()=>f.context})));
+  try{
+    for(const app of apps){
+      const workflow=(await app.inject({method:'GET',url:`/api/plans/${f.parent.id}/workflow`})).json();
+      assert.equal(workflow.state,'superseded');assert.ok(workflow.blockers.some((b:string)=>b.includes('Fleet or tariff')));
+      const context=(await app.inject({method:'GET',url:`/api/plans/${f.parent.id}/manual-context`})).json();
+      assert.equal(context.requiresRevalidation,true);assert.equal(context.fleet.find((v:{id:number})=>v.id===7).tonnage,40);
+      const approved=await app.inject({method:'GET',url:`/api/plans/${f.parent.id}/handoff.json?approval=required`});assert.equal(approved.statusCode,409);
+      const ordinary=await app.inject({method:'GET',url:`/api/plans/${f.parent.id}/handoff.json`});assert.equal(ordinary.statusCode,200);
+      assert.equal(ordinary.headers['x-cursus-export-status'],'Superseded');
+      const review=await app.inject({method:'POST',url:`/api/plans/${f.parent.id}/review`,payload:{version:2,revision:1,acknowledgeExceptions:true}});assert.equal(review.statusCode,409);
+    }
+    assert.equal((await store.listPlans(tenant)).length,1);assert.equal((await store.getScenario(tenant,f.scenario.id))!.revision,1);
+    assert.equal((await store.getPlan(tenant,f.parent.id))!.vehicles[0]!.tonnage,12);
+  }finally{await Promise.all(apps.map(app=>app.close()));await store.close();}
 });
 
 test('manual preview is non-publishing; base fork, exclusion, restore and undo preserve baseline and history', {skip:!process.env.CURSUS_TEST_DATABASE_URL},async()=>{
@@ -238,6 +290,12 @@ test('real native replanning across replicas retains, releases and fences manual
     await a.createDatasetUpload(tenant,'dataset',manifest);await a.validateDataset(tenant,'dataset',manifest);
     await a.publishDataset(tenant,'dataset',manifest,[request.key,geocoded.key]);
     f.parent.provenance.datasetSha256=request.sha256;
+    const configured=await solveConvertedDataset(objects,tenant,manifest,f.scenario,1,'vehicles',new AbortController().signal,false,
+      {...f.context,datasetSha256:request.sha256,unavailableVehicleIds:[7]});
+    assert.equal(configured.stats.servedOrders,2);assert.ok(configured.vehicles.every(v=>v.id!==7));
+    assert.ok(configured.provenance.tariffSha256);
+    await assert.rejects(()=>solveConvertedDataset(objects,tenant,manifest,{...f.scenario,pins:[{orderNo:'ORDER-1',vehicleId:7}]},1,'vehicles',new AbortController().signal,false,
+      {...f.context,datasetSha256:request.sha256,unavailableVehicleIds:[7]}),/vehicle is unavailable/);
     f.scenario.pins=[{orderNo:'ORDER-1',vehicleId:7}];
     await a.createScenario(tenant,f.scenario.id,f.scenario);
     await a.pool.query('INSERT INTO plans(tenant_id,id,scenario_id,scenario_revision,body) VALUES($1,$2,$3,1,$4)',[tenant,f.parent.id,f.scenario.id,f.parent]);

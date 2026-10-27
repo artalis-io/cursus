@@ -376,3 +376,60 @@ Frontend build and lint passed (five existing hook warnings). An initial Debian
 package-signature failure during image build resolved on an ordinary retry;
 signature verification was not bypassed. No production deployment or private
 Gyermelyi run is implied by this synthetic acceptance evidence.
+
+### Conservative fleet policy
+
+External settings may pin `datasetSha256` and set `available: false` on individual
+fleet entries. Unverified equipment uses unknown GVW (`tonnage: null`) and no
+asserted tail-lift capability (`hasTailLift: false`); payload capacity never
+establishes GVW. Unavailable entries remain in the inventory but cannot be
+assigned, restored or selected by native Replan. Their policy survives manual
+publication, Undo, scenario edits and the authoritative result boundary.
+
+Use payload, GVW and equipment from the same verified vehicle configuration.
+Preserve the approved tariff and reload policy explicitly. Carrier profile slots
+are modelling capacity, not confirmed individual truck registrations. Customer
+settings and cell-level provenance stay outside the repository and build context.
+
+For the existing stateful Compose contract, set both external values:
+
+```dotenv
+CURSUS_MANUAL_SETTINGS_PATH=/absolute/private/path/manual-settings.json
+CURSUS_MANUAL_SETTINGS_FILE=/run/config/manual-settings.json
+```
+
+The file is mounted read-only with missing-host-path creation disabled. The
+default checked-in empty file is inert because the loader environment variable
+is empty. Keep this mount in the deployment's main Compose contract so reboot
+recovery uses the same configuration; do not depend on an unrecorded override.
+
+Configured fleet/tariff evidence is also used by normal native solves for the
+pinned dataset and owning tenant. Other tenants never inherit these defaults.
+Old plans whose fleet/tariff evidence differs remain immutable, but their current
+approval status is superseded and Approved exports fail server-side. Ordinary
+historical exports retain their evidence and label. Approval checks are pure
+metadata comparisons inside the existing transaction, with no network I/O.
+
+Historical plans lacking stable request identities must be replanned before
+manual editing. Duplicate display labels are accepted only with stable request
+IDs and independently agreeing source access facts. Unassigned selection keeps
+request IDs and refuses ambiguous historical label-only selections. Native HTML
+drag/drop and bulk assignment still reject ambiguous label-only input rather
+than guessing a delivery.
+
+The conservative-policy implementation was exercised outside the checkout with
+the real two-day customer input: sequential HGS runs, eight threads and a full
+600-second budget per day. Native validation and the manual evaluator passed for
+both 117/117 and 146/146 served deliveries, with unverified fleet slots excluded.
+These isolated candidates do not replace or re-approve historical production
+plans. Customer workbooks, mappings, policies and results remain external.
+
+Native and manual mapping share rounding reconciliation: trip allocations sum
+to the unchanged authoritative vehicle and plan totals. The real-data check
+caught a one-currency-unit discrepancy in independent trip rounding; a fractional
+tariff regression now checks the mapper as well as the common allocation helper.
+Manual metrics retain matrix precision; tariff calculations use the same
+nearest-0.1-km convention as existing native plan mapping, so identical routes
+do not acquire a different price when switching between native and manual modes.
+The test object store explicitly disables the image entrypoint's disk
+preallocation, keeping tiny fixtures from reserving gigabytes per empty bucket.

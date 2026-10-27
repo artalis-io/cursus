@@ -42,9 +42,9 @@ const auth = config.authRequired ? new StatefulAuthService(store, {
   tenantId: config.authTenantId, tenantName: config.authTenantName,
   secureCookies: config.authPublicOrigin.startsWith('https://'),
 }) : undefined;
-const manualPlanning = process.env.CURSUS_MANUAL_SETTINGS_FILE ? admittedManualDatasetLoader(store,objects,config.authTenantId,
-  manualSettings(JSON.parse(await readFile(process.env.CURSUS_MANUAL_SETTINGS_FILE,'utf8')))) : undefined;
-const app = await createStatefulApi({ store, objects, auth, manualPlanning, tenantId: config.authTenantId,
+const fleetSettings=process.env.CURSUS_MANUAL_SETTINGS_FILE?manualSettings(JSON.parse(await readFile(process.env.CURSUS_MANUAL_SETTINGS_FILE,'utf8'))):undefined;
+const manualPlanning = fleetSettings ? admittedManualDatasetLoader(store,objects,config.authTenantId,fleetSettings) : undefined;
+const app = await createStatefulApi({ store, objects, auth, manualPlanning,fleetSettings, tenantId: config.authTenantId,
   tenantName: config.authTenantName, publicOrigin: config.authPublicOrigin, maxUploadBytes: config.maxUploadMB * 1024 * 1024 });
 await app.register(fastifyStatic, { root: config.webDist, wildcard: false });
 app.setNotFoundHandler((req, reply) => req.method === 'GET' && !req.url.startsWith('/api/') && !req.url.startsWith('/health/')
@@ -66,7 +66,8 @@ async function solve(lease: Lease, signal: AbortSignal): Promise<SolveOutput> {
   const dataset = matches[0];
   if (!dataset) throw new Error(`no admitted dataset contains day ${payload.scenario.day}`);
   const plan = await solveConvertedDataset(objects, lease.tenantId, dataset.manifest as never, payload.scenario,
-    Math.max(1, payload.budgetSec ?? config.solveTimeSeconds), payload.objective ?? 'vehicles', signal, payload.fullBudget ?? false);
+    Math.max(1, payload.budgetSec ?? config.solveTimeSeconds), payload.objective ?? 'vehicles', signal, payload.fullBudget ?? false,
+    lease.tenantId===config.authTenantId?fleetSettings:undefined);
   return { planId: plan.id, scenarioId: payload.scenario.id, scenarioRevision: payload.scenario.revision, plan };
 }
 

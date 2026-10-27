@@ -6,6 +6,7 @@ import { Separator } from '@/components/ui/separator';
 import { hhmm, km, money, pct, ratio } from '@/lib/format';
 import { setDraggedOrder, isOrderDrag, readDraggedOrder } from '@/lib/dnd';
 import { violationDetail } from '@/lib/violations';
+import { selectedUnassigned } from '@/lib/unassigned-selection';
 import { NarrationPanel } from '@/components/NarrationPanel';
 import { api } from '@/lib/api';
 import { useT } from '@/i18n';
@@ -475,7 +476,7 @@ export function Inspector({ plan, scenario, selection, onSelect, onBack, onForwa
   const nav = { onBack, onForward, canGoBack, canGoForward };
   // Unassigned order context.
   if (selection?.kind === 'unassigned') {
-    const u = plan.unassigned.find((x) => x.orderNo === selection.orderNo);
+    const u = selectedUnassigned(plan.unassigned,selection);
     const pin = u ? scenario.pins.find((p) => p.orderNo === u.orderNo) : undefined;
     const refOf = (id: number): string => plan.vehicles.find((v) => v.id === id)?.ref ?? `#${id}`;
     return (

@@ -46,6 +46,7 @@ export interface Scenario {
     requestIds?: number[];
     tariff?: import('./cost.js').Tariff; tariffSha256?:string; fleetInfo?:[string, import('./data/dataset.js').VehicleInfo][];
     reloadSeconds?:[number,number][];
+    unavailableVehicleIds?:number[];
     origins?: Record<string, import('./plan/manual.js').AssignmentOrigin>; history?: import('./plan/manual.js').AssignmentEvent[] };
   planningPolicy?: PlanningPolicy;
   id: string;

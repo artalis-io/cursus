@@ -226,6 +226,7 @@ services:
       carta: { condition: service_healthy }
     environment:
       CURSUS_RUNTIME_MODE: stateful
+      CURSUS_MANUAL_SETTINGS_FILE: ${CURSUS_MANUAL_SETTINGS_FILE:-}
       CURSUS_DATABASE_URL_FILE: /run/secrets/database_url
       CURSUS_R2_ENDPOINT: ${CURSUS_R2_ENDPOINT:?set CURSUS_R2_ENDPOINT}
       CURSUS_R2_BUCKET: ${CURSUS_R2_BUCKET:?set an isolated staging bucket}
@@ -262,6 +263,11 @@ services:
       - type: bind
         source: ${CURSUS_STAGING_STATE_PATH:?set CURSUS_STAGING_STATE_PATH}
         target: /state
+        bind: { create_host_path: false }
+      - type: bind
+        source: ${CURSUS_MANUAL_SETTINGS_PATH:-./deploy/manual-settings.disabled.json}
+        target: /run/config/manual-settings.json
+        read_only: true
         bind: { create_host_path: false }
       - type: bind
         source: ${OSM_DATA_PATH:?set OSM_DATA_PATH}

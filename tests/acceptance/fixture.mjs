@@ -8,6 +8,7 @@ import { config } from '/app/server/dist/config.js';
 import { StatefulStore } from '/app/server/dist/state/postgres.js';
 import { ObjectStore } from '/app/server/dist/state/objects.js';
 import { solveConvertedDataset } from '/app/server/dist/state/conversion.js';
+import { manualSettings } from '/app/server/dist/state/manual-settings.js';
 const require = createRequire('/app/server/package.json');
 const { S3Client, CreateBucketCommand } = require('@aws-sdk/client-s3');
 const url = (await readFile(config.databaseUrlFile, 'utf8')).trim();
@@ -31,12 +32,12 @@ async function seed() {
     dimension_count: 2, demand_sign_convention: 1,
     locations: Array.from({ length: 9 }, (_, i) => ({ x: 19 + i * .002, y: 47 + i * .001 })),
     depots: [{ location_id: 0, tw_early: 0, tw_late: 86400 }],
-    vehicles: [10, 30, 50].map(id => ({ id, ref: `ACCEPT-${id}`, capacity: [1000, 10],
-      gross_weight_kg: id === 30 ? 12000 : 3500, has_tail_lift: id === 30,
+    vehicles: [10, 30, 50, 99].map(id => ({ id, ref: `ACCEPT-${id}`, capacity: [1000, 10],
+      gross_weight_kg: id===99?0:id === 30 ? 12000 : 3500, has_tail_lift: id === 30,
       start_depot_id: 0, end_depot_id: 0, shift_early: 0, shift_late: 86400, max_trips: 1 })),
     tasks: Array.from({ length: 8 }, (_, i) => ({ id: i, ref: `PUBLIC-${i + 1}`, type: 'delivery',
       location_id: i + 1, tw_early: 0, tw_late: 86400, service_seconds: 60, demand: [100, 1] })),
-    requests: Array.from({ length: 8 }, (_, i) => ({ id: 100 + i * 10, delivery_task_id: i })),
+    requests: Array.from({ length: 8 }, (_, i) => ({ id: 100 + i * 10, delivery_task_id: i,forbidden_vehicles:[99] })),
     travel: { location_count: 9,
       distances: Array.from({ length: 81 }, (_, k) => { const i = Math.floor(k / 9), j = k % 9; return i === j ? 0 : (1 + (i * 7 + j * 3) % 9) * 1000; }),
       durations: Array.from({ length: 81 }, (_, k) => { const i = Math.floor(k / 9), j = k % 9; return i === j ? 0 : (1 + (i * 7 + j * 3) % 9) * 60; }),
@@ -68,7 +69,8 @@ async function seed() {
       exceptions: [{ orderNo: 'PUBLIC-1', originalRequiresTailLift: true, requiresTailLift: false, reason: 'Public fixture unloading approval' }],
     };
     await store.createScenario('acceptance', scenario.id, scenario);
-    const plan = await solveConvertedDataset(objects, 'acceptance', manifest, scenario, 2, 'vehicles', AbortSignal.timeout(30000));
+    const policy=manualSettings(JSON.parse(await readFile(process.env.CURSUS_MANUAL_SETTINGS_FILE,'utf8')));
+    const plan = await solveConvertedDataset(objects, 'acceptance', manifest, scenario, 2, 'vehicles', AbortSignal.timeout(30000),false,policy);
     assert.equal(plan.stats.servedOrders, day.orders);
     assert.equal(plan.provenance.validation.valid, true, 'native baseline must preserve IDs and satisfy feasibility');
     plan.source = 'saved';

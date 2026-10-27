@@ -271,7 +271,7 @@ export function MapView({ plan, scenario, selection, onSelect, clockSec, visible
     type: 'FeatureCollection',
     features: plan.unassigned
       .filter((u) => typeof (u as { lon?: number }).lon === 'number')
-      .map((u) => ({ type: 'Feature', properties: { orderNo: u.orderNo },
+      .map((u) => ({ type: 'Feature', properties: { orderNo: u.orderNo,requestId:u.requestId },
         geometry: { type: 'Point', coordinates: [(u as { lon: number }).lon, (u as { lat: number }).lat] } })),
   }), [plan.unassigned]);
 
@@ -400,7 +400,7 @@ export function MapView({ plan, scenario, selection, onSelect, clockSec, visible
 
 function selectionKey(s: Selection): string {
   if (!s) return 'none';
-  if (s.kind === 'unassigned') return `u:${s.orderNo}`;
+  if (s.kind === 'unassigned') return `u:${s.requestId??s.orderNo}`;
   if (s.kind === 'vehicle') return `v:${s.vehicleId}`;
   if (s.kind === 'trip') return `t:${s.vehicleId}:${s.tripIndex}`;
   return `s:${s.vehicleId}:${s.tripIndex}:${s.seq}`;

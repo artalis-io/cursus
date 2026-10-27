@@ -5,7 +5,7 @@ import { basename, join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { config } from '../config.js';
 import { admitDataset } from '../data/admit.js';
-import { enrichmentFromRecords, loadVehicleInfo, type LoadedDay } from '../data/dataset.js';
+import { enrichmentFromRecords, verifiedSharedAccessReferences, loadVehicleInfo, type LoadedDay } from '../data/dataset.js';
 import type { Mapping } from '../data/onboard.js';
 import { applyOverrides, applySequences, applyVehicleOverrides, type Objective } from '../solve.js';
 import { mapSolutionToPlan } from '../plan/mapper.js';
@@ -23,6 +23,8 @@ import { withPlanningPolicy } from '../plan/policy.js';
 import { populationConfig } from '../solver-config.js';
 import { tariffIdentity } from '../cost.js';
 import { applyRetainedDecisions, datasetAllowances, verifyRetainedSolution, withRetainedProvenance } from '../plan/retained.js';
+import { applyFleetSettings } from './manual-settings.js';
+import type { ManualDatasetContext } from '../plan/manual-adapter.js';
 
 const OUTPUT_SCHEMA_VERSION = 1;
 const run = promisify(execFile);
@@ -134,28 +136,31 @@ export async function loadConvertedDay(objects: ObjectStore, tenantId: string, m
     def: { id: dayMeta.dayId, date: dayMeta.date ?? dayMeta.isoDate, isoDate: dayMeta.isoDate, label: dayMeta.label,
     requestFile: '', solutionFile: '' }, kind: 'uploaded', request, solution,
     scopeTaskIds: new Set(request.requests.map((r) => r.delivery_task_id)),
-    depot: { name: 'Depot', lon: request.locations[0]!.x, lat: request.locations[0]!.y }, enrichment: enrichmentFromRecords(rows) }, scenario.planningPolicy);
+    depot: { name: 'Depot', lon: request.locations[0]!.x, lat: request.locations[0]!.y }, enrichment: enrichmentFromRecords(rows),
+    verifiedSharedAccessRefs:verifiedSharedAccessReferences(rows) }, scenario.planningPolicy);
 }
 
 export async function solveConvertedDataset(objects: ObjectStore, tenantId: string, manifest: ConvertedManifest, scenario: Scenario,
-  budgetSec: number, objective: Objective, signal: AbortSignal, fullBudget = false): Promise<Plan> {
+  budgetSec: number, objective: Objective, signal: AbortSignal, fullBudget = false,
+  configuredSettings?:Omit<ManualDatasetContext,'day'>): Promise<Plan> {
   const day = await loadConvertedDay(objects, tenantId, manifest, scenario);
   const request = day.request;
   const baseline = datasetAllowances(request), datasetVehicles = request.vehicles.map(vehicle => vehicle.id);
-  if (scenario.removedVehicleIds.length) request.vehicles = request.vehicles.filter((v) => !scenario.removedVehicleIds.includes(v.id));
-  const available = new Set(request.vehicles.map((v) => v.id));
-  applyOverrides(request, scenario, available); applyVehicleOverrides(request, scenario); applySequences(request, scenario, available);
   const retained=scenario.manualDecisions;
   if(retained&&(!retained.tariff||!retained.fleetInfo||tariffIdentity(retained.tariff)!==retained.tariffSha256))
     throw new Error('manual solve tariff/fleet snapshot is missing or inconsistent');
-  const vehicleInfo = retained?.fleetInfo?new Map(retained.fleetInfo):loadVehicleInfo();
-  if(retained){
-    const reload=new Map(retained.reloadSeconds);
-    for(const vehicle of request.vehicles){const seconds=reload.get(vehicle.id);
-      if(typeof seconds!=='number'||!Number.isSafeInteger(seconds)||seconds<0||seconds>2147483647)throw new Error('manual reload snapshot is missing or invalid');
-      vehicle.trip_reload_seconds=seconds;
-    }
-  }
+  const policy=retained?{datasetSha256:retained.datasetSha256,vehicleInfo:new Map(retained.fleetInfo),
+    reloadSeconds:new Map(retained.reloadSeconds),tariff:retained.tariff!,unavailableVehicleIds:retained.unavailableVehicleIds??[]}:configuredSettings;
+  const applied=policy?applyFleetSettings(request,day.datasetRequestSha256,policy):false;
+  if(retained&&!applied)throw new Error('manual fleet snapshot dataset mismatch');
+  const vehicleInfo=applied?policy!.vehicleInfo:loadVehicleInfo();
+  const policyUnavailable=new Set(applied?policy!.unavailableVehicleIds??[]:[]);
+  if(scenario.pins.some(pin=>policyUnavailable.has(pin.vehicleId))||scenario.sequences.some(sequence=>policyUnavailable.has(sequence.vehicleId)))
+    throw new Error('Pinned or sequenced vehicle is unavailable; clear that edit before replanning');
+  const unavailable=new Set([...scenario.removedVehicleIds,...(applied?policy!.unavailableVehicleIds??[]:[])]);
+  request.vehicles=request.vehicles.filter(v=>!unavailable.has(v.id));
+  const available = new Set(request.vehicles.map((v) => v.id));
+  applyOverrides(request, scenario, available); applyVehicleOverrides(request, scenario); applySequences(request, scenario, available);
   applyAccessLimits(request, day.enrichment, vehicleInfo);
   applyRetainedDecisions(request, scenario, day.datasetRequestSha256, baseline);
   request.config = populationConfig({ ...request.config, max_time_seconds: budgetSec, seed: 42, lexicographic_objective: objective !== 'distance',
@@ -172,10 +177,10 @@ export async function solveConvertedDataset(objects: ObjectStore, tenantId: stri
     if (!Array.isArray(solution.routes) || !Array.isArray(solution.unassigned) || !['OK', 'LIMIT', 'INFEASIBLE'].includes(solution.status))
       throw new Error('converted dataset solve produced an invalid solution');
     verifyRetainedSolution(request, scenario, solution);
-    const mapped = mapSolutionToPlan({ day, request, solution, enrichment: day.enrichment, vehicleInfo, tariff:retained?.tariff, scenarioId: scenario.id,
+    const mapped = mapSolutionToPlan({ day, request, solution, enrichment: day.enrichment, vehicleInfo, tariff:applied?policy!.tariff:undefined, scenarioId: scenario.id,
       scenarioRevision: scenario.revision, planId: `pln_${randomUUID().slice(0, 8)}`, source: 'live', createdAt: new Date().toISOString() });
     const plan = withRetainedProvenance(mapped, scenario, datasetVehicles);
-    if(retained?.tariffSha256)plan.provenance.tariffSha256=retained.tariffSha256;
+    if(applied)plan.provenance.tariffSha256=tariffIdentity(policy!.tariff);
     if (scenario.planningPolicy) plan.provenance.planningPolicy = structuredClone(scenario.planningPolicy);
     plan.stats.solveElapsedSeconds = Math.round((Date.now() - startedAt) / 100) / 10;
     if (plan.provenance.validation.violations.some(v => ['VEHICLE_SIZE', 'TAIL_LIFT'].includes((v as {type?: string}).type ?? '')))

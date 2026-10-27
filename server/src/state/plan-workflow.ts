@@ -61,7 +61,7 @@ export function approvalBlockers(plan: Plan, revision: number, scenario?: Scenar
  * Scenario row locks serialize approval against edit/delete transactions.
  * No operational dispatched/published state or customer system-of-record is introduced. */
 export class PlanWorkflow {
-  constructor(private store: StatefulStore, private tenantId: string) {}
+  constructor(private store: StatefulStore, private tenantId: string,private policyBlockers?:(plan:Plan)=>string[]) {}
 
   private async snapshot(client: PoolClient, id: string, lock: boolean, allowMissingScenario = false) {
     const found = await client.query<{ body: Plan }>('SELECT body FROM plans WHERE tenant_id=$1 AND id=$2', [this.tenantId, id]);
@@ -79,11 +79,12 @@ export class PlanWorkflow {
        WHERE e.tenant_id=$1 AND e.action IN ('plan.review','plan.approve')
        AND e.detail->>'planId'=$2 ORDER BY e.id DESC LIMIT 1`, [this.tenantId, id]);
     const event = events.rows[0];
-    const state = event ? revision !== plan.scenarioRevision || event.detail.planSha256 !== hash ? 'superseded'
+    const policyIssues=this.policyBlockers?.(plan)??[];
+    const state = event ? revision !== plan.scenarioRevision || event.detail.planSha256 !== hash || policyIssues.length>0 ? 'superseded'
       : event.action === 'plan.approve' ? 'approved' : 'reviewed' : 'draft';
     return { plan, scenario, event, workflow: { state, version: event?.detail.version ?? 0, scenarioRevision: plan.scenarioRevision,
       currentRevision: revision, planSha256: hash, actor: event?.user_id ?? null, at: event?.created_at.toISOString() ?? null,
-      blockers: approvalBlockers(plan, revision, scenario ?? undefined) } satisfies Workflow };
+      blockers: [...approvalBlockers(plan, revision, scenario ?? undefined),...policyIssues] } satisfies Workflow };
   }
 
   async get(id: string): Promise<Workflow> {
