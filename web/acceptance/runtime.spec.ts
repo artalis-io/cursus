@@ -89,7 +89,13 @@ test('manual: unverified fleet entries have no restore, assign or drop path and 
   await manualStop(page,base,'PUBLIC-2');
   await page.getByRole('button',{name:'Move to vehicle…',exact:true}).click();
   const dialog=page.getByRole('dialog',{name:'Manual planning',exact:true});
-  await expect(dialog.getByRole('combobox',{name:'Vehicle',exact:true}).locator('option[value="99"]')).toBeDisabled();
+  const picker=dialog.getByRole('combobox',{name:'Vehicle',exact:true}),option=picker.locator('option[value="99"]');
+  await expect(option).toHaveJSProperty('disabled',true);
+  // Even DOM tampering cannot turn the trusted unavailable policy into intent.
+  await option.evaluate(el=>{(el as HTMLOptionElement).disabled=false;});
+  await picker.selectOption('99');
+  await expect(dialog.getByRole('button',{name:'Calculate preview',exact:true})).toBeDisabled();
+  await expect(dialog.getByRole('button',{name:'Apply manual change',exact:true})).toBeDisabled();
   await dialog.getByRole('button',{name:'Cancel',exact:true}).click();
   for(const suffix of ['manual-preview','manual-plan']){
     const response=await page.request.post(`/api/scenarios/${base.scenarioId}/${suffix}`,{headers:{origin:new URL(page.url()).origin,'if-match':`"${base.scenarioRevision}"`},
