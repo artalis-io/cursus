@@ -344,3 +344,25 @@ earlier 61/61 certificate for this source. Repeat the full acceptance command on
 an awake, stable host before release. The server suite passed 167/167; focused
 manual coverage passed 44/44 with 100% line/branch coverage for the command core
 and 100% line coverage for the evaluator. No production rollout occurred.
+
+### Workflow hardening
+
+Bulk insertion positions refer to the destination after all selected deliveries
+are removed. The client translates this into backwards, successor-anchored API
+commands; exhaustive public-fixture tests exercise both selection orders and every
+insertion position, including same-trip and mixed-source moves. Each delivery
+still receives one audited assignment event.
+
+The publisher locks and rechecks both scenario revision and current-plan pointer.
+A native completion can advance that pointer without changing revision; a manual
+evaluation based on the older plan must then fail with a conflict and publish
+nothing. Fleet, tariff and reload configuration drift also fails closed rather
+than silently repricing a saved manual draft; reconcile trusted configuration
+before editing that draft.
+
+Manual evaluation requires complete request/fleet inventories and finite aggregate
+totals. Limit conventions match pinned Surge: an omitted trip limit means one
+trip, explicit zero trips means unlimited, and zero distance/duration limits are
+unlimited. Independent matrix/tariff tests cover 36 placement/model combinations;
+browser checks reconcile actual delivery counts, uniqueness, trip/vehicle totals,
+loads, timing and trip/vehicle/plan costs after edits, Undo and native Replan.

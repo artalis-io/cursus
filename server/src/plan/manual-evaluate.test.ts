@@ -11,7 +11,7 @@ function fixture(): ManualEvaluationInput {
       unassigned: [], decisions: {}, origins: {}, history: [] },
     request: { config: {}, dimension_count: 2, demand_sign_convention: 1,
       locations: [{ x: 0, y: 0 }, { x: 1, y: 1 }, { x: 2, y: 2 }], depots: [{ location_id: 0 }],
-      vehicles: [7, 42].map(id => ({ id, ref: `V-${id}`, capacity: [1000, 10], start_depot_id: 0, end_depot_id: 0 })),
+      vehicles: [7, 42].map(id => ({ id, ref: `V-${id}`, capacity: [1000, 10], start_depot_id: 0, end_depot_id: 0, max_trips: 0 })),
       tasks: [1, 2].map(id => ({ id, ref: 'REPEATED-DISPLAY-NUMBER', type: 'delivery', location_id: id,
         tw_early: 0, tw_late: 10000, service_seconds: 60, demand: [100, 1] })),
       requests: [{ id: 91, delivery_task_id: 1 }, { id: 92, delivery_task_id: 2 }],
@@ -106,10 +106,48 @@ test('missing routing or safety facts fail closed rather than report zero or val
     x => { x.request.vehicles[0]!.end_depot_id=1; }, x => { x.request.tasks[0]!.demand=[-100,1]; },
     x => { x.request.precedences=[{before:91,after:92}]; }, x => { x.layout.lockedVehicleIds=[7]; },
     x => { x.tariff.perKmDefault=NaN; }, x => { x.request.requests.push(x.request.requests[0]!); },
+    x => { x.layout.requestIds=[91]; x.layout.routes=x.layout.routes.slice(0,1); },
+    x => { x.layout.vehicleIds=[7]; },
   ];
   for (const change of changes) {
     const input=fixture(); change(input);
     assert.throws(()=>evaluateManualLayout(input),/manual evaluation:/);
+  }
+});
+
+test('every placement reconciles independent distance, load, coverage and both tariff models', () => {
+  // Enumerate unassigned / vehicle 7 / vehicle 42 for each delivery, with
+  // separate-trip and merged-trip layouts. Expected values use matrix entries,
+  // never the evaluator or production cost helpers.
+  for (const model of ['per_vehicle','per_trip'] as const) for (let a=0;a<3;a++) for(let b=0;b<3;b++) for(const split of [false,true]) {
+    const input=fixture(); input.tariff.model=model;
+    input.layout.routes=[];input.layout.unassigned=[];
+    for(const [index,placement] of [a,b].entries()) {
+      const id=91+index;
+      if(!placement){input.layout.unassigned.push(id);continue;}
+      const vehicleId=placement===1?7:42,tripId=split?`split-${id}`:'merged';
+      let route=input.layout.routes.find(r=>r.vehicleId===vehicleId&&r.tripId===tripId);
+      if(!route){route={vehicleId,tripId,requestIds:[]};input.layout.routes.push(route);}
+      route.requestIds.push(id);input.departures.set(`${vehicleId}:${tripId}`,0);
+    }
+    const out=evaluateManualLayout(input);
+    let distance=0,tripCount=0,cost=0;
+    const used=new Set<number>();
+    for(const route of input.layout.routes){
+      const locations=[0,...route.requestIds.map(id=>id-90),0];
+      let km=0;for(let i=1;i<locations.length;i++)km+=input.request.travel.distances[locations[i-1]!*3+locations[i]!]!/1000;
+      distance+=km;tripCount++;used.add(route.vehicleId);
+      cost+=model==='per_trip'?500+10*km+50*route.requestIds.length:10*km;
+    }
+    if(model==='per_vehicle')cost+=1000*used.size;
+    assert.deepEqual(out.stats,{totalOrders:2,servedOrders:Number(a>0)+Number(b>0),unassignedOrders:Number(!a)+Number(!b),vehiclesUsed:used.size,trips:tripCount,totalDistanceKm:distance});
+    assert.equal(out.cost.total,cost);assert.equal(out.cost.fixed+out.cost.variable,cost);
+    assert.equal(out.vehicles.reduce((sum,v)=>sum+v.cost,0),cost);
+    assert.equal(out.vehicles.flatMap(v=>v.trips).reduce((sum,t)=>sum+t.cost,0),cost);
+    for(const v of out.vehicles)for(const trip of v.trips){
+      assert.equal(trip.loadKg,100*trip.stops.length);assert.equal(trip.loadPallets,trip.stops.length);
+      assert.ok(trip.endSec>=trip.startSec);
+    }
   }
 });
 
@@ -149,4 +187,18 @@ test('rounding cannot make the last trip cost negative', () => {
   assert.equal(out.cost.total,3);
   assert.equal(out.vehicles[0]!.trips.reduce((sum,t)=>sum+t.cost,0),3);
   assert.ok(out.vehicles[0]!.trips.every(t=>t.cost>=0));
+});
+
+test('native limit conventions: omitted trips means one; explicit zero limits are unlimited', () => {
+  const input=fixture(),vehicle=input.request.vehicles[0]!;
+  vehicle.max_distance=0;vehicle.max_duration=0;
+  assert.equal(evaluateManualLayout(input).validation.valid,true);
+  delete vehicle.max_trips;
+  const result=evaluateManualLayout(input);
+  assert.equal(result.validation.valid,false);
+  assert.deepEqual(result.validation.violations.map(v=>[v.type,v.actual,v.limit]),[['MAX_TRIPS',2,1]]);
+  vehicle.max_trips=2;
+  assert.equal(evaluateManualLayout(input).validation.valid,true);
+  vehicle.max_trips=1.5;
+  assert.throws(()=>evaluateManualLayout(input),/invalid trip limit/);
 });

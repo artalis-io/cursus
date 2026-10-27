@@ -65,6 +65,7 @@ export function evaluateManualLayout(input: ManualEvaluationInput): ManualEvalua
   const vehicles = new Map(request.vehicles.map(vehicle => [vehicle.id, vehicle]));
   need(tasks.size === request.tasks.length && requests.size === request.requests.length && vehicles.size === request.vehicles.length, 'duplicate dataset identities');
   need(layout.requestIds.every(id => requests.has(id)) && layout.vehicleIds.every(id => vehicles.has(id)), 'layout references unknown dataset identity');
+  need(layout.requestIds.length === requests.size && layout.vehicleIds.length === vehicles.size, 'layout inventory is incomplete');
   const taskFor = (id: number): SurgeTask => {
     const task = tasks.get(requests.get(id)!.delivery_task_id);
     need(task && task.type === 'delivery', 'unsupported or missing delivery task');
@@ -103,7 +104,10 @@ export function evaluateManualLayout(input: ManualEvaluationInput): ManualEvalua
       need(value === undefined || nonnegative(value), 'invalid vehicle limit');
     const issue = (type: ManualViolation['type'], requestId?: number, evidence: Pick<ManualViolation, 'actual'|'limit'|'dimension'> = {}) => violations.push({ type, vehicleId, ...(requestId === undefined ? {} : { requestId }), ...evidence, soft: false });
     if (layout.excludedVehicleIds.includes(vehicleId)) issue('EXCLUDED');
-    if (vehicle.max_trips !== undefined && routes.length > vehicle.max_trips) issue('MAX_TRIPS');
+    // Match Surge: omitted max_trips means one trip; explicit zero is unlimited.
+    const maxTrips = vehicle.max_trips ?? 1;
+    need(Number.isSafeInteger(maxTrips), 'invalid trip limit');
+    if (maxTrips > 0 && routes.length > maxTrips) issue('MAX_TRIPS', undefined, { actual: routes.length, limit: maxTrips });
     const trips: ManualEvaluatedTrip[] = [];
     let previousEnd = vehicle.shift_early ?? 0;
     for (const route of routes) {
@@ -142,8 +146,8 @@ export function evaluateManualLayout(input: ManualEvaluationInput): ManualEvalua
       previousEnd = time;
     }
     const distanceKm = trips.reduce((sum, trip) => sum+trip.distanceKm, 0);
-    if (vehicle.max_distance !== undefined && distanceKm*1000 > vehicle.max_distance) issue('MAX_DISTANCE');
-    if (vehicle.max_duration !== undefined && previousEnd-trips[0]!.startSec > vehicle.max_duration) issue('MAX_DURATION');
+    if (vehicle.max_distance && distanceKm*1000 > vehicle.max_distance) issue('MAX_DISTANCE');
+    if (vehicle.max_duration && previousEnd-trips[0]!.startSec > vehicle.max_duration) issue('MAX_DURATION');
     const cost = vehicleCostFor(tariff, { ...info, distanceKm, trips: trips.map(trip => ({ distanceKm: trip.distanceKm, drops: trip.stops.length })) });
     let allocated = 0;
     for (const [index, trip] of trips.entries()) {
@@ -159,6 +163,7 @@ export function evaluateManualLayout(input: ManualEvaluationInput): ManualEvalua
     result.cost.total += cost.total; result.cost.fixed += cost.fixed; result.cost.variable += cost.variable;
   }
   result.stats.vehiclesUsed = result.vehicles.length;
+  need([result.stats.totalDistanceKm, result.cost.total, result.cost.fixed, result.cost.variable].every(nonnegative), 'non-finite aggregate result');
   result.validation.valid = violations.length === 0;
   return result;
 }

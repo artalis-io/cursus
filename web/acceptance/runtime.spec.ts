@@ -31,6 +31,22 @@ async function applyManualDialog(page:Page):Promise<Plan>{
 }
 function independentManualKpis(plan:Plan){
   let distance=0,tripCount=0;
+  const stops=plan.vehicles.flatMap(v=>v.trips.flatMap(t=>t.stops));
+  expect(plan.stats.servedOrders).toBe(stops.length);
+  expect(plan.stats.deliveryStops).toBe(stops.length);
+  expect(plan.stats.vehiclesUsed).toBe(plan.vehicles.length);
+  expect(new Set([...stops,...plan.unassigned].map(s=>s.requestId)).size).toBe(6);
+  expect(plan.stats.totalOrders).toBe(6);
+  for(const vehicle of plan.vehicles){
+    expect(vehicle.tripCount).toBe(vehicle.trips.length);
+    expect(vehicle.distanceKm).toBeCloseTo(vehicle.trips.reduce((sum,t)=>sum+t.distanceKm,0),8);
+    expect(vehicle.peakKg).toBe(Math.max(...vehicle.trips.map(t=>t.loadKg)));
+    for(const trip of vehicle.trips){
+      expect(trip.loadKg).toBe(trip.stops.reduce((sum,s)=>sum+s.weightKg,0));
+      expect(trip.loadPallets).toBe(trip.stops.reduce((sum,s)=>sum+s.pallets,0));
+      for(const stop of trip.stops){expect(stop.serviceStartSec).toBeGreaterThanOrEqual(stop.arrivalSec);expect(stop.departureSec).toBeGreaterThanOrEqual(stop.serviceStartSec);}
+    }
+  }
   for(const vehicle of plan.vehicles)for(const trip of vehicle.trips){
     let previous=0;tripCount++;
     for(const stop of trip.stops){const location=Number(stop.orderNo.split('-')[1]);if(location!==previous)distance+=1+(previous*7+location*3)%9;previous=location;}
@@ -40,7 +56,27 @@ function independentManualKpis(plan:Plan){
   expect(plan.stats.trips).toBe(tripCount);
   expect(plan.stats.servedOrders+plan.unassigned.length).toBe(6);
   expect(plan.cost?.total).toBe(plan.vehicles.length*38000+260*distance);
+  expect(plan.cost!.fixed+plan.cost!.variable).toBe(plan.cost!.total);
+  expect(plan.cost!.perVehicle.reduce((sum,v)=>sum+v.totalCost,0)).toBe(plan.cost!.total);
+  expect(plan.vehicles.flatMap(v=>v.trips).reduce((sum,t)=>sum+(t.costFt??0),0)).toBe(plan.cost!.total);
 }
+
+test('manual: same-trip stop insertion refreshes schedule, distance, costs and peer retrieval',async({page})=>{
+  await login(page);const base=await baseline(page);
+  const vehicle=base.vehicles.find(v=>v.trips.some(t=>t.stops.length>=2))!;
+  const trip=vehicle.trips.find(t=>t.stops.length>=2)!,first=trip.stops[0]!;
+  await page.getByRole('button',{name:'Manual planning',exact:true}).click();
+  await manualStop(page,base,first.orderNo);
+  await page.getByRole('button',{name:'Move to vehicle…',exact:true}).click();
+  const dialog=page.getByRole('dialog',{name:'Manual planning',exact:true});
+  await dialog.getByRole('combobox',{name:'Trip',exact:true}).selectOption(trip.manualTripId??`trip-${trip.index}`);
+  await dialog.getByRole('combobox',{name:'Position',exact:true}).selectOption('');
+  const moved=await applyManualDialog(page);independentManualKpis(moved);
+  expect(moved.vehicles.find(v=>v.id===vehicle.id)!.trips.find(t=>t.manualTripId===(trip.manualTripId??`trip-${trip.index}`))!.stops.map(s=>s.requestId))
+    .toEqual([...trip.stops.slice(1).map(s=>s.requestId),first.requestId]);
+  const peerPlan=await get<Plan>(page.request,`${peer}/api/plans/${moved.id}`);
+  expect(peerPlan.stats).toEqual(moved.stats);expect(peerPlan.cost).toEqual(moved.cost);
+});
 
 for(const role of ['admin','planner'] as const){
 test(`manual ${role}: keyboard move, deassign, reload, release and native replan preserve real state and KPIs`,async({page})=>{

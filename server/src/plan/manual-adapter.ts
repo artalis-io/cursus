@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { isDeepStrictEqual } from 'node:util';
 import type { LoadedDay, VehicleInfo } from '../data/dataset.js';
 import type { Tariff } from '../cost.js';
 import { vehicleCostFor, tariffIdentity } from '../cost.js';
@@ -20,6 +21,14 @@ export class ManualAdapterError extends Error {}
 const requireThat = (condition: unknown, message: string): void => { if (!condition) throw new ManualAdapterError(message); };
 export function prepareManualInput(parent: Plan, scenario: Scenario, context: ManualDatasetContext): ManualEvaluationInput {
   const { day, vehicleInfo, tariff } = context;
+  if (scenario.manualDecisions) {
+    const snapshot=scenario.manualDecisions;
+    requireThat(snapshot.tariff && snapshot.tariffSha256 === tariffIdentity(snapshot.tariff) &&
+      snapshot.tariffSha256 === tariffIdentity(tariff) && snapshot.fleetInfo && snapshot.reloadSeconds &&
+      isDeepStrictEqual(new Map(snapshot.fleetInfo),vehicleInfo) &&
+      isDeepStrictEqual(new Map(snapshot.reloadSeconds),context.reloadSeconds),
+      'manual tariff, fleet or reload settings changed; reconcile settings before editing');
+  }
   requireThat(parent.scenarioId === scenario.id && parent.scenarioRevision === scenario.revision, 'parent plan is stale');
   requireThat(day.def.id === scenario.day && parent.day === day.def.isoDate, 'dataset day mismatch');
   const sha = day.datasetRequestSha256;

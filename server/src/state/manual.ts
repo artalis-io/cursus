@@ -138,8 +138,12 @@ export class ManualPlanPublisher {
     return this.store.tx(async client => {
       const again = await this.receipt(client, intent.batch.operationId, payloadHash, actorId);
       if (again) return again;
-      const current = await client.query<{ revision: string }>('SELECT revision FROM scenarios WHERE tenant_id=$1 AND id=$2 FOR UPDATE', [this.tenantId, scenarioId]);
+      const current = await client.query<{ revision: string; body: Scenario }>('SELECT revision,body FROM scenarios WHERE tenant_id=$1 AND id=$2 FOR UPDATE', [this.tenantId, scenarioId]);
       if (Number(current.rows[0]?.revision) !== revision) throw new ManualPublicationError(409, 'Scenario changed during evaluation.');
+      // Native completion advances this pointer without changing the planning
+      // revision. Do not overwrite a result published while evaluation ran.
+      if (current.rows[0]?.body.manualPlanId !== scenario.manualPlanId)
+        throw new ManualPublicationError(409, 'Current plan changed during evaluation; reload before planning.');
       const base = await client.query<{ body: Plan }>('SELECT body FROM plans WHERE tenant_id=$1 AND id=$2', [this.tenantId, parent.id]);
       if (!base.rows[0] || planDigest(base.rows[0].body) !== parentHash) throw new ManualPublicationError(409, 'Parent plan changed during evaluation.');
       if (updated.id === scenarioId) await client.query('UPDATE scenarios SET revision=$3,body=$4,updated_at=now() WHERE tenant_id=$1 AND id=$2', [this.tenantId, scenarioId, updated.revision, updated]);

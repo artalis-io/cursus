@@ -136,6 +136,32 @@ test('edit during evaluation and stale worker completion cannot supersede manual
   }finally{release?.();await Promise.all([a.close(),b.close()]);}
 });
 
+test('manual publication cannot overwrite a newer current plan at the same scenario revision', {skip:!process.env.CURSUS_TEST_DATABASE_URL},async()=>{
+  const store=new StatefulStore(process.env.CURSUS_TEST_DATABASE_URL!),tenant=`pointer-${randomUUID()}`,f=manualFixture();
+  let release!:()=>void,entered!:()=>void;
+  const held=new Promise<void>(resolve=>{release=resolve;}),seen=new Promise<void>(resolve=>{entered=resolve;});
+  try{
+    await store.ensureTenant(tenant,'Pointer race');
+    f.scenario.manualPlanId=f.parent.id;
+    await store.createScenario(tenant,f.scenario.id,f.scenario);
+    await store.pool.query('INSERT INTO plans(tenant_id,id,scenario_id,scenario_revision,body) VALUES($1,$2,$3,1,$4)',[tenant,f.parent.id,f.scenario.id,f.parent]);
+    const publisher=new ManualPlanPublisher(store,tenant,async()=>{entered();await held;return f.context;});
+    const pending=publisher.publish(f.scenario.id,1,{parentPlanId:f.parent.id,batch:{operationId:'pointer-race',datasetSha256:'a'.repeat(64),commands:[{op:'deassign',requestId:91}]}});
+    await seen;
+    // Model the exact same-revision pointer update performed by completeSolve.
+    const newer={...f.parent,id:'new-current'};
+    await store.tx(async client=>{
+      await client.query('SELECT revision FROM scenarios WHERE tenant_id=$1 AND id=$2 FOR UPDATE',[tenant,f.scenario.id]);
+      await client.query('INSERT INTO plans(tenant_id,id,scenario_id,scenario_revision,body) VALUES($1,$2,$3,1,$4)',[tenant,newer.id,f.scenario.id,newer]);
+      await client.query('UPDATE scenarios SET body=$3 WHERE tenant_id=$1 AND id=$2',[tenant,f.scenario.id,{...f.scenario,manualPlanId:newer.id}]);
+    });
+    release();await assert.rejects(()=>pending,/Current plan changed during evaluation/);
+    assert.equal((await store.getScenario(tenant,f.scenario.id))!.manualPlanId,newer.id);
+    assert.equal((await store.listPlans(tenant)).length,2);
+    assert.equal(Number((await store.pool.query("SELECT count(*) FROM audit_events WHERE tenant_id=$1 AND action='plan.manual'",[tenant])).rows[0].count),0);
+  }finally{release?.();await store.close();}
+});
+
 test('dataset loader reads verified tenant objects and refuses ambiguous admitted sources', {skip:!process.env.CURSUS_TEST_DATABASE_URL||!process.env.CURSUS_TEST_S3_ENDPOINT},async()=>{
   const store=new StatefulStore(process.env.CURSUS_TEST_DATABASE_URL!),tenant=`objects-${randomUUID()}`,bucket=`manual-${randomUUID()}`;
   const endpoint=process.env.CURSUS_TEST_S3_ENDPOINT!;

@@ -86,3 +86,16 @@ test('external manual settings fail closed and tariff identity is canonical acro
   assert.equal(tariffIdentity(reordered),tariffIdentity(settings.tariff));
   assert.notEqual(tariffIdentity({...settings.tariff,perKmDefault:123}),tariffIdentity(settings.tariff));
 });
+
+test('manual settings drift cannot silently reprice a saved draft or change capability evidence',()=>{
+  for(const change of [(f:ReturnType<typeof manualFixture>)=>{f.context.tariff.perKmDefault++;},
+    (f:ReturnType<typeof manualFixture>)=>{f.context.vehicleInfo.get('V7')!.hasTailLift=false;},
+    (f:ReturnType<typeof manualFixture>)=>{f.context.reloadSeconds.set(7,999);}]) {
+    const f=manualFixture();
+    f.scenario.manualDecisions={datasetSha256:'a'.repeat(64),decisions:{},tariff:structuredClone(f.context.tariff),
+      tariffSha256:tariffIdentity(f.context.tariff),fleetInfo:structuredClone([...f.context.vehicleInfo]),reloadSeconds:[...f.context.reloadSeconds]};
+    assert.doesNotThrow(()=>prepareManualInput(f.parent,f.scenario,f.context));
+    change(f);
+    assert.throws(()=>prepareManualInput(f.parent,f.scenario,f.context),/settings changed/);
+  }
+});

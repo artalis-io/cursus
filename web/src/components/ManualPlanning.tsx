@@ -7,6 +7,7 @@ import { usePermission } from '@/permissions';
 import { api } from '@/lib/api';
 import { km, money } from '@/lib/format';
 import { violationDetail } from '@/lib/violations';
+import { manualAssignmentCommands } from '@/lib/manual-assignment';
 import type { ManualIntent, ManualPreview, Plan, Scenario, Vehicle } from '@/types';
 
 export type ManualAction = 'assign'|'deassign'|'release';
@@ -46,9 +47,10 @@ export function ManualPlanningDialog({plan,scenario,fleet,request,onClose,onAppl
   const remaining=trip?.stops.filter(stop=>!request.requestIds.includes(stop.requestId??-1))??[];
   const intent=useMemo<ManualIntent>(()=>({parentPlanId:plan.id, ...(request.vehicle?{vehicle:request.vehicle}:{}),...(request.undo?{undo:true as const}:{}),
     batch:{operationId,datasetSha256,
-      commands:request.vehicle||request.undo?[]:request.requestIds.map((requestId,i)=>request.action==='assign'
-        ?{op:'assign',requestId,vehicleId:Number(vehicleId),tripId:tripId||newTripId,position:(position===''?remaining.length:Number(position))+i}
-        :{op:request.action,requestId})}}),[plan,request,operationId,vehicleId,tripId,newTripId,position,remaining.length,datasetSha256]);
+      commands:request.vehicle||request.undo?[]:request.action==='assign'
+        ?manualAssignmentCommands(request.requestIds,Number(vehicleId),tripId||newTripId,
+          trip?.stops.map(stop=>stop.requestId!)??[],position===''?remaining.length:Number(position))
+        :request.requestIds.map(requestId=>({op:request.action==='deassign'?'deassign':'release',requestId}))}}),[plan,request,operationId,vehicleId,tripId,newTripId,position,trip,remaining.length,datasetSha256]);
   useEffect(()=>{generation.current++;setPreview(null);setError(null);},[intent]);
   const valid=!!request.vehicle||!!request.undo||request.action!=='assign'||!!vehicle&&!scenario.removedVehicleIds.includes(vehicle.id);
   async function calculate(){
