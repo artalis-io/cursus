@@ -1,6 +1,16 @@
 import { test, expect } from '@playwright/test';
 import { manualAssignmentCommands } from '../src/lib/manual-assignment';
 import { applyManualBatch, type ManualLayout } from '../../server/src/plan/manual';
+import { selectedUnassigned } from '../src/lib/unassigned-selection';
+import type { Plan } from '../src/types';
+
+test('unassigned selections retain request identity when historical display references repeat',()=>{
+  const orders:Plan['unassigned']=[1,2].map(requestId=>({requestId,orderNo:'REPEATED',orderId:null,customer:null,city:null,lon:null,lat:null,reason:null,reasonCode:null}));
+  expect(selectedUnassigned(orders,{kind:'unassigned',orderNo:'REPEATED',requestId:2})?.requestId).toBe(2);
+  expect(selectedUnassigned(orders,{kind:'unassigned',orderNo:'REPEATED'})).toBeUndefined();
+  expect(selectedUnassigned(orders,{kind:'unassigned',orderNo:'REPEATED',requestId:99})).toBeUndefined();
+  expect(selectedUnassigned(orders.slice(0,1),{kind:'unassigned',orderNo:'REPEATED'})?.requestId).toBe(1);
+});
 
 test('manual bulk insertion uses the selected order after removal, including same-trip moves', () => {
   const original = [1, 2, 3, 4];

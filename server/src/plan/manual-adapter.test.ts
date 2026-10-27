@@ -6,8 +6,9 @@ import { applyManualBatch } from './manual.js';
 import { parseManualRequest } from '../state/manual.js';
 import { createStatefulApi } from '../state/api.js';
 import type { StatefulStore } from '../state/postgres.js';
-import { manualSettings } from '../state/manual-settings.js';
+import { manualSettings, applyFleetSettings,fleetPolicyBlockers } from '../state/manual-settings.js';
 import { tariffIdentity } from '../cost.js';
+import { verifiedSharedAccessReferences } from '../data/dataset.js';
 
 test('adapter maps stable IDs and materializes coherent manual plan, provenance and KPIs', () => {
   const {parent,scenario,context}=manualFixture();
@@ -39,6 +40,20 @@ test('historical labels accepted only when unique, duplicate references never gu
   assert.doesNotThrow(()=>prepareManualInput(f.parent,f.scenario,f.context));
   f.context.day.request.tasks[1]!.ref='ORDER-1';
   assert.throws(()=>prepareManualInput(f.parent,f.scenario,f.context),/identity|evidence/);
+});
+
+test('duplicate labels need stable request identities and independently agreeing source access facts',()=>{
+  const f=manualFixture();f.context.day.request.tasks[1]!.ref='ORDER-1';
+  f.parent.vehicles[0]!.trips[0]!.stops[1]!.orderNo='ORDER-1';
+  assert.throws(()=>prepareManualInput(f.parent,f.scenario,f.context),/access evidence/);
+  const records=[{order_no:'ORDER-1',special_req:'7,5t',requires_tail_lift:true},{order_no:'ORDER-1',special_req:'7,5t',requires_tail_lift:true}];
+  f.context.day.verifiedSharedAccessRefs=verifiedSharedAccessReferences(records);
+  assert.ok(f.context.day.verifiedSharedAccessRefs.has('ORDER-1'));
+  assert.doesNotThrow(()=>prepareManualInput(f.parent,f.scenario,f.context));
+  delete f.parent.vehicles[0]!.trips[0]!.stops[1]!.requestId;
+  assert.throws(()=>prepareManualInput(f.parent,f.scenario,f.context),/identity/);
+  records[1]!.special_req='3,5t';
+  assert.equal(verifiedSharedAccessReferences(records).has('ORDER-1'),false);
 });
 
 test('parent locks and scenario sequences are checked before manual validation', () => {
@@ -98,4 +113,47 @@ test('manual settings drift cannot silently reprice a saved draft or change capa
     change(f);
     assert.throws(()=>prepareManualInput(f.parent,f.scenario,f.context),/settings changed/);
   }
+});
+
+test('unverified fleet entries remain unavailable and unknown GVW is never inferred from cargo capacity',()=>{
+  const f=manualFixture();
+  const settings={datasetSha256:'a'.repeat(64),tariff:f.context.tariff,vehicles:f.context.day.request.vehicles.map(v=>({id:v.id,ref:v.ref,
+    vehicleClass:null,isSubcontractor:false,tonnage:v.id===42?null:12,hasTailLift:v.id!==42,reloadSec:120,available:v.id!==42}))};
+  const parsed=manualSettings(settings);
+  assert.deepEqual(parsed.unavailableVehicleIds,[42]);
+  const request=structuredClone(f.context.day.request),v=request.vehicles.find(v=>v.id===42)!;
+  delete v.gross_weight_kg;delete v.has_tail_lift;
+  assert.equal(applyFleetSettings(request,'a'.repeat(64),parsed),true);
+  assert.equal(v.gross_weight_kg,0);assert.equal(v.has_tail_lift,false);
+  const before=structuredClone(request);
+  assert.equal(applyFleetSettings(request,'b'.repeat(64),parsed),false);assert.deepEqual(request,before);
+  assert.throws(()=>manualSettings({...settings,vehicles:[{...settings.vehicles[0],available:'yes'}]}));
+  assert.throws(()=>manualSettings({...settings,datasetSha256:'wrong'}));
+  const context={...parsed,day:{...f.context.day,request}};
+  const input=prepareManualInput(f.parent,f.scenario,context);
+  assert.ok(input.layout.excludedVehicleIds.includes(42));
+  assert.throws(()=>applyManualBatch(input.layout,{operationId:'unavailable',datasetSha256:'a'.repeat(64),commands:[{op:'assign',requestId:91,vehicleId:42,tripId:'new',position:0}]},
+    {actorId:'planner',at:'2026-10-27T00:00:00Z'}),/excluded/);
+});
+
+test('fleet policy validates all identities and existing explicit evidence before any mutation',()=>{
+  const f=manualFixture();
+  for(const change of [(context:typeof f.context)=>{context.vehicleInfo.get('V42')!.tonnage=40;},
+    (context:typeof f.context)=>{context.reloadSeconds.delete(42);},
+    (context:typeof f.context)=>{context.vehicleInfo.delete('V42');}]){
+    const context=structuredClone(f.context),request=structuredClone(f.context.day.request),before=structuredClone(request);
+    change(context);assert.throws(()=>applyFleetSettings(request,'a'.repeat(64),context),/Fleet settings/);assert.deepEqual(request,before);
+  }
+});
+
+test('approval policy requires current fleet and tariff evidence and is scoped to its dataset',()=>{
+  const f=manualFixture();f.context.datasetSha256='a'.repeat(64);
+  assert.ok(fleetPolicyBlockers(f.parent,f.context).length);
+  f.parent.provenance.tariffSha256=tariffIdentity(f.context.tariff);
+  assert.deepEqual(fleetPolicyBlockers(f.parent,f.context),[]);
+  f.context.unavailableVehicleIds=[7];assert.ok(fleetPolicyBlockers(f.parent,f.context).length);
+  f.context.unavailableVehicleIds=[];f.context.vehicleInfo.get('V7')!.tonnage=40;
+  assert.ok(fleetPolicyBlockers(f.parent,f.context).length);
+  f.context.datasetSha256='b'.repeat(64);assert.deepEqual(fleetPolicyBlockers(f.parent,f.context),[]);
+  delete f.parent.provenance.datasetSha256;assert.ok(fleetPolicyBlockers(f.parent,f.context).length);
 });

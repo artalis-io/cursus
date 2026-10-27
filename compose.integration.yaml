@@ -19,7 +19,9 @@ services:
     init: true
     # Test-only S3 protocol fixture. Production is Cloudflare R2.
     image: chrislusf/seaweedfs:3.97
-    command: server -s3 -dir=/data
+    # The image entrypoint injects -master.volumePreallocate. Override it:
+    # synthetic buckets must not reserve gigabytes per empty test volume.
+    command: server -s3 -dir=/data -master.volumePreallocate=false
     ports: ["127.0.0.1:${CURSUS_TEST_S3_PORT:-59000}:8333"]
     healthcheck:
       test: [CMD, wget, -q, -O, /dev/null, http://127.0.0.1:8333/]

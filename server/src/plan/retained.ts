@@ -80,7 +80,7 @@ export function withRetainedProvenance(plan: Plan, scenario: Scenario, datasetVe
   need(plan.provenance.datasetSha256 === retained.datasetSha256, 'mapped dataset identity changed');
   const layout: ManualLayout = { datasetSha256: retained.datasetSha256,
     requestIds: [...plan.vehicles.flatMap(v => v.trips.flatMap(t => t.stops.map(s => s.requestId!))), ...plan.unassigned.map(o => o.requestId!)],
-    vehicleIds: datasetVehicles, excludedVehicleIds: [...scenario.removedVehicleIds],
+    vehicleIds: datasetVehicles, excludedVehicleIds: [...new Set([...scenario.removedVehicleIds,...(retained.unavailableVehicleIds??[])])],
     lockedVehicleIds: scenario.sequences.filter(sequence => sequence.locked).map(sequence => sequence.vehicleId),
     routes: plan.vehicles.flatMap(v => v.trips.map(t => ({ vehicleId: v.id, tripId: `trip-${t.index}`, requestIds: t.stops.map(s => s.requestId!) }))),
     unassigned: plan.unassigned.map(o => o.requestId!), decisions: structuredClone(retained.decisions),
@@ -106,6 +106,8 @@ export function assertRetainedPlan(plan: Plan, scenario: Scenario): void {
   need(assignments?.version === 1 && assignments.layout.datasetSha256 === retained.datasetSha256 &&
     plan.provenance?.datasetSha256 === retained.datasetSha256, 'publication missing dataset/provenance evidence');
   assertManualLayout(assignments.layout);
+  need(plan.vehicles.every(v=>!retained.unavailableVehicleIds?.includes(v.id)), 'publication used an unavailable vehicle');
+  need((retained.unavailableVehicleIds??[]).every(id=>assignments.layout.excludedVehicleIds.includes(id)), 'publication erased vehicle availability policy');
   need(Array.isArray(retained.requestIds) && isDeepStrictEqual([...retained.requestIds].sort((a,b)=>a-b),
     [...assignments.layout.requestIds].sort((a,b)=>a-b)), 'publication changed request inventory');
   need(isDeepStrictEqual(assignments.layout.history, retained.history ?? []) &&

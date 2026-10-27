@@ -13,6 +13,7 @@ export function admittedManualDatasetLoader(store: StatefulStore, objects: Objec
   return async (parent: Plan, scenario: Scenario) => {
     const sha = parent.manual?.layout.datasetSha256 ?? parent.assignments?.layout.datasetSha256 ?? parent.provenance.datasetSha256 ?? parent.provenance.planningPolicy?.datasetRequestSha256;
     if (!sha || !/^[a-f0-9]{64}$/.test(sha)) throw new Error('parent dataset identity is unavailable');
+    if(settings.datasetSha256&&sha!==settings.datasetSha256)throw new Error('fleet settings do not match the pinned dataset');
     const rows = await store.listDatasets(tenantId, true);
     const matches = rows.map(row => row.manifest as ConvertedManifest).filter(manifest =>
       manifest?.artifacts?.request?.sha256 === sha && manifest.days?.some(day => day.dayId === scenario.day && day.isoDate === parent.day));

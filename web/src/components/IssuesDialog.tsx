@@ -64,8 +64,8 @@ export function IssuesDialog({ open, onOpenChange, plan, onSelect }: {
             <div className="space-y-3 pr-3">
               {plan.unassigned.length > 0 && (
                 <Group title={t('issues.unassigned')} count={plan.unassigned.length} icon={<PackageX className="h-3.5 w-3.5" />} warn>
-                  {plan.unassigned.map((u) => (
-                    <Row key={u.orderNo} onClick={() => go({ kind: 'unassigned', orderNo: u.orderNo })}
+                  {plan.unassigned.map((u,index) => (
+                    <Row key={u.requestId??`${u.orderNo}:${index}`} onClick={() => go({ kind: 'unassigned', orderNo: u.orderNo,requestId:u.requestId })}
                       label={u.customer ?? u.orderNo} detail={t(`unassigned.${u.reasonCode ?? 'CONSTRAINED'}`)} />
                   ))}
                 </Group>

@@ -124,3 +124,15 @@ test('native population solver retains pins/deassignments, releases orders and p
     }
   }finally{await rm(scratch,{recursive:true,force:true});}
 });
+
+test('authoritative publication rejects use or erasure of unavailable fleet policy',()=>{
+  const f=fixture();f.scenario.manualDecisions!.unavailableVehicleIds=[42];
+  const plan=withRetainedProvenance(f.parent,f.scenario,[7,42]);
+  assert.ok(plan.assignments!.layout.excludedVehicleIds.includes(42));
+  assert.doesNotThrow(()=>assertRetainedPlan(plan,f.scenario));
+  plan.assignments!.layout.excludedVehicleIds=[];
+  assert.throws(()=>assertRetainedPlan(plan,f.scenario),/erased vehicle availability/);
+  plan.assignments!.layout.excludedVehicleIds=[42];
+  f.scenario.manualDecisions!.unavailableVehicleIds=[7];
+  assert.throws(()=>assertRetainedPlan(plan,f.scenario),/unavailable vehicle/);
+});

@@ -1,5 +1,6 @@
 import { useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { WorkspaceTenantContext } from '@/workspace';
+import { selectedUnassigned } from '@/lib/unassigned-selection';
 import { ChevronLeft, ChevronRight, ChevronUp, ChevronDown, RotateCcw } from 'lucide-react';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import { Button } from '@/components/ui/button';
@@ -626,7 +627,7 @@ export default function App() {
   const okToSwitch = (): boolean => !(scenario.kind === 'copy' && changesCount > 0) || window.confirm(t('app.discardConfirm', { n: changesCount }));
   // The plan no longer reflects the scenario once it has been edited since solve.
   const dirty = scenario.revision !== plan.scenarioRevision;
-  const selectedOrder=selection?.kind==='unassigned'?plan.unassigned.find(o=>o.orderNo===selection.orderNo)
+  const selectedOrder=selection?.kind==='unassigned'?selectedUnassigned(plan.unassigned,selection)
     :selection?.kind==='stop'?plan.vehicles.find(v=>v.id===selection.vehicleId)?.trips.find(tr=>tr.index===selection.tripIndex)?.stops.find(s=>s.seq===selection.seq):null;
   const manualActions=manualMode&&manualContext?.enabled&&selectedOrder?.requestId!==undefined?<ManualOrderActions plan={plan} requestId={selectedOrder.requestId} actors={manualContext.actors}
     assigned={selection?.kind==='stop'} disabled={!!solving||manualBusy||dirty||pendingEdits>0}
@@ -664,6 +665,8 @@ export default function App() {
           <KpiStrip plan={plan} baseline={baseline} compare={isReplan} job={job}
             previewDistanceKm={previewTotals?.distanceKm} previewCostTotal={previewTotals?.costTotal} />
         </div>
+        {manualContext?.requiresRevalidation&&<div role="status" className="shrink-0 border-b border-warning/40 bg-warning/10 px-4 py-2 text-sm">{t('manual.policyChanged')}</div>}
+        {manualContext?.reason==='fresh_plan_required'&&<div role="status" className="shrink-0 border-b border-warning/40 bg-warning/10 px-4 py-2 text-sm">{t('manual.freshPlanRequired')}</div>}
         <ReadinessPanel plan={plan} baseline={baseline} scenario={scenario} pending={pendingEdits > 0 || !!solving || !!freshnessError || workspaceLoading} />
         <PlanApproval key={plan.id} planId={plan.id} revision={scenario.revision} pending={pendingEdits > 0 || !!solving || !!freshnessError || workspaceLoading || scenario.id !== plan.scenarioId} />
         {freshnessError && <div role="alert" className="border-b border-warning/40 bg-warning/10 px-4 py-2 text-sm">

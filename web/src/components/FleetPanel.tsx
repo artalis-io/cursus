@@ -46,7 +46,7 @@ function VehicleCard({
   const selTrip = selection && (selection.kind === 'trip' || selection.kind === 'stop') ? selection.tripIndex : null;
   // Drop target: dragging an order here pins it to this vehicle (applied on Replan).
   const canEdit = usePermission('scenario.edit');
-  const canDrop = canEdit && !!onAssignOrder && !solving && !removed;
+  const canDrop = canEdit && !!onAssignOrder && !solving && !removed && !vehicle.unavailable;
   const [dragOver, setDragOver] = useState(false);
   const dropProps = canDrop ? {
     onDragOver: (e: React.DragEvent) => { if (isOrderDrag(e)) { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; if (!dragOver) setDragOver(true); } },
@@ -62,11 +62,12 @@ function VehicleCard({
         </button>
         <span className="h-3 w-3 shrink-0 rounded-sm" style={{ backgroundColor: vehicle.color }} />
         <span className={`font-semibold ${removed ? 'line-through' : ''}`}>{vehicle.ref}</span>
-        {removed && <Badge variant="warning" className="px-1 py-0 text-[9px]">{t(manual?'manual.excluded':'fleet.staged')}</Badge>}
+        {(removed||vehicle.unavailable) && <Badge variant="warning" className="px-1 py-0 text-[9px]">{t(vehicle.unavailable?'manual.unavailable':manual?'manual.excluded':'fleet.staged')}</Badge>}
         <span className="truncate text-[11px] text-muted-foreground">{(vehicle.vehicleClass ?? '').replace(/_/g, ' ')}</span>
         <span className="tnum ml-auto text-[11px] text-muted-foreground">{vehicle.tripCount === 1 ? t('fleet.tripOne', { n: vehicle.tripCount }) : t('fleet.trips', { n: vehicle.tripCount })}</span>
       </div>
       <div className="px-2.5 pb-2.5">
+        {vehicle.unavailable&&<p className="mb-2 text-[11px] text-muted-foreground">{t('manual.verificationRequired')}</p>}
         <div className="space-y-1">
           <CapacityBar label="kg" used={vehicle.peakKg} cap={vehicle.capacityKg} color={vehicle.color} />
           <CapacityBar label="plt" used={vehicle.peakPallets} cap={vehicle.capacityPallets} color={vehicle.color} />
@@ -88,7 +89,7 @@ function VehicleCard({
                 </button>
               );
             })}
-            {canEdit && (removed ? (
+            {canEdit && !vehicle.unavailable && (removed ? (
               <button type="button" disabled={solving} onClick={() => onRestore(vehicle.id)}
                 className="mt-1 flex w-full items-center justify-center gap-1.5 rounded border border-divider px-2 py-1 text-[11px] font-medium text-muted-foreground hover:bg-accent disabled:opacity-40">
                 <RotateCcw className="h-3 w-3" /> {t('fleet.restore')}
@@ -161,7 +162,7 @@ export function FleetPanel({
   // Clear the map filter when the panel unmounts (e.g. the fleet column is collapsed).
   useEffect(() => () => onFilterChange?.(null), []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const selUnassigned = selection?.kind === 'unassigned' ? selection.orderNo : null;
+  const selUnassigned = selection?.kind === 'unassigned' ? selection : null;
 
   return (
     <div className="flex h-full flex-col bg-card">
@@ -182,9 +183,10 @@ export function FleetPanel({
       <ScrollArea className="min-h-0 flex-1">
         <div className="space-y-2 p-3">
           {(fleet?[
-            {label:t('manual.assigned'),items:vehicles.filter(v=>v.trips.length&&!scenario.removedVehicleIds.includes(v.id))},
-            {label:t('manual.available'),items:vehicles.filter(v=>!v.trips.length&&!scenario.removedVehicleIds.includes(v.id))},
-            {label:t('manual.excluded'),items:vehicles.filter(v=>scenario.removedVehicleIds.includes(v.id))},
+            {label:t('manual.assigned'),items:vehicles.filter(v=>!v.unavailable&&v.trips.length&&!scenario.removedVehicleIds.includes(v.id))},
+            {label:t('manual.available'),items:vehicles.filter(v=>!v.unavailable&&!v.trips.length&&!scenario.removedVehicleIds.includes(v.id))},
+            {label:t('manual.excluded'),items:vehicles.filter(v=>!v.unavailable&&scenario.removedVehicleIds.includes(v.id))},
+            {label:t('manual.unavailable'),items:vehicles.filter(v=>v.unavailable)},
           ]:[{label:'',items:vehicles}]).map(group=><section key={group.label} aria-label={group.label||undefined} className="space-y-2">
           {group.label&&<h3 className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">{group.label} · {group.items.length}</h3>}
           {group.items.map((v) => (
@@ -216,20 +218,20 @@ export function FleetPanel({
               </div>
             )}
             <div className="max-h-44 overflow-y-auto">
-              {plan.unassigned.map((u) => {
+              {plan.unassigned.map((u,index) => {
                 const canDrag = canEdit && !!onAssignOrder && !solving;
                 return (
-                  <div key={u.orderNo} className="flex items-center gap-1 border-t border-divider">
+                  <div key={u.requestId??`${u.orderNo}:${index}`} className="flex items-center gap-1 border-t border-divider">
                     {canEdit && onBulkAssign && (
                       <input type="checkbox" checked={bulkSel.has(u.orderNo)} onChange={() => toggleBulk(u.orderNo)}
                         aria-label={t('bulk.selectOrder', { o: u.orderNo })}
                         className="ml-1.5 h-3.5 w-3.5 shrink-0 accent-[var(--primary)]" />
                     )}
-                    <button type="button" onClick={() => onSelect({ kind: 'unassigned', orderNo: u.orderNo })}
+                    <button type="button" onClick={() => onSelect({ kind: 'unassigned', orderNo: u.orderNo,requestId:u.requestId })}
                       draggable={canDrag}
                       onDragStart={canDrag ? (e) => setDraggedOrder(e, u.orderNo) : undefined}
                       title={canDrag ? t('fleet.dragToAssign') : undefined}
-                      className={`flex min-w-0 flex-1 items-center gap-1.5 rounded px-1.5 py-1.5 text-left text-xs hover:bg-accent ${canDrag ? 'cursor-grab active:cursor-grabbing' : ''} ${selUnassigned === u.orderNo ? 'bg-accent' : ''}`}>
+                      className={`flex min-w-0 flex-1 items-center gap-1.5 rounded px-1.5 py-1.5 text-left text-xs hover:bg-accent ${canDrag ? 'cursor-grab active:cursor-grabbing' : ''} ${selUnassigned&&(selUnassigned.requestId!==undefined?selUnassigned.requestId===u.requestId:selUnassigned.orderNo===u.orderNo) ? 'bg-accent' : ''}`}>
                       {canDrag && <GripVertical className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />}
                       <span className="min-w-0 flex-1">
                         <span className="block truncate font-medium">{u.customer ?? u.orderNo}</span>
@@ -247,7 +249,7 @@ export function FleetPanel({
                   aria-label={t('bulk.toVehicle')}
                   className="h-7 min-w-0 flex-1 rounded border border-divider bg-card px-1 text-[11px] disabled:opacity-40">
                   <option value="">{t('bulk.toVehicle')}</option>
-                  {(fleet??plan.vehicles).filter((v) => !scenario.removedVehicleIds.includes(v.id)).map((v) => (
+                  {(fleet??plan.vehicles).filter((v) => !v.unavailable&&!scenario.removedVehicleIds.includes(v.id)).map((v) => (
                     <option key={v.id} value={v.id}>{v.ref}{v.vehicleClass ? ` · ${v.vehicleClass.replace(/_/g, ' ')}` : ''}</option>
                   ))}
                 </select>

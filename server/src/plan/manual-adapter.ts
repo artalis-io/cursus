@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
+import { applyFleetSettings } from '../state/manual-settings.js';
 import type { LoadedDay, VehicleInfo } from '../data/dataset.js';
 import type { Tariff } from '../cost.js';
 import { vehicleCostFor, tariffIdentity } from '../cost.js';
@@ -11,6 +12,8 @@ import { assertManualLayout, type ManualLayout } from './manual.js';
 import { evaluateManualLayout, manualTripKey, type ManualEvaluation, type ManualEvaluationInput } from './manual-evaluate.js';
 
 export interface ManualDatasetContext {
+  datasetSha256?: string;
+  unavailableVehicleIds?: number[];
   day: LoadedDay;
   vehicleInfo: Map<string, VehicleInfo>;
   tariff: Tariff;
@@ -21,6 +24,9 @@ export class ManualAdapterError extends Error {}
 const requireThat = (condition: unknown, message: string): void => { if (!condition) throw new ManualAdapterError(message); };
 export function prepareManualInput(parent: Plan, scenario: Scenario, context: ManualDatasetContext): ManualEvaluationInput {
   const { day, vehicleInfo, tariff } = context;
+  requireThat(!context.datasetSha256 || context.datasetSha256===day.datasetRequestSha256, 'fleet settings dataset mismatch');
+  const unavailable=context.unavailableVehicleIds??[];
+  requireThat(new Set(unavailable).size===unavailable.length && unavailable.every(id=>day.request.vehicles.some(v=>v.id===id)), 'unknown unavailable vehicle');
   if (scenario.manualDecisions) {
     const snapshot=scenario.manualDecisions;
     requireThat(snapshot.tariff && snapshot.tariffSha256 === tariffIdentity(snapshot.tariff) &&
@@ -28,6 +34,7 @@ export function prepareManualInput(parent: Plan, scenario: Scenario, context: Ma
       isDeepStrictEqual(new Map(snapshot.fleetInfo),vehicleInfo) &&
       isDeepStrictEqual(new Map(snapshot.reloadSeconds),context.reloadSeconds),
       'manual tariff, fleet or reload settings changed; reconcile settings before editing');
+    requireThat(isDeepStrictEqual([...(snapshot.unavailableVehicleIds??[])].sort((a,b)=>a-b),[...unavailable].sort((a,b)=>a-b)), 'manual vehicle availability policy changed');
   }
   requireThat(parent.scenarioId === scenario.id && parent.scenarioRevision === scenario.revision, 'parent plan is stale');
   requireThat(day.def.id === scenario.day && parent.day === day.def.isoDate, 'dataset day mismatch');
@@ -40,6 +47,7 @@ export function prepareManualInput(parent: Plan, scenario: Scenario, context: Ma
   const { travel, ...rest } = day.request;
   const request = structuredClone(rest); // matrix is immutable, avoid N² copy
   const full = { ...request, travel };
+  requireThat(applyFleetSettings(full,sha,context), 'fleet settings dataset mismatch');
   full.requests = full.requests.filter(order => day.scopeTaskIds.has(order.delivery_task_id));
   applyVehicleOverrides(full, scenario);
   applyOverrides(full, scenario, new Set(full.vehicles.map(vehicle => vehicle.id)));
@@ -60,7 +68,7 @@ export function prepareManualInput(parent: Plan, scenario: Scenario, context: Ma
   const routes = parent.vehicles.flatMap(vehicle => vehicle.trips.map(trip => ({ vehicleId: vehicle.id,
     tripId: trip.manualTripId ?? `trip-${trip.index}`, requestIds: trip.stops.map(identify) })));
   const layout: ManualLayout = { datasetSha256: sha!, requestIds: full.requests.map(order => order.id),
-    vehicleIds: full.vehicles.map(vehicle => vehicle.id), excludedVehicleIds: [...scenario.removedVehicleIds],
+    vehicleIds: full.vehicles.map(vehicle => vehicle.id), excludedVehicleIds: [...new Set([...scenario.removedVehicleIds,...unavailable])],
     lockedVehicleIds: scenario.sequences.filter(seq => seq.locked).map(seq => seq.vehicleId),
     routes, unassigned: parent.unassigned.map(identify), decisions: structuredClone(previousAssignments?.layout.decisions ?? {}),
     origins: structuredClone(previousAssignments?.layout.origins ?? {}), history: structuredClone(previousAssignments?.layout.history ?? []) };
@@ -69,9 +77,9 @@ export function prepareManualInput(parent: Plan, scenario: Scenario, context: Ma
   const requirements: ManualEvaluationInput['requirements'] = new Map();
   for (const order of full.requests) {
     const task = tasks.get(order.delivery_task_id)!, info = day.enrichment.get(task.ref);
-    // Current enrichment is keyed by display number, so repeated refs cannot
-    // establish per-request access evidence even if placement IDs are available.
-    requireThat(info && refs.get(task.ref)?.length === 1, 'unambiguous access evidence required');
+    // Shared label metadata is usable only with the loader's independent
+    // agreement proof; each delivery still needs its stable request identity.
+    requireThat(info && (refs.get(task.ref)?.length === 1||day.verifiedSharedAccessRefs?.has(task.ref)), 'unambiguous access evidence required');
     requirements.set(order.id, { maxTonnage: info!.maxTonnage, requiresTailLift: info!.requiresTailLift });
   }
   const fleet: ManualEvaluationInput['fleet'] = new Map();

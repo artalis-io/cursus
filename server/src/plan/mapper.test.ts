@@ -129,6 +129,19 @@ const okStats = {
   elapsed_seconds: 1.5,
 };
 
+test('native multi-trip mapping reconciles rounded trip costs with vehicle and plan totals',()=>{
+  const request=buildRequest();
+  const solution:SurgeSolution={status:'OK',stats:okStats,unassigned:[103],routes:[{vehicle_id:42,distance:0,duration:1000,trip_count:2,
+    stops:[{request_id:101,task_id:1,type:'delivery',trip_index:0,arrival:100,service_start:100,departure:200},
+      {request_id:102,task_id:2,type:'delivery',trip_index:1,arrival:1000,service_start:1000,departure:1100}]}]};
+  const input=mkInputs(request,solution);
+  input.tariff={currency:'HUF',source:'demo',model:'per_trip',perKmDefault:0,fixedPerVehicle:0,perKmByClass:{},fixedByClass:{},
+    perTripBase:0,perKm:0,perDrop:0.6,includedDrops:0,subcontractorMultiplier:1,ownFleetMultiplier:1};
+  const plan=mapSolutionToPlan(input);
+  assert.equal(plan.cost!.total,1);assert.equal(plan.cost!.perVehicle[0]!.totalCost,1);
+  assert.deepEqual(plan.vehicles[0]!.trips.map(t=>t.costFt),[1,0]);
+});
+
 /* ------------------------------------------------------------------ */
 
 test('maps a multi-trip route: by-id vehicle lookup, trip grouping, legs, load, stats', () => {

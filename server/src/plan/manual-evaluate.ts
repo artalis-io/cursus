@@ -1,4 +1,4 @@
-import { vehicleCostFor, tripCost, type Tariff } from '../cost.js';
+import { vehicleCostFor, tripCost, reconcileTripCosts, type Tariff } from '../cost.js';
 import type { SurgeRequest, SurgeTask } from '../types.js';
 import { assertManualLayout, type ManualLayout } from './manual.js';
 
@@ -149,14 +149,8 @@ export function evaluateManualLayout(input: ManualEvaluationInput): ManualEvalua
     if (vehicle.max_distance && distanceKm*1000 > vehicle.max_distance) issue('MAX_DISTANCE');
     if (vehicle.max_duration && previousEnd-trips[0]!.startSec > vehicle.max_duration) issue('MAX_DURATION');
     const cost = vehicleCostFor(tariff, { ...info, distanceKm, trips: trips.map(trip => ({ distanceKm: trip.distanceKm, drops: trip.stops.length })) });
-    let allocated = 0;
-    for (const [index, trip] of trips.entries()) {
-      // Reconcile rounding so displayed trip totals equal authoritative vehicle cost.
-      const proposed = tripCost(tariff, info, { distanceKm: trip.distanceKm, drops: trip.stops.length }, trips.length);
-      need(nonnegative(proposed), 'non-finite trip cost');
-      trip.cost = index === trips.length-1 ? cost.total-allocated : Math.min(cost.total-allocated, proposed);
-      allocated += trip.cost;
-    }
+    const allocation=reconcileTripCosts(cost.total,trips.map(trip=>tripCost(tariff,info,{distanceKm:trip.distanceKm,drops:trip.stops.length},trips.length)));
+    for(const [index,trip] of trips.entries())trip.cost=allocation[index]!;
     need([cost.total, cost.fixed, cost.variable, previousEnd, distanceKm].every(nonnegative), 'non-finite evaluation result');
     result.vehicles.push({ vehicleId, trips, distanceKm, cost: cost.total });
     result.stats.trips += trips.length; result.stats.totalDistanceKm += distanceKm;

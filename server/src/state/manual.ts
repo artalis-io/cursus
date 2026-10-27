@@ -84,6 +84,8 @@ export class ManualPlanPublisher {
     let effectiveScenario: Scenario = { ...scenario, pins: scenario.pins.filter(pin => !editedRefs.has(pin.orderNo)) };
     if (intent.vehicle) {
       if (!context.day.request.vehicles.some(vehicle => vehicle.id === intent.vehicle!.id)) throw new ManualPublicationError(400,'Unknown vehicle.');
+      if(context.unavailableVehicleIds?.includes(intent.vehicle.id)&&!intent.vehicle.excluded)
+        throw new ManualPublicationError(409,'Vehicle requires verified fleet settings before it can be restored.');
       effectiveScenario.removedVehicleIds = scenario.removedVehicleIds.filter(id => id !== intent.vehicle!.id);
       if (intent.vehicle.excluded) effectiveScenario.removedVehicleIds.push(intent.vehicle.id);
     }
@@ -124,11 +126,13 @@ export class ManualPlanPublisher {
       throw new ManualPublicationError(422, 'Manual plan cannot be evaluated with the available dataset evidence.');
     }
     const updated: Scenario = { ...effectiveScenario,
+      removedVehicleIds:[...new Set([...effectiveScenario.removedVehicleIds,...(context.unavailableVehicleIds??[])])],
       ...(scenario.kind === 'base' ? { id: `scn_${randomUUID()}`, kind: 'copy' as const, parentId: scenario.id, label: `${scenario.label} (manual)` } : {}),
       revision: revision+1, manualPlanId: `pln_${randomUUID()}`,
       manualDecisions: { datasetSha256: input.datasetSha256, decisions: structuredClone(input.layout.decisions),
         tariff:structuredClone(context.tariff),tariffSha256:input.tariffSha256,fleetInfo:structuredClone([...context.vehicleInfo]),
         reloadSeconds:structuredClone([...context.reloadSeconds]),
+        unavailableVehicleIds:[...(context.unavailableVehicleIds??[])],
         requestIds: [...input.layout.requestIds],
         origins: structuredClone(input.layout.origins), history: structuredClone(input.layout.history) } };
     const plan = materializeManualPlan(parent, updated, input, evaluation, context, updated.manualPlanId!, at);

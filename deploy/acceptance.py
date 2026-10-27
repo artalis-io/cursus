@@ -94,7 +94,8 @@ def main():
             pg, s3, a, b = free_ports(4)
             (path / 'manual-settings.json').write_text(json.dumps({
                 'vehicles': [{'id': i, 'ref': f'ACCEPT-{i}', 'vehicleClass': None, 'isSubcontractor': False,
-                              'tonnage': 12 if i == 30 else 3.5, 'hasTailLift': i == 30, 'reloadSec': 120} for i in [10, 30, 50]],
+                              'tonnage': None if i == 99 else 12 if i == 30 else 3.5, 'hasTailLift': i == 30, 'reloadSec': 120,
+                              'available': i != 99} for i in [10, 30, 50, 99]],
                 'tariff': {'currency': 'HUF', 'source': 'demo', 'model': 'per_vehicle', 'perKmDefault': 260,
                            'fixedPerVehicle': 38000, 'perKmByClass': {}, 'fixedByClass': {}, 'perTripBase': 500,
                            'perKm': 10, 'perDrop': 50, 'includedDrops': 0, 'subcontractorMultiplier': 1, 'ownFleetMultiplier': 1}}))

@@ -114,6 +114,18 @@ function rateForClass(table: Record<string, number>, vehicleClass: string | null
 export interface VehicleCost { fixed: number; variable: number; total: number }
 export interface TripShape { distanceKm: number; drops: number } // drops = delivery stops on the trip
 
+/** Allocate the existing authoritative vehicle total; never change the tariff
+ * calculation. Rounded trip estimates must reconcile without negative residue. */
+export function reconcileTripCosts(total:number,estimates:number[]):number[] {
+  if(![total,...estimates].every(n=>typeof n==='number'&&Number.isFinite(n)&&n>=0)||!estimates.length&&total!==0)
+    throw new Error('Invalid trip cost allocation');
+  let allocated=0;
+  return estimates.map((estimate,index)=>{
+    const cost=index===estimates.length-1?total-allocated:Math.min(total-allocated,estimate);
+    allocated+=cost;return cost;
+  });
+}
+
 /** Cost of one used vehicle given its class, subcontractor flag, and route km
  * (per_vehicle model only). */
 export function vehicleCost(

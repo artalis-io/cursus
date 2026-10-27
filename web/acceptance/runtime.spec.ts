@@ -78,6 +78,26 @@ test('manual: same-trip stop insertion refreshes schedule, distance, costs and p
   expect(peerPlan.stats).toEqual(moved.stats);expect(peerPlan.cost).toEqual(moved.cost);
 });
 
+test('manual: unverified fleet entries have no restore, assign or drop path and the APIs reject bypasses',async({page})=>{
+  await login(page);const base=await baseline(page);
+  await page.getByRole('button',{name:'Manual planning',exact:true}).click();
+  const unavailable=page.getByRole('region',{name:'Unavailable',exact:true});
+  await expect(unavailable.getByText('ACCEPT-99',{exact:true})).toBeVisible();
+  await unavailable.getByRole('button',{name:'Expand trips',exact:true}).click();
+  await expect(unavailable.getByRole('button',{name:'Restore',exact:true})).toHaveCount(0);
+  await expect(unavailable.getByText('Fleet identity or capabilities need verification before assignment.',{exact:true})).toBeVisible();
+  await manualStop(page,base,'PUBLIC-2');
+  await page.getByRole('button',{name:'Move to vehicle…',exact:true}).click();
+  const dialog=page.getByRole('dialog',{name:'Manual planning',exact:true});
+  await expect(dialog.getByRole('combobox',{name:'Vehicle',exact:true}).locator('option[value="99"]')).toBeDisabled();
+  await dialog.getByRole('button',{name:'Cancel',exact:true}).click();
+  for(const suffix of ['manual-preview','manual-plan']){
+    const response=await page.request.post(`/api/scenarios/${base.scenarioId}/${suffix}`,{headers:{origin:new URL(page.url()).origin,'if-match':`"${base.scenarioRevision}"`},
+      data:{parentPlanId:base.id,vehicle:{id:99,excluded:false},batch:{operationId:'restore-unverified-'+suffix,datasetSha256:base.provenance.datasetSha256,commands:[]}}});
+    expect(response.status()).toBe(409);
+  }
+});
+
 for(const role of ['admin','planner'] as const){
 test(`manual ${role}: keyboard move, deassign, reload, release and native replan preserve real state and KPIs`,async({page})=>{
   await login(page,`${role}@acceptance.example.test`);await shortBudget(page);

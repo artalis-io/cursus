@@ -37,8 +37,8 @@ export function ManualOrderActions({plan,requestId,assigned,disabled,onAction,ac
 
 export function ManualPlanningDialog({plan,scenario,fleet,request,onClose,onApply,datasetSha256}:{plan:Plan;scenario:Scenario;fleet:Vehicle[];request:ManualRequest;onClose:()=>void;onApply:(intent:ManualIntent)=>Promise<void>;datasetSha256:string}){
   const t=useT(),canEdit=usePermission('scenario.edit'),canEvaluate=usePermission('plan.evaluate');
-  const [vehicleId,setVehicleId]=useState(String(request.targetVehicleId??fleet.find(v=>!scenario.removedVehicleIds.includes(v.id))?.id??''));
-  const [tripId,setTripId]=useState(()=>{const v=fleet.find(v=>v.id===Number(request.targetVehicleId??fleet.find(v=>!scenario.removedVehicleIds.includes(v.id))?.id));const tr=v?.trips.at(-1);return tr?(tr.manualTripId??`trip-${tr.index}`):'';}),[position,setPosition]=useState<string>('');
+  const [vehicleId,setVehicleId]=useState(String(request.targetVehicleId??fleet.find(v=>!v.unavailable&&!scenario.removedVehicleIds.includes(v.id))?.id??''));
+  const [tripId,setTripId]=useState(()=>{const v=fleet.find(v=>v.id===Number(request.targetVehicleId??fleet.find(v=>!v.unavailable&&!scenario.removedVehicleIds.includes(v.id))?.id));const tr=v?.trips.at(-1);return tr?(tr.manualTripId??`trip-${tr.index}`):'';}),[position,setPosition]=useState<string>('');
   const [operationId]=useState(()=>crypto.randomUUID()),[newTripId]=useState(()=>`manual-${crypto.randomUUID()}`);
   const [preview,setPreview]=useState<ManualPreview|null>(null),[busy,setBusy]=useState(false),[error,setError]=useState<string|null>(null),[attempted,setAttempted]=useState(false);
   const generation=useRef(0),alive=useRef(true),inFlight=useRef(false);
@@ -52,7 +52,7 @@ export function ManualPlanningDialog({plan,scenario,fleet,request,onClose,onAppl
           trip?.stops.map(stop=>stop.requestId!)??[],position===''?remaining.length:Number(position))
         :request.requestIds.map(requestId=>({op:request.action==='deassign'?'deassign':'release',requestId}))}}),[plan,request,operationId,vehicleId,tripId,newTripId,position,trip,remaining.length,datasetSha256]);
   useEffect(()=>{generation.current++;setPreview(null);setError(null);},[intent]);
-  const valid=!!request.vehicle||!!request.undo||request.action!=='assign'||!!vehicle&&!scenario.removedVehicleIds.includes(vehicle.id);
+  const valid=!!request.vehicle||!!request.undo||request.action!=='assign'||!!vehicle&&!vehicle.unavailable&&!scenario.removedVehicleIds.includes(vehicle.id);
   async function calculate(){
     if(inFlight.current||!canEvaluate||!valid)return;
     inFlight.current=true;setBusy(true);setError(null);const token=++generation.current;
@@ -72,7 +72,7 @@ export function ManualPlanningDialog({plan,scenario,fleet,request,onClose,onAppl
       :<p className="text-sm">{t(`manual.${request.action}`)} · {request.requestIds.length}</p>}
     {!request.vehicle&&!request.undo&&request.action==='assign'&&<fieldset disabled={busy||attempted||!canEdit} className="grid grid-cols-2 gap-3 text-sm">
       <label className="col-span-2">{t('manual.vehicle')}<select aria-label={t('manual.vehicle')} value={vehicleId} onChange={e=>{setVehicleId(e.target.value);setTripId('');setPosition('');}} className="mt-1 h-9 w-full rounded border bg-card px-2">
-        {fleet.map(v=><option key={v.id} value={v.id} disabled={scenario.removedVehicleIds.includes(v.id)}>{v.ref}{scenario.removedVehicleIds.includes(v.id)?` · ${t('manual.excluded')}`:''}</option>)}
+        {fleet.map(v=><option key={v.id} value={v.id} disabled={v.unavailable||scenario.removedVehicleIds.includes(v.id)}>{v.ref}{v.unavailable?` · ${t('manual.unavailable')}`:scenario.removedVehicleIds.includes(v.id)?` · ${t('manual.excluded')}`:''}</option>)}
       </select></label>
       <label>{t('manual.trip')}<select aria-label={t('manual.trip')} value={tripId} onChange={e=>{setTripId(e.target.value);setPosition('');}} className="mt-1 h-9 w-full rounded border bg-card px-2">
         {vehicle?.trips.map(tr=><option key={tr.index} value={tr.manualTripId??`trip-${tr.index}`}>{t('fleet.tripLabel',{n:tr.index+1})}</option>)}

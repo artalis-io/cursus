@@ -33,15 +33,17 @@ import { isRole, rolePermissions } from '../roles.js';
 import { expectedRevision, registerScenarioPreconditions } from '../revisions.js';
 import { PlanWorkflow, WorkflowError } from './plan-workflow.js';
 import { exportFilename } from '../handoff.js';
+import { fleetPolicyBlockers } from './manual-settings.js';
+import type { ManualDatasetContext } from '../plan/manual-adapter.js';
 import { ManualPlanPublisher, ManualPublicationError, parseManualRequest, type ManualDatasetLoader } from './manual.js';
-import { prepareManualInput } from '../plan/manual-adapter.js';
+import { prepareManualInput,ManualAdapterError } from '../plan/manual-adapter.js';
 
 // Do not advertise legacy-only endpoints as usable controls in this runtime.
 function statefulPermissions(role: string) {
   return isRole(role) ? rolePermissions[role].filter(p => p !== 'optimization.cancel' && p !== 'analysis.generate' && p !== 'dataset.delete') : [];
 }
 
-export interface StatefulApiOptions { store: StatefulStore; tenantId: string; tenantName: string; auth?: StatefulAuthService; publicOrigin?: string; objects?: ObjectStore; maxUploadBytes?: number; manualPlanning?: ManualDatasetLoader }
+export interface StatefulApiOptions { store: StatefulStore; tenantId: string; tenantName: string; auth?: StatefulAuthService; publicOrigin?: string; objects?: ObjectStore; maxUploadBytes?: number; manualPlanning?: ManualDatasetLoader;fleetSettings?:Omit<ManualDatasetContext,'day'> }
 
 /** Stateful HTTP surface used by the runtime integration tests and, after
  * cutover, by the production entry point. Every repository is tenant-bound. */
@@ -56,7 +58,8 @@ export async function createStatefulApi(options: StatefulApiOptions): Promise<Fa
   await options.auth?.initialize();
   const scenarios = new ScenarioRepository(options.store, options.tenantId);
   registerScenarioPreconditions(app, id => scenarios.get(id));
-  const workflow = new PlanWorkflow(options.store, options.tenantId);
+  const policyIssues=options.fleetSettings?(plan:Plan)=>fleetPolicyBlockers(plan,options.fleetSettings!):undefined;
+  const workflow = new PlanWorkflow(options.store, options.tenantId,policyIssues);
   app.get<{ Params: { id: string } }>('/api/plans/:id/manual-context', async (req, reply) => {
     reply.header('Cache-Control','private, no-store');
     if (!options.manualPlanning) return { enabled: false };
@@ -69,12 +72,16 @@ export async function createStatefulApi(options: StatefulApiOptions): Promise<Fa
       const fleet=input.request.vehicles.map(vehicle=>({...(plan.vehicles.find(v=>v.id===vehicle.id) ?? {
         id:vehicle.id,ref:vehicle.ref,vehicleClass:input.fleet.get(vehicle.id)!.vehicleClass,isSubcontractor:input.fleet.get(vehicle.id)!.isSubcontractor,
         tonnage:input.fleet.get(vehicle.id)!.grossTonnage,hasTailLift:input.fleet.get(vehicle.id)!.hasTailLift,color:'#2d7b55',
-        capacityKg:vehicle.capacity[0],capacityPallets:vehicle.capacity[1],tripCount:0,finishTimeSec:0,peakKg:0,peakPallets:0,distanceKm:0,trips:[] })}));
+        capacityKg:vehicle.capacity[0],capacityPallets:vehicle.capacity[1],tripCount:0,finishTimeSec:0,peakKg:0,peakPallets:0,distanceKm:0,trips:[] }),
+        vehicleClass:input.fleet.get(vehicle.id)!.vehicleClass,isSubcontractor:input.fleet.get(vehicle.id)!.isSubcontractor,
+        tonnage:input.fleet.get(vehicle.id)!.grossTonnage,hasTailLift:input.fleet.get(vehicle.id)!.hasTailLift,
+        unavailable:context.unavailableVehicleIds?.includes(vehicle.id)??false}));
       const actorIds=[...new Set((plan.manual??plan.assignments)?.layout.history.map(event=>event.actorId).filter(id=>/^[a-f0-9-]{36}$/.test(id))??[])];
       const actors=actorIds.length?await options.store.pool.query<{id:string;email:string}>(
         'SELECT u.id::text,u.email FROM users u JOIN memberships m ON m.user_id=u.id WHERE m.tenant_id=$1 AND u.id=ANY($2::uuid[])',[options.tenantId,actorIds]):{rows:[]};
-      return {enabled:true, datasetSha256:input.datasetSha256, fleet,canUndo:!!plan.manual?.parentScenario,actors:Object.fromEntries(actors.rows.map(actor=>[actor.id,actor.email]))};
-    } catch { return {enabled:false}; }
+      return {enabled:true,requiresRevalidation:!!policyIssues?.(plan).length,datasetSha256:input.datasetSha256, fleet,canUndo:!!plan.manual?.parentScenario,actors:Object.fromEntries(actors.rows.map(actor=>[actor.id,actor.email]))};
+    } catch(error) { return {enabled:false,requiresRevalidation:!!policyIssues?.(plan).length,
+      ...(error instanceof ManualAdapterError&&error.message==='ambiguous or unknown parent delivery identity'?{reason:'fresh_plan_required'}:{})}; }
   });
   for (const suffix of ['manual-plan','manual-preview'] as const) app.post<{ Params: { id: string } }>(`/api/scenarios/:id/${suffix}`, async (req, reply) => {
     if (!options.manualPlanning) return reply.code(503).send({ error: 'Manual planning is not enabled.' });
