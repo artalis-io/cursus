@@ -486,7 +486,7 @@ export function Inspector({ plan, scenario, selection, onSelect, onBack, onForwa
             <div className="tnum text-xs text-muted-foreground">#{u.orderNo}{u.city ? ` · ${u.city}` : ''}</div>
             <Separator />
             <Badge variant="warning">{t('inspector.unassignedBadge')}</Badge>
-            <p className="text-xs text-muted-foreground">{u.reason ?? t('inspector.unassignedReason')}</p>
+            <p className="text-xs text-muted-foreground">{u.reasonCode?t(`unassigned.${u.reasonCode}`):u.reason ?? t('inspector.unassignedReason')}</p>
             {/* Assign by hand: pin this unassigned order to a chosen vehicle, applied on Replan. */}
             {manualActions??(canEdit && <div className="space-y-2 rounded-md border border-divider bg-muted/30 p-2.5">
               <div className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">{t('inspector.assignByHand')}</div>

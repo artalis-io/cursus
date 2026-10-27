@@ -89,7 +89,9 @@ export function withRetainedProvenance(plan: Plan, scenario: Scenario, datasetVe
   assertManualLayout(layout);
   const result: Plan = { ...plan, assignments: { version: 1, parentPlanId: scenario.manualPlanId ?? '', layout },
     unassigned: plan.unassigned.map(order => retained.decisions[String(order.requestId)]?.kind === 'unassigned'
-      ? { ...order, reason: 'Manually unassigned', reasonCode: 'MANUAL_UNASSIGNED' } : order) };
+      ? { ...order, reason: 'Manually unassigned', reasonCode: 'MANUAL_UNASSIGNED' }
+      :retained.decisions[String(order.requestId)]?.kind==='vehicle'
+        ?{...order,reason:'Retained vehicle assignment was not served by the solver',reasonCode:'PINNED_INFEASIBLE'}:order) };
   delete result.manual;
   return result;
 }
