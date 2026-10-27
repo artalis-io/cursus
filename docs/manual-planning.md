@@ -251,8 +251,8 @@ retained assignment/deassignment, explicit release, GVW/tail-lift/capacity safet
 two independent API/store instances, verified S3-compatible objects, durable solve
 jobs, native completion after lease takeover and forged-provenance rejection at
 the authoritative transaction. These are not country-scale Gyermelyi runs or a
-claim of manual-planning Playwright coverage. UI and real-image browser acceptance
-are still required before release.
+claim of country-scale or production deployment validation. The subsequent
+workspace increment adds real-image browser acceptance, described below.
 
 Local verification was repeated against a freshly built solver from Cursus's
 unchanged vendored OTTO pin `367061d015f6776f7ea27fb01726c1a14cb4614c`, not just a
@@ -306,3 +306,30 @@ Reload seconds are also snapshotted and passed via Surge's actual
 manual settings; mismatches fail closed. Native regression coverage forces two
 capacity-limited trips and verifies the intervening dwell. Authoritative result
 publication rejects a shorter reload gap instead of accepting inconsistent timing.
+
+### Browser verification and release boundary
+
+The local ARM64 production-image acceptance suite passed 61/61 tests with no
+skips, retries or flaky results at source `58b7cd6`. It runs two independent
+application instances against disposable PostgreSQL and S3-compatible storage,
+using public synthetic inputs and the pinned native Surge executable. Manual
+coverage includes Admin/Planner assignment, deassignment and release followed by
+native Replan; Reviewer/API denial; invalid drafts; exclusion/restore; bulk and
+drag/drop; Undo; reload recovery; Hungarian mobile controls; permission changes
+during preview; and retry after a committed response is lost. Preview must not
+publish state, and independent matrix/tariff calculations check accepted KPIs.
+
+The command for certifying a newly built source/image pair is:
+
+```bash
+python3 deploy/acceptance.py --image YOUR_LOCAL_IMAGE --report /external/path/manual-acceptance.json
+```
+
+The report binds the tested image ID, source revision and native executable
+checksums. Keep reports and browser artifacts outside the source tree. A passing
+synthetic suite does not certify private Gyermelyi inputs, real map assets,
+AMD64 execution or a production rollout. Manual planning remains opt-in; enabling
+it for a customer requires validated fleet/tariff settings and separate rollout
+approval. Plan JSON handoff includes assignment provenance; the legacy
+scenario-configuration export is not a manual-workspace backup or round-trip
+format.
