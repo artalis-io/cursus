@@ -1471,8 +1471,11 @@ test('duplicate display references survive keyboard reordering, native replannin
   const v=current.vehicles.find(v=>v.trips.some(t=>t.stops.some(s=>s.requestId===requestId)))!,tr=v.trips.find(t=>t.stops.some(s=>s.requestId===requestId))!,s=tr.stops.find(s=>s.requestId===requestId)!;
   await page.locator('aside').first().getByText(v.ref,{exact:true}).click();
   await inspector.getByRole('button',{name:new RegExp(`Trip ${tr.index+1} ·`)}).click();
-  await inspector.locator('ol li > button').filter({hasText:s.customer!}).click();
+  const target=inspector.locator('ol li > button').filter({hasText:s.customer!});
+  await expect(target).toHaveAttribute('data-request-id',String(requestId));await target.click();
+  await expect(inspector.getByRole('region',{name:'Shipment details',exact:true})).toContainText(`delivery-${requestId}`);
   await page.getByRole('button',{name:'Return to unassigned',exact:true}).click();current=await applyManualDialog(page);
+  expect(current.manual?.layout.history.at(-1)?.requestId).toBe(requestId);
  }
  expect(current.unassigned.map(o=>o.requestId).sort()).toEqual([130,170]);
  const target=page.getByRole('checkbox',{name:'Select order PUBLIC-REPEAT · 170',exact:true});

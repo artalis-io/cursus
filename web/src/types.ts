@@ -265,6 +265,6 @@ export interface Comparison {
 export type Selection =
   | { kind: 'vehicle'; vehicleId: number }
   | { kind: 'trip'; vehicleId: number; tripIndex: number }
-  | { kind: 'stop'; vehicleId: number; tripIndex: number; seq: number }
+  | { kind: 'stop'; vehicleId: number; tripIndex: number; seq: number;requestId?:number;planId?:string }
   | { kind: 'unassigned'; orderNo: string;requestId?:number }
   | null;

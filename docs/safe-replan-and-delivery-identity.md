@@ -18,6 +18,8 @@ The authoritative delivery key is the immutable request-artifact checksum plus `
 
 Legacy references remain usable when unique. Ambiguous historical references fail closed and must be explicitly reconciled; the application does not pick the last matching delivery. Dataset-bound edits cannot be reused with another artifact checksum.
 
+Stop selection carries both request and plan identity across the inspector, map and timeline. A display sequence number is not a delivery identifier. Reorder previews and KPI previews are tied to their source snapshot; reopening another plan cannot reuse an earlier preview to select a different delivery. Previews also wait for Replan when pinned profile revisions change.
+
 CSV exports append `request_id` and `dataset_sha256` before handoff metadata, preserving the original leading columns. JSON handoffs include the dataset checksum and individual request IDs where recorded. Historical exports do not manufacture missing identity.
 
 Comparisons suppress verified improvement claims when delivery scope, dataset identity, tariff or policy cannot be established, or when previously served deliveries are lost—even if served counts are equal. Numeric deltas remain available where their units and tariff model are comparable. Staged previews do not claim verified savings.

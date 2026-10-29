@@ -1,6 +1,7 @@
 import { useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { WorkspaceTenantContext,WorkspaceFeaturesContext } from '@/workspace';
 import { selectedUnassigned } from '@/lib/unassigned-selection';
+import {selectedStop} from '@/lib/stop-selection';
 import { ChevronLeft, ChevronRight, ChevronUp, ChevronDown, RotateCcw } from 'lucide-react';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import { Button } from '@/components/ui/button';
@@ -72,10 +73,11 @@ async function loadPlanWithGeometry(id: string): Promise<Plan> {
  * each affected trip exactly (a reassignment would need a full re-solve). Returns
  * null when nothing is staged / in flight. */
 function usePreviewTotals(plan: Plan | null, scenario: Scenario | null): { distanceKm: number; costTotal: number | null } | null {
-  const [res, setRes] = useState<{ distanceKm: number; costTotal: number | null } | null>(null);
+  const [res, setRes] = useState<{key:string; distanceKm: number; costTotal: number | null } | null>(null);
   const jobs = useMemo(() => {
     const out: { vehicleId: number; tripIndex: number; startSec: number; reloadSecAfter: number; orderNos: string[];requestIds?:number[]; oldDist: number; oldCost: number }[] = [];
     if (!plan || !scenario) return out;
+    if(JSON.stringify(plan.provenance.planningProfiles??[])!==JSON.stringify(scenario.planningProfiles??[]))return out;
     for (const q of scenario.sequences) {
       if (q.locked) continue;
       const v = plan.vehicles.find((x) => x.id === q.vehicleId);
@@ -91,7 +93,7 @@ function usePreviewTotals(plan: Plan | null, scenario: Scenario | null): { dista
     }
     return out;
   }, [plan, scenario]);
-  const key = plan ? `${plan.id}|${jobs.map((j) => `${j.vehicleId}:${j.tripIndex}:${(j.requestIds??j.orderNos).join('.')}`).join('|')}` : '';
+  const key = plan&&scenario ? `${plan.id}|${scenario.id}|${scenario.revision}|${jobs.map((j) => `${j.vehicleId}:${j.tripIndex}:${(j.requestIds??j.orderNos).join('.')}`).join('|')}` : '';
   useEffect(() => {
     if (!plan || jobs.length === 0) { setRes(null); return; }
     let cancelled = false;
@@ -104,11 +106,11 @@ function usePreviewTotals(plan: Plan | null, scenario: Scenario | null): { dista
         if (ok.length !== results.length) { setRes(null); return; }
         const dDist = ok.reduce((a, r) => a + r.dDist, 0);
         const dCost = ok.reduce((a, r) => a + r.dCost, 0);
-        setRes({ distanceKm: plan.stats.totalDistanceKm + dDist, costTotal: plan.cost ? plan.cost.total + dCost : null });
+        setRes({key, distanceKm: plan.stats.totalDistanceKm + dDist, costTotal: plan.cost ? plan.cost.total + dCost : null });
       });
     return () => { cancelled = true; };
   }, [key]); // eslint-disable-line react-hooks/exhaustive-deps
-  return res;
+  return res?.key===key?res:null;
 }
 
 /** A short, localized confirmation for a staged edit, for the toast. */
@@ -644,7 +646,7 @@ export default function App() {
   // The plan no longer reflects the scenario once it has been edited since solve.
   const dirty = scenario.revision !== plan.scenarioRevision;
   const selectedOrder=selection?.kind==='unassigned'?selectedUnassigned(plan.unassigned,selection)
-    :selection?.kind==='stop'?plan.vehicles.find(v=>v.id===selection.vehicleId)?.trips.find(tr=>tr.index===selection.tripIndex)?.stops.find(s=>s.seq===selection.seq):null;
+    :selection?.kind==='stop'?selectedStop(plan.vehicles.find(v=>v.id===selection.vehicleId)?.trips.find(tr=>tr.index===selection.tripIndex)?.stops??[],selection,plan.id):null;
   const manualActions=manualMode&&manualContext?.enabled&&selectedOrder?.requestId!==undefined?<ManualOrderActions plan={plan} requestId={selectedOrder.requestId} actors={manualContext.actors}
     assigned={selection?.kind==='stop'} disabled={!!solving||manualBusy||dirty||pendingEdits>0}
     onAction={action=>openManual({action,requestIds:[selectedOrder.requestId!]})}/>:manualMode&&selectedOrder?<p className="text-xs text-muted-foreground">{t(dirty?'manual.pending':'manual.identity')}</p>:undefined;

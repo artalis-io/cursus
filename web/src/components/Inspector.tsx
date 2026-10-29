@@ -9,6 +9,7 @@ import { violationDetail } from '@/lib/violations';
 import { selectedUnassigned } from '@/lib/unassigned-selection';
 import { NarrationPanel } from '@/components/NarrationPanel';
 import {ShipmentDetails} from '@/components/ShipmentDetails';
+import {selectedStop} from '@/lib/stop-selection';
 import { api } from '@/lib/api';
 import { useT } from '@/i18n';
 import { useEffect, useRef, useState } from 'react';
@@ -97,7 +98,7 @@ function reorderTripStops(trip: Trip, orderNos: string[],requestIds?:number[]): 
 function useReorderPreview(
   planId: string, vehicleId: number, base: Trip | undefined, orderNos: string[], enabled: boolean,
 ): { trip: Trip | null; loading: boolean; error: boolean } {
-  const [trip, setTrip] = useState<Trip | null>(null);
+  const [trip, setTrip] = useState<{key:string;value:Trip} | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(false);
   const key = enabled && base ? `${planId}|${vehicleId}|${base.index}|${orderNos.join(',')}` : '';
@@ -109,14 +110,14 @@ function useReorderPreview(
     let cancelled = false;
     const refs=orderNos.map(deliveryReference);
     api.evaluateTrip(planId, { vehicleId, tripIndex: base.index, startSec: base.startSec, reloadSecAfter: base.reloadSecAfter, orderNos:refs.map(r=>r.orderNo),...(refs.every(r=>r.requestId!==undefined)?{requestIds:refs.map(r=>r.requestId!)}:{}) })
-      .then((r) => { if (!cancelled && latest.current === key) { setTrip(r.trip); setLoading(false); } })
+      .then((r) => { if (!cancelled && latest.current === key) { setTrip({key,value:r.trip}); setLoading(false); } })
       .catch(() => { if (!cancelled && latest.current === key) { setTrip(null); setLoading(false); setError(true); } });
     return () => { cancelled = true; };
   }, [key]); // eslint-disable-line react-hooks/exhaustive-deps
-  return { trip, loading, error };
+  return { trip:trip?.key===key?trip.value:null, loading, error };
 }
 
-function TripDetail({ trip, vehicle, currency, onSelectStop, canDrag, onResequence, pending, preview, phase }: { trip: Trip; vehicle: Vehicle; currency: string; onSelectStop: (seq: number) => void; canDrag?: boolean; onResequence?: (newOrderNos: string[]) => void; pending?: boolean; preview?: boolean; phase?: 'none' | 'pending' | 'loading' | 'preview' | 'error' }) {
+function TripDetail({ trip, vehicle, currency, onSelectStop, canDrag, onResequence, pending, preview, phase }: { trip: Trip; vehicle: Vehicle; currency: string; onSelectStop: (seq: number,requestId?:number) => void; canDrag?: boolean; onResequence?: (newOrderNos: string[]) => void; pending?: boolean; preview?: boolean; phase?: 'none' | 'pending' | 'loading' | 'preview' | 'error' }) {
   const t = useT();
   const why = routeRationale(trip);
   const [overSeq, setOverSeq] = useState<number | null>(null);
@@ -204,12 +205,12 @@ function TripDetail({ trip, vehicle, currency, onSelectStop, canDrag, onResequen
           const reorderable = canDrag && !!onResequence;
           const name = s.customer ?? s.orderNo;
           return (
-            <li key={s.seq}
+            <li key={s.requestId??s.seq}
               onDragOver={reorderable ? (e) => { if (isOrderDrag(e)) { e.preventDefault(); if (overSeq !== s.seq) setOverSeq(s.seq); } } : undefined}
               onDragLeave={reorderable ? () => setOverSeq((v) => (v === s.seq ? null : v)) : undefined}
               onDrop={reorderable ? (e) => { e.preventDefault(); setOverSeq(null); const o = readDraggedOrder(e); if (o) reorder(o, s.seq); } : undefined}
               className={`group flex items-stretch gap-0.5 ${overSeq === s.seq ? 'rounded ring-2 ring-primary/50' : ''}`}>
-              <button type="button" onClick={() => onSelectStop(s.seq)}
+              <button type="button" onClick={() => onSelectStop(s.seq,s.requestId)} data-request-id={s.requestId}
                 draggable={canDrag} onDragStart={canDrag ? (e) => setDraggedOrder(e, s.orderNo,s.requestId) : undefined}
                 title={canDrag ? t(reorderable ? 'inspector.dragStop' : 'inspector.dragToReassign') : undefined}
                 className={`flex min-w-0 flex-1 items-baseline justify-between gap-2 rounded px-1 py-1 text-left text-xs hover:bg-accent ${canDrag ? 'cursor-grab active:cursor-grabbing' : ''}`}>
@@ -247,13 +248,14 @@ function TripDetail({ trip, vehicle, currency, onSelectStop, canDrag, onResequen
  * until it answers we blank the order-dependent numbers (pending), then show the
  * recomputed ones (preview). The preview trip's stop `seq` is realigned to the
  * solved trip by order number so stop selection stays stable. */
-function TripView({ planId, vehicle, trip, displayTrip, reorderPending, currency, canDrag, onSelectStop, onResequence }: {
+function TripView({ planId, vehicle, trip, displayTrip, reorderPending, currency, canDrag, onSelectStop, onResequence,previewAllowed=true }: {
   planId: string; vehicle: Vehicle; trip: Trip; displayTrip: Trip; reorderPending: boolean;
-  currency: string; canDrag?: boolean; onSelectStop: (seq: number) => void; onResequence?: (newOrderNos: string[]) => void;
+  currency: string; canDrag?: boolean; onSelectStop: (seq: number,requestId?:number) => void; onResequence?: (newOrderNos: string[]) => void;
+  previewAllowed?:boolean;
 }) {
   const orderNos = displayTrip.stops.map((s) => deliveryToken(s.orderNo,s.requestId));
-  const { trip: previewTrip, loading, error } = useReorderPreview(planId, vehicle.id, trip, orderNos, reorderPending);
-  const ready = reorderPending && !!previewTrip;
+  const { trip: previewTrip, loading, error } = useReorderPreview(planId, vehicle.id, trip, orderNos, reorderPending&&previewAllowed);
+  const ready = reorderPending && previewAllowed&&!!previewTrip;
   let show = displayTrip;
   if (ready && previewTrip) {
     const seqByOrder = new Map(trip.stops.map((s) => [deliveryToken(s.orderNo,s.requestId), s.seq]));
@@ -522,7 +524,7 @@ export function Inspector({ plan, scenario, selection, onSelect, onBack, onForwa
 
   const trip = selection && (selection.kind === 'trip' || selection.kind === 'stop')
     ? vehicle.trips.find((t) => t.index === selection.tripIndex) : undefined;
-  const stop = selection?.kind === 'stop' && trip ? trip.stops.find((s) => s.seq === selection.seq) : undefined;
+  const stop = selection?.kind === 'stop' && trip ? selectedStop(trip.stops,selection,plan.id) : undefined;
   // Reflect a staged reorder/lock in the stop list (the plan only updates on Replan).
   const stagedSeq = scenario.sequences.find((q) => q.vehicleId === vehicle.id);
   const displayTrip = canEdit && trip && stagedSeq ? reorderTripStops(trip, stagedSeq.orderNos,stagedSeq.requestIds) : trip;
@@ -557,7 +559,8 @@ export function Inspector({ plan, scenario, selection, onSelect, onBack, onForwa
             <TabsContent value="details" className="mt-0 space-y-3">
               {stop ? <><StopDetail stop={stop} vehicle={vehicle} /><ShipmentDetails plan={plan} requestId={stop.requestId}/></>
                 : trip && displayTrip ? <TripView planId={plan.id} trip={trip} displayTrip={displayTrip} reorderPending={canEdit && reorderPending} vehicle={vehicle} currency={currency} canDrag={canEdit && !solving}
-                    onSelectStop={(seq) => onSelect({ kind: 'stop', vehicleId: vehicle.id, tripIndex: trip.index, seq })}
+                    previewAllowed={JSON.stringify(plan.provenance.planningProfiles??[])===JSON.stringify(scenario.planningProfiles??[])}
+                    onSelectStop={(seq,requestId) => onSelect({ kind: 'stop', vehicleId: vehicle.id, tripIndex: trip.index, seq,requestId,planId:plan.id })}
                     onResequence={canEdit && onSetSequence ? (newOrderNos) => {
                       // the vehicle's full manual order = each trip's stops (in their
                       // displayed/staged order), with THIS trip set to the new order
