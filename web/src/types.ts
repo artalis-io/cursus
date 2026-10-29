@@ -7,6 +7,9 @@
 export type PlanSource = 'saved' | 'live' | 'sample';
 
 export interface PlanProvenance {
+  shipmentSha256?:string;
+  planningProfiles?: import('../../server/src/planning-profile-contract').ProfileRef[];
+  tariffSha256?:string;
   datasetSha256?: string;
   planningPolicy?: { id: string; date: string; exceptions: { orderNo: string; reason: string; maxTonnage?: number; requiresTailLift?: boolean }[] };
   inputSha256: string;
@@ -135,6 +138,7 @@ export interface PlanCost {
 export type Objective = 'vehicles' | 'distance';
 
 export interface Plan {
+  shipmentMetadata?:import('../../server/src/shipment-contract').ShipmentSnapshot;
   manual?: { parentPlanId:string; layout:ManualLayout };
   assignments?: { parentPlanId:string; layout:ManualLayout };
   id: string;
@@ -174,8 +178,8 @@ export interface DaySummary {
   baselinePlanId: string;
 }
 
-export interface Pin { orderNo: string; vehicleId: number }
-export interface Forbid { orderNo: string; vehicleId: number }
+export interface Pin { orderNo: string; requestId?:number; vehicleId: number }
+export interface Forbid { orderNo: string; requestId?:number; vehicleId: number }
 export interface VehicleOverride {
   vehicleId: number;
   capacityKg?: number;
@@ -189,6 +193,10 @@ export interface VehicleOverride {
 export type VehicleConstraintPatch = Omit<VehicleOverride, 'vehicleId'>;
 
 export interface Scenario {
+  planningProfiles?: import('../../server/src/planning-profile-contract').ProfileRef[];
+  deliveryDatasetSha256?:string;
+  selectedPlanId?: string;
+  selectionVersion?: number;
   manualPlanId?:string;
   id: string;
   day: string;
@@ -206,21 +214,21 @@ export interface Scenario {
 
 /* A manual stop order for one vehicle (orders kept on it, solved in order);
  * `locked` freezes the route exactly (no other order may be added). */
-export interface VehicleSequence { vehicleId: number; orderNos: string[]; locked?: boolean }
+export interface VehicleSequence { vehicleId: number; orderNos: string[]; requestIds?:number[]; locked?: boolean }
 
 /* A single dispatcher edit; mirrors the backend ScenarioEdit union. */
-export type ScenarioEdit =
+export type ScenarioEdit = (
   | { op: 'removeVehicle'; vehicleId: number }
   | { op: 'restoreVehicle'; vehicleId: number }
-  | { op: 'pin'; orderNo: string; vehicleId: number }
-  | { op: 'unpin'; orderNo: string }
-  | { op: 'forbid'; orderNo: string; vehicleId: number }
-  | { op: 'unforbid'; orderNo: string; vehicleId: number }
+  | { op: 'pin'; orderNo: string; requestId?:number; vehicleId: number }
+  | { op: 'unpin'; orderNo: string; requestId?:number }
+  | { op: 'forbid'; orderNo: string; requestId?:number; vehicleId: number }
+  | { op: 'unforbid'; orderNo: string; requestId?:number; vehicleId: number }
   | { op: 'setVehicleConstraint'; vehicleId: number; patch: VehicleConstraintPatch }
   | { op: 'clearVehicleConstraint'; vehicleId: number }
-  | { op: 'setSequence'; vehicleId: number; orderNos: string[]; locked?: boolean }
+  | { op: 'setSequence'; vehicleId: number; orderNos: string[]; requestIds?:number[]; locked?: boolean }
   | { op: 'clearSequence'; vehicleId: number }
-  | { op: 'clearOverrides' };
+  | { op: 'clearOverrides' }) & {datasetSha256?:string};
 
 export type JobStatus = 'pending' | 'running' | 'completed' | 'failed' | 'cancelled';
 export interface Job {
@@ -238,13 +246,17 @@ export interface Job {
 }
 
 export interface Comparison {
+  identityAmbiguous?: boolean;
+  improvementEligible?: boolean;
+  sameScope?: boolean;
+  samePolicy?: boolean;
   base: { planId: string; stats: PlanStats; cost: PlanCost | null };
   revised: { planId: string; stats: PlanStats; cost: PlanCost | null };
   deltas: { servedOrders: number; vehiclesUsed: number; trips: number; totalDistanceKm: number; unassigned: number; costTotal: number | null };
   costComparison: 'comparable' | 'different_tariff' | 'unavailable';
-  newlyUnassigned: { orderNo: string; customer: string | null; city: string | null; fromVehicleRef: string }[];
-  nowServed: { orderNo: string; customer: string | null; city: string | null; toVehicleRef: string }[];
-  movedOrders: { orderNo: string; customer: string | null; fromVehicleRef: string; toVehicleRef: string }[];
+  newlyUnassigned: { requestId?:number;orderNo: string; customer: string | null; city: string | null; fromVehicleRef: string }[];
+  nowServed: { requestId?:number;orderNo: string; customer: string | null; city: string | null; toVehicleRef: string }[];
+  movedOrders: { requestId?:number;orderNo: string; customer: string | null; fromVehicleRef: string; toVehicleRef: string }[];
   removedVehicles: string[];
   addedVehicles: string[];
 }
@@ -253,6 +265,6 @@ export interface Comparison {
 export type Selection =
   | { kind: 'vehicle'; vehicleId: number }
   | { kind: 'trip'; vehicleId: number; tripIndex: number }
-  | { kind: 'stop'; vehicleId: number; tripIndex: number; seq: number }
+  | { kind: 'stop'; vehicleId: number; tripIndex: number; seq: number;requestId?:number;planId?:string }
   | { kind: 'unassigned'; orderNo: string;requestId?:number }
   | null;

@@ -27,8 +27,11 @@ export function nativeSolveRequest(request: SurgeRequest, sequences: Scenario['s
   if (sequences.length) {
     const taskRefs = new Map(request.tasks.map(t => [t.id, String(t.ref)]));
     const requestRefs = new Map(request.requests.map(r => [taskRefs.get(r.delivery_task_id), r.id]));
+    for (const sequence of sequences) if (!sequence.requestIds) for (const ref of sequence.orderNos)
+      if (request.requests.filter(r => taskRefs.get(r.delivery_task_id) === ref).length > 1)
+        throw new Error('Ambiguous sequence delivery reference');
     const seeds = sequences.filter(s => vehicles.has(s.vehicleId)).map(s => ({ vehicle_id: s.vehicleId,
-      request_ids: [...new Set(s.orderNos.map(o => requestRefs.get(o)).filter((id): id is number => id !== undefined))] }));
+      request_ids: [...new Set(s.requestIds??s.orderNos.map(o => requestRefs.get(o)).filter((id): id is number => id !== undefined))] }));
     const seededVehicles = new Set(seeds.map(s => s.vehicle_id));
     const seededRequests = new Set(seeds.flatMap(s => s.request_ids));
     extra.initial_routes = [...(extra.initial_routes ?? []).filter(r => !seededVehicles.has(r.vehicle_id))

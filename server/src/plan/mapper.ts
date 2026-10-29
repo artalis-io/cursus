@@ -89,7 +89,7 @@ export function mapSolutionToPlan(inp: MapInputs): Plan {
         const loc = task ? request.locations[task.location_id] : undefined;
         const lon = loc?.x ?? 0, lat = loc?.y ?? 0;
         const orderNo = task?.ref ?? String(s.task_id);
-        const info = inp.enrichment.get(orderNo) ?? null;
+        const info = inp.day.deliveryEnrichment?.get(s.request_id) ?? inp.enrichment.get(orderNo) ?? null;
         const weightKg = task?.demand[0] ?? 0;
         const pallets = task?.demand[1] ?? 0;
         loadKg += weightKg; loadPallets += pallets;
@@ -185,7 +185,7 @@ export function mapSolutionToPlan(inp: MapInputs): Plan {
     const task = taskId != null ? taskById.get(taskId) : undefined;
     const loc = task ? request.locations[task.location_id] : undefined;
     const orderNo = task?.ref ?? String(rid);
-    const info = inp.enrichment.get(orderNo) ?? null;
+    const info = inp.day.deliveryEnrichment?.get(rid) ?? inp.enrichment.get(orderNo) ?? null;
     return {
       requestId: rid,
       orderId: info?.id ?? null,
@@ -225,8 +225,13 @@ export function mapSolutionToPlan(inp: MapInputs): Plan {
     perVehicle,
   };
   const objective: 'vehicles' | 'distance' = request.config.lexicographic_objective === false ? 'distance' : 'vehicles';
+  const document=inp.day.shipmentDocument,ids=new Set(request.requests.map(r=>r.id));
+  const deliveries=document?.deliveries.filter(d=>ids.has(d.requestId));
+  const shipmentIds=new Set(deliveries?.map(d=>d.shipmentId));
 
   return {
+    ...(document&&inp.day.shipmentSha256?{shipmentMetadata:{datasetSha256:document.datasetSha256,sourceSha256:inp.day.shipmentSha256,
+      loadingFeasibility:'not_evaluated' as const,deliveries:structuredClone(deliveries!),shipments:structuredClone(document.shipments.filter(s=>shipmentIds.has(s.id)))}}:{}),
     id: inp.planId,
     scenarioId: inp.scenarioId,
     scenarioRevision: inp.scenarioRevision,
@@ -235,6 +240,8 @@ export function mapSolutionToPlan(inp: MapInputs): Plan {
     source: inp.source,
     objective,
     provenance: {
+      ...(inp.day.shipmentSha256?{shipmentSha256:inp.day.shipmentSha256}:{}),
+      ...(inp.day.planningProfiles?.length?{planningProfiles:structuredClone(inp.day.planningProfiles)}:{}),
       ...(inp.day.datasetRequestSha256 ? { datasetSha256: inp.day.datasetRequestSha256 } : {}),
       ...(inp.day.planningPolicy ? { planningPolicy: structuredClone(inp.day.planningPolicy) } : {}),
       inputSha256: sha256(JSON.stringify(request)),

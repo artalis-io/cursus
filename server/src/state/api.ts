@@ -1,5 +1,5 @@
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from 'fastify';
-import { JobQueueFullError, RevisionConflictError, type StatefulStore } from './postgres.js';
+import { JobQueueFullError, RevisionConflictError, ScenarioHandoffHistoryError, type StatefulStore } from './postgres.js';
 import { ScenarioRepository } from './scenarios.js';
 import { validateScenarioEdit, type ScenarioEdit } from '../store.js';
 import { cookieValue } from '../auth.js';
@@ -32,8 +32,15 @@ import { registerAccessControl, viewIdentity } from '../access-control.js';
 import { isRole, rolePermissions } from '../roles.js';
 import { expectedRevision, registerScenarioPreconditions } from '../revisions.js';
 import { PlanWorkflow, WorkflowError } from './plan-workflow.js';
+import { selectPlan } from './plan-selection.js';
+import { tripPermutation } from '../plan/identity.js';
+import { registerProfileApi } from './profiles-api.js';
+import {registerTransferApi} from './transfers-api.js';
+import type {Destination} from './handoff-sender.js';
+import { ProfileRepository } from './profiles.js';
+import { manualSettings } from './manual-settings.js';
 import { exportFilename } from '../handoff.js';
-import { fleetPolicyBlockers } from './manual-settings.js';
+import { fleetPolicyBlockers, applyFleetSettings } from './manual-settings.js';
 import type { ManualDatasetContext } from '../plan/manual-adapter.js';
 import { ManualPlanPublisher, ManualPublicationError, parseManualRequest, type ManualDatasetLoader } from './manual.js';
 import { prepareManualInput,ManualAdapterError } from '../plan/manual-adapter.js';
@@ -43,7 +50,7 @@ function statefulPermissions(role: string) {
   return isRole(role) ? rolePermissions[role].filter(p => p !== 'optimization.cancel' && p !== 'analysis.generate' && p !== 'dataset.delete') : [];
 }
 
-export interface StatefulApiOptions { store: StatefulStore; tenantId: string; tenantName: string; auth?: StatefulAuthService; publicOrigin?: string; objects?: ObjectStore; maxUploadBytes?: number; manualPlanning?: ManualDatasetLoader;fleetSettings?:Omit<ManualDatasetContext,'day'> }
+export interface StatefulApiOptions { store: StatefulStore; tenantId: string; tenantName: string; auth?: StatefulAuthService; publicOrigin?: string; objects?: ObjectStore; maxUploadBytes?: number; manualPlanning?: ManualDatasetLoader;fleetSettings?:Omit<ManualDatasetContext,'day'>;handoffDestinations?:Destination[] }
 
 /** Stateful HTTP surface used by the runtime integration tests and, after
  * cutover, by the production entry point. Every repository is tenant-bound. */
@@ -58,8 +65,16 @@ export async function createStatefulApi(options: StatefulApiOptions): Promise<Fa
   await options.auth?.initialize();
   const scenarios = new ScenarioRepository(options.store, options.tenantId);
   registerScenarioPreconditions(app, id => scenarios.get(id));
-  const policyIssues=options.fleetSettings?(plan:Plan)=>fleetPolicyBlockers(plan,options.fleetSettings!):undefined;
+  registerProfileApi(app,options.store,options.tenantId,options.manualPlanning);
+  const policyIssues=options.fleetSettings?(plan:Plan)=>plan.provenance.planningProfiles?.some(p=>p.kind==='fleet')?[]:fleetPolicyBlockers(plan,options.fleetSettings!):undefined;
   const workflow = new PlanWorkflow(options.store, options.tenantId,policyIssues);
+  registerTransferApi(app,options.store,options.tenantId,options.handoffDestinations??[],workflow);
+  app.post<{Params:{id:string};Body:{planId?:unknown;selectionVersion?:unknown;acknowledgeIncomplete?:unknown}}>('/api/scenarios/:id/select-plan',async(req,reply)=>{
+    const b=req.body,revision=expectedRevision(req.headers);
+    if(revision===null||typeof b?.planId!=='string'||!b.planId||b.planId.length>128||!Number.isSafeInteger(b.selectionVersion)||Number(b.selectionVersion)<0||b.acknowledgeIncomplete!==undefined&&typeof b.acknowledgeIncomplete!=='boolean')return reply.code(400).send({error:'Plan identity, selection version and If-Match revision are required.'});
+    try{return await selectPlan(options.store,options.tenantId,req.params.id,revision,b.planId,Number(b.selectionVersion),b.acknowledgeIncomplete===true,policyIssues,req.cursusPrincipal?.userId);}
+    catch(error){if(error instanceof WorkflowError)return reply.code(error.status).send({error:error.message});throw error;}
+  });
   app.get<{ Params: { id: string } }>('/api/plans/:id/manual-context', async (req, reply) => {
     reply.header('Cache-Control','private, no-store');
     if (!options.manualPlanning) return { enabled: false };
@@ -142,11 +157,11 @@ export async function createStatefulApi(options: StatefulApiOptions): Promise<Fa
   });
   app.get('/api/auth/me', async (req, reply) => {
     reply.header('Cache-Control', 'private, no-store');
-    if (!options.auth) return { email: 'local@cursus', tenantId: options.tenantId, tenantName: options.tenantName, role: 'admin', permissions: statefulPermissions('admin').filter(p => p !== 'role.preview'), build: buildInfo };
+    if (!options.auth) return { email: 'local@cursus', tenantId: options.tenantId, tenantName: options.tenantName, role: 'admin', permissions: statefulPermissions('admin').filter(p => p !== 'role.preview'), build: buildInfo,features:{planningProfiles:true,acknowledgedHandoff:true} };
     const principal = await options.auth.authenticate(cookieValue(req.headers.cookie, 'cursus_session'));
     if (!principal || principal.tenantId !== options.tenantId) return reply.code(401).send({ error: 'authentication required' });
     const identity = viewIdentity(principal, req.headers.cookie);
-    return { ...identity, permissions: statefulPermissions(identity.effectiveRole), tenantName: await options.store.getTenantName(principal.tenantId), build: buildInfo };
+    return { ...identity, permissions: statefulPermissions(identity.effectiveRole), tenantName: await options.store.getTenantName(principal.tenantId), build: buildInfo,features:{planningProfiles:true,acknowledgedHandoff:true} };
   });
   app.post('/api/auth/logout', async (req, reply) => {
     if (options.auth && req.headers.origin !== options.publicOrigin) return reply.code(403).send({ error: 'invalid request origin' });
@@ -156,7 +171,13 @@ export async function createStatefulApi(options: StatefulApiOptions): Promise<Fa
   app.get('/api/days', async () => statefulDaySummaries(
     await scenarios.list(), await options.store.listPlans(options.tenantId),
   ));
-  app.get<{ Querystring: { day?: string } }>('/api/scenarios', async (req) => scenarios.list(req.query.day));
+  app.get<{ Querystring: { day?: string } }>('/api/scenarios', async (req) => {
+    const rows=await scenarios.list(req.query.day),plans=await options.store.listPlans(options.tenantId);
+    return rows.map(s=>{const matching=plans.filter(p=>p.scenarioId===s.id&&p.scenarioRevision===s.revision).sort((a,b)=>b.createdAt.localeCompare(a.createdAt));
+      const p=matching.find(p=>p.id===s.selectedPlanId)??matching[0];
+      return {...s,changesCount:s.removedVehicleIds.length+s.pins.length+s.forbids.length+s.sequences.length+s.vehicleOverrides.length,
+        latest:p?{planId:p.id,createdAt:p.createdAt,...p.stats,unassigned:p.unassigned.length,cost:p.cost?.total??null,currency:p.cost?.currency??null}:null};});
+  });
   app.post<{ Body: { day?: string; from?: string; label?: string } }>('/api/scenarios', async (req, reply) => {
     if (req.body?.from) { const parent = await scenarios.get(req.body.from); if (!parent) return reply.code(404).send({ error: 'parent scenario not found' }); return reply.code(201).send(await scenarios.copy(parent, req.body.label)); }
     if (req.body?.day) return scenarios.ensureBase(req.body.day, req.body.label ?? req.body.day);
@@ -188,7 +209,7 @@ export async function createStatefulApi(options: StatefulApiOptions): Promise<Fa
     const scenario = await scenarios.get(req.params.id); if (!scenario) return reply.code(404).send({ error: 'scenario not found' });
     if (scenario.kind === 'base') return reply.code(400).send({ error: 'base scenario cannot be deleted' });
     try { return { deleted: await scenarios.delete(req.params.id, expectedRevision(req.headers)!) }; }
-    catch (error) { if (error instanceof RevisionConflictError) return reply.code(409).send({ error: 'Scenario changed; reload before deleting.' }); throw error; }
+    catch (error) { if(error instanceof ScenarioHandoffHistoryError)return reply.code(409).send({error:error.message});if (error instanceof RevisionConflictError) return reply.code(409).send({ error: 'Scenario changed; reload before deleting.' }); throw error; }
   });
   app.get<{ Params: { id: string } }>('/api/scenarios/:id/export', async (req, reply) => {
     const scenario = await scenarios.get(req.params.id); return scenario ? exportScenario(scenario) : reply.code(404).send({ error: 'scenario not found' });
@@ -199,15 +220,20 @@ export async function createStatefulApi(options: StatefulApiOptions): Promise<Fa
     try { return await scenarios.import(base, parsed.label, parsed.edits); }
     catch (error) { return reply.code(400).send({ error: (error as Error).message }); }
   });
-  app.post<{ Params: { id: string }; Body: { budgetSec?: number; objective?: string; fullBudget?: boolean } }>('/api/scenarios/:id/solve', async (req, reply) => {
+  app.post<{ Params: { id: string }; Body: { budgetSec?: number; objective?: string; fullBudget?: boolean;referencePlanId?:unknown } }>('/api/scenarios/:id/solve', async (req, reply) => {
     const scenario = await scenarios.get(req.params.id); if (!scenario) return reply.code(404).send({ error: 'scenario not found' });
     if (scenario.revision !== expectedRevision(req.headers)) return reply.code(409).send({ error: 'Scenario changed; reload before optimizing.' });
+    if(req.body?.referencePlanId!==undefined){
+      if(typeof req.body.referencePlanId!=='string'||req.body.referencePlanId.length>128)return reply.code(400).send({error:'Invalid reference plan'});
+      const reference=await options.store.getPlan(options.tenantId,req.body.referencePlanId);
+      if(!reference||reference.scenarioId!==scenario.parentId&&reference.scenarioId!==scenario.id)return reply.code(404).send({error:'Reference plan unavailable for this scenario'});
+    }
     if (scenario.manualPlanId && (!options.manualPlanning || !scenario.manualDecisions))
       return reply.code(409).send({ error: 'Manual replanning requires the enabled retained-decision runtime.' });
     let id: string;
     try {
       id = await options.store.enqueueJob(options.tenantId, 'solve', `solve/${scenario.id}/${scenario.revision}/${randomKey()}`, {
-        scenarioId: scenario.id, scenarioRevision: scenario.revision, budgetSec: req.body?.budgetSec, objective: req.body?.objective ?? 'vehicles', fullBudget: req.body?.fullBudget === true, scenario,
+        scenarioId: scenario.id, scenarioRevision: scenario.revision, budgetSec: req.body?.budgetSec, objective: req.body?.objective ?? 'vehicles', fullBudget: req.body?.fullBudget === true, scenario,referencePlanId:req.body?.referencePlanId,
       }, config.maxSolveQueue, { id: scenario.id, revision: expectedRevision(req.headers)! });
     } catch (error) {
       if (error instanceof RevisionConflictError) return reply.code(409).send({ error: 'Scenario changed; reload before optimizing.' });
@@ -226,7 +252,7 @@ export async function createStatefulApi(options: StatefulApiOptions): Promise<Fa
     await fillPlanGeometry(plan).catch(() => false);
     return plan;
   });
-  app.post<{ Params: { id: string }; Body: { vehicleId?: number; tripIndex?: number; startSec?: number; reloadSecAfter?: number; orderNos?: unknown } }>(
+  app.post<{ Params: { id: string }; Body: { vehicleId?: number; tripIndex?: number; startSec?: number; reloadSecAfter?: number; orderNos?: unknown;requestIds?:unknown } }>(
     '/api/plans/:id/evaluate', async (req, reply) => {
       const plan = await options.store.getPlan(options.tenantId, req.params.id);
       if (!plan) return reply.code(404).send({ error: 'plan not found' });
@@ -237,24 +263,32 @@ export async function createStatefulApi(options: StatefulApiOptions): Promise<Fa
       const vehicle = plan.vehicles.find((v) => v.id === b.vehicleId);
       if (!vehicle) return reply.code(404).send({ error: 'vehicle not in plan' });
       const srcTrip = vehicle.trips.find((tr) => tr.index === (b.tripIndex ?? 0)) ?? vehicle.trips[0];
-      const have = new Set((srcTrip?.stops ?? []).map((s) => s.orderNo));
       const want = b.orderNos as string[];
-      if (!srcTrip || want.length !== have.size || !want.every((o) => have.has(o)))
+      if (!srcTrip || !tripPermutation(srcTrip.stops,want,b.requestIds))
         return reply.code(400).send({ error: 'orderNos must be a permutation of the trip stops' });
       const scenario = await scenarios.get(plan.scenarioId);
       if (!scenario) return reply.code(404).send({ error: 'scenario not found for plan' });
+      if (policyIssues?.(plan).length) return reply.code(409).send({error:'Planning settings changed; create a fresh plan before previewing.'});
       let day;
+      const profiles=await new ProfileRepository(options.store,options.tenantId).resolve(scenario.planningProfiles??[]);
+      if(JSON.stringify(plan.provenance?.planningProfiles??[])!==JSON.stringify(scenario.planningProfiles??[]))
+        return reply.code(409).send({error:'Planning profile revisions changed; create a fresh plan before previewing.'});
       if (options.objects) {
         const rows = await options.store.listDatasets(options.tenantId, true);
         const row = rows.find((candidate) => ((candidate.manifest as ConvertedManifest | undefined)?.days ?? []).some((d) => d.dayId === scenario.day) &&
-          (!scenario.planningPolicy || (candidate.manifest as ConvertedManifest).artifacts?.request?.sha256 === scenario.planningPolicy.datasetRequestSha256));
+          (candidate.manifest as ConvertedManifest).artifacts?.request?.sha256 === (plan.provenance?.datasetSha256??plan.provenance?.planningPolicy?.datasetRequestSha256));
         if (!row) return reply.code(404).send({ error: 'dataset not available for plan' });
-        day = await loadConvertedDay(options.objects, options.tenantId, row.manifest as ConvertedManifest, scenario);
+        day = await loadConvertedDay(options.objects, options.tenantId, row.manifest as ConvertedManifest, scenario,profiles);
       } else { day = loadDay(scenario.day); }
+      const fleetProfile=profiles.find(p=>p.kind==='fleet');
+      const settings=fleetProfile?manualSettings(fleetProfile.content.settings):options.fleetSettings;
+      if(settings&&!applyFleetSettings(day.request,day.datasetRequestSha256,settings))
+        return reply.code(409).send({error:'Fleet settings do not match the pinned dataset.'});
       return { trip: evaluateTrip({ day, request: day.request, vehicleId: b.vehicleId, tripIndex: srcTrip.index,
         startSec: typeof b.startSec === 'number' ? b.startSec : srcTrip.startSec, tripCountOnVehicle: vehicle.trips.length,
         reloadSecAfter: typeof b.reloadSecAfter === 'number' ? b.reloadSecAfter : srcTrip.reloadSecAfter,
-        orderNos: want, vehicleInfo: loadVehicleInfo() }) };
+        orderNos: want,...(Array.isArray(b.requestIds)?{requestIds:b.requestIds as number[]}:{}),
+        vehicleInfo: settings?.vehicleInfo??loadVehicleInfo(),tariff:settings?.tariff }) };
     },
   );
   app.get<{ Querystring: { day?: string } }>('/api/plans', async (req) => statefulPlanSummaries(

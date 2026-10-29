@@ -10,8 +10,11 @@ import { workOneSolve, type SolveOutput } from './state/worker.js';
 import { solveConvertedDataset, workOneDatasetAdmission } from './state/conversion.js';
 import { deliverOne, ResendSender } from './state/outbox.js';
 import type { Scenario } from './store.js';
-import { manualSettings } from './state/manual-settings.js';
+import { manualSettings,fleetPolicyBlockers } from './state/manual-settings.js';
 import { admittedManualDatasetLoader } from './state/manual-dataset.js';
+import { ProfileRepository } from './state/profiles.js';
+import {parseDestinations,HttpHandoffSender} from './state/handoff-sender.js';
+import {workOneTransfer} from './state/transfer-worker.js';
 
 const required = (name: string, value: string): string => {
   if (!value) throw new Error(`${name} is required in stateful mode`);
@@ -43,9 +46,12 @@ const auth = config.authRequired ? new StatefulAuthService(store, {
   secureCookies: config.authPublicOrigin.startsWith('https://'),
 }) : undefined;
 const fleetSettings=process.env.CURSUS_MANUAL_SETTINGS_FILE?manualSettings(JSON.parse(await readFile(process.env.CURSUS_MANUAL_SETTINGS_FILE,'utf8'))):undefined;
-const manualPlanning = fleetSettings ? admittedManualDatasetLoader(store,objects,config.authTenantId,fleetSettings) : undefined;
+const manualPlanning = admittedManualDatasetLoader(store,objects,config.authTenantId,fleetSettings);
+const handoffDestinations=process.env.CURSUS_HANDOFF_CONFIG_FILE?parseDestinations(JSON.parse(await readFile(process.env.CURSUS_HANDOFF_CONFIG_FILE,'utf8')),process.env.CURSUS_HANDOFF_TEST_HTTP==='1'):[];
+if(handoffDestinations.some(d=>d.tenantId!==config.authTenantId))throw new Error('Handoff configuration must belong to this deployment tenant.');
+const handoffSender=handoffDestinations.length?await HttpHandoffSender.create(handoffDestinations):undefined;
 const app = await createStatefulApi({ store, objects, auth, manualPlanning,fleetSettings, tenantId: config.authTenantId,
-  tenantName: config.authTenantName, publicOrigin: config.authPublicOrigin, maxUploadBytes: config.maxUploadMB * 1024 * 1024 });
+  tenantName: config.authTenantName, publicOrigin: config.authPublicOrigin, maxUploadBytes: config.maxUploadMB * 1024 * 1024,handoffDestinations });
 await app.register(fastifyStatic, { root: config.webDist, wildcard: false });
 app.setNotFoundHandler((req, reply) => req.method === 'GET' && !req.url.startsWith('/api/') && !req.url.startsWith('/health/')
   ? reply.sendFile('index.html') : reply.code(404).send({ error: 'not found' }));
@@ -53,10 +59,10 @@ app.setNotFoundHandler((req, reply) => req.method === 'GET' && !req.url.startsWi
 let stopping = false;
 const workerId = `${config.statefulWorkerId}-${hostname()}-${process.pid}`;
 async function solve(lease: Lease, signal: AbortSignal): Promise<SolveOutput> {
-  const payload = lease.payload as { scenario?: Scenario; budgetSec?: number; objective?: 'vehicles' | 'distance'; fullBudget?: boolean };
+  const payload = lease.payload as { scenario?: Scenario;referencePlanId?:string; budgetSec?: number; objective?: 'vehicles' | 'distance'; fullBudget?: boolean };
   if (!payload.scenario) throw new Error('solve job has no scenario snapshot');
   const datasets = await store.listDatasets(lease.tenantId, true);
-  const wantedSha = payload.scenario.manualDecisions?.datasetSha256 ?? payload.scenario.planningPolicy?.datasetRequestSha256;
+  const wantedSha = payload.scenario.deliveryDatasetSha256 ?? payload.scenario.manualDecisions?.datasetSha256 ?? payload.scenario.planningPolicy?.datasetRequestSha256;
   if (payload.scenario.manualDecisions && payload.scenario.planningPolicy && wantedSha !== payload.scenario.planningPolicy.datasetRequestSha256)
     throw new Error('manual decisions and policy reference different datasets');
   const matches = datasets.filter((item) => ((item.manifest as { days?: { dayId: string }[] })?.days ?? [])
@@ -65,9 +71,11 @@ async function solve(lease: Lease, signal: AbortSignal): Promise<SolveOutput> {
   if (payload.scenario.manualDecisions && matches.length !== 1) throw new Error('manual replanning requires exactly one pinned admitted dataset');
   const dataset = matches[0];
   if (!dataset) throw new Error(`no admitted dataset contains day ${payload.scenario.day}`);
+  const profiles=await new ProfileRepository(store,lease.tenantId).resolve(payload.scenario.planningProfiles??[]);
   const plan = await solveConvertedDataset(objects, lease.tenantId, dataset.manifest as never, payload.scenario,
     Math.max(1, payload.budgetSec ?? config.solveTimeSeconds), payload.objective ?? 'vehicles', signal, payload.fullBudget ?? false,
-    lease.tenantId===config.authTenantId?fleetSettings:undefined);
+    lease.tenantId===config.authTenantId?fleetSettings:undefined,
+    payload.referencePlanId?(await store.getPlan(lease.tenantId,payload.referencePlanId))??undefined:undefined,profiles);
   return { planId: plan.id, scenarioId: payload.scenario.id, scenarioRevision: payload.scenario.revision, plan };
 }
 
@@ -81,6 +89,8 @@ const workers = [
   loop('solve', () => workOneSolve(store, solve, `${workerId}-solve`, config.statefulLeaseSec)),
   loop('conversion', () => workOneDatasetAdmission(store, objects, `${workerId}-conversion`, config.statefulLeaseSec)),
 ];
+if(handoffSender)workers.push(loop('handoff',()=>workOneTransfer(store,config.authTenantId,handoffDestinations,handoffSender,`${workerId}-handoff`,config.statefulLeaseSec,
+ fleetSettings?(plan)=>plan.provenance.planningProfiles?.some(p=>p.kind==='fleet')?[]:fleetPolicyBlockers(plan,fleetSettings):undefined)));
 if (config.resendApiKeyFile) {
   const sender = new ResendSender(await secret('RESEND_API_KEY_FILE', config.resendApiKeyFile));
   workers.push(loop('email', () => deliverOne(store, sender, `${workerId}-email`)));

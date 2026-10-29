@@ -3,6 +3,27 @@ import { manualAssignmentCommands } from '../src/lib/manual-assignment';
 import { applyManualBatch, type ManualLayout } from '../../server/src/plan/manual';
 import { selectedUnassigned } from '../src/lib/unassigned-selection';
 import type { Plan } from '../src/types';
+import { deliveryToken, deliveryReference } from '../src/lib/dnd';
+import {selectedStop} from '../src/lib/stop-selection';
+
+test('stop selection is bound to delivery and plan identity rather than a previous preview position',()=>{
+  const stops=[{requestId:130,seq:1,orderNo:'REPEATED'},{requestId:170,seq:2,orderNo:'REPEATED'}] as Plan['vehicles'][number]['trips'][number]['stops'];
+  const selection={kind:'stop' as const,vehicleId:10,tripIndex:0,seq:1,requestId:170,planId:'current'};
+  expect(selectedStop(stops,selection,'current')?.requestId).toBe(170);
+  expect(selectedStop(stops,selection,'another-plan')).toBeUndefined();
+  expect(selectedStop(stops,{...selection,requestId:999},'current')).toBeUndefined();
+  expect(selectedStop(stops,{kind:'stop',vehicleId:10,tripIndex:0,seq:1},'current')?.requestId).toBe(130);
+});
+
+test('delivery drag tokens round-trip duplicate and reserved references without losing identity',()=>{
+  for(const orderNo of ['REPEATED','@delivery:12:other','@ref:encoded','Árvíz / % : "']){
+    expect(deliveryReference(deliveryToken(orderNo))).toEqual({orderNo});
+    for(const requestId of [0,91,92])expect(deliveryReference(deliveryToken(orderNo,requestId))).toEqual({orderNo,requestId});
+  }
+  expect(deliveryToken('REPEATED',91)).not.toBe(deliveryToken('REPEATED',92));
+  expect(()=>deliveryReference('@delivery:9007199254740992:x')).toThrow();
+  expect(()=>deliveryReference('@delivery:-1:x')).toThrow();
+});
 
 test('unassigned selections retain request identity when historical display references repeat',()=>{
   const orders:Plan['unassigned']=[1,2].map(requestId=>({requestId,orderNo:'REPEATED',orderId:null,customer:null,city:null,lon:null,lat:null,reason:null,reasonCode:null}));

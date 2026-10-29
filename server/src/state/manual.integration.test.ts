@@ -17,6 +17,36 @@ import type { Scenario } from '../store.js';
 import { config } from '../config.js';
 import { tariffIdentity } from '../cost.js';
 
+test('candidate selection is explicit, revision/selection fenced and preserves plans across two APIs',{skip:!process.env.CURSUS_TEST_DATABASE_URL},async()=>{
+ const stores=[new StatefulStore(process.env.CURSUS_TEST_DATABASE_URL!),new StatefulStore(process.env.CURSUS_TEST_DATABASE_URL!)],tenant='selection-'+randomUUID(),f=manualFixture();
+ const a=stores[0]!;await a.migrate();await a.ensureTenant(tenant,'Candidate test');await a.createScenario(tenant,f.scenario.id,f.scenario);
+ const candidate={...structuredClone(f.parent),id:'candidate'};
+ for(const p of [f.parent,candidate])await a.pool.query('INSERT INTO plans(tenant_id,id,scenario_id,scenario_revision,body) VALUES($1,$2,$3,1,$4)',[tenant,p.id,p.scenarioId,p]);
+ const apps=await Promise.all(stores.map(store=>createStatefulApi({store,tenantId:tenant,tenantName:'Candidate test'})));
+ const choose=(i:number,id:string,version=0,acknowledgeIncomplete=false)=>apps[i]!.inject({method:'POST',url:`/api/scenarios/${f.scenario.id}/select-plan`,headers:{'if-match':'"1"'},payload:{planId:id,selectionVersion:version,acknowledgeIncomplete}});
+ try{
+  assert.equal((await a.getScenario(tenant,f.scenario.id))?.selectedPlanId,undefined);
+  const race=await Promise.all([choose(0,f.parent.id),choose(1,candidate.id)]);assert.deepEqual(race.map(r=>r.statusCode).sort(),[200,409]);
+  const selected=(await a.getScenario(tenant,f.scenario.id))!;assert.equal(selected.selectionVersion,1);assert.equal(selected.revision,1);
+  assert.equal((await choose(0,'not-in-tenant',1)).statusCode,404);
+  candidate.scenarioRevision=0;await a.pool.query('UPDATE plans SET body=$3 WHERE tenant_id=$1 AND id=$2',[tenant,candidate.id,candidate]);
+  assert.equal((await choose(1,candidate.id,1)).statusCode,409);
+  assert.equal((await new PlanWorkflow(a,tenant).get(f.parent.id)).state,'draft');
+  assert.equal((await a.listPlans(tenant)).length,2);
+  const partial=structuredClone(f.parent);partial.id='partial';
+  const removed=partial.vehicles[0]!.trips[0]!.stops.pop()!;
+  partial.unassigned=[{...removed,reason:'Not served',reasonCode:null}];
+  partial.stats.servedOrders=1;partial.stats.deliveryStops=1;
+  await a.pool.query('INSERT INTO plans(tenant_id,id,scenario_id,scenario_revision,body) VALUES($1,$2,$3,1,$4)',[tenant,partial.id,partial.scenarioId,partial]);
+  assert.equal((await choose(0,partial.id,1)).statusCode,409,'incomplete candidate needs explicit acknowledgement');
+  assert.equal((await choose(1,partial.id,1,true)).statusCode,200);
+  assert.equal((await new PlanWorkflow(a,tenant).get(partial.id)).state,'draft','selection never approves');
+  partial.stats.totalOrders=3;
+  await a.pool.query('UPDATE plans SET body=$3 WHERE tenant_id=$1 AND id=$2',[tenant,partial.id,partial]);
+  assert.equal((await choose(0,partial.id,2,true)).statusCode,409,'acknowledgement cannot waive inconsistent coverage');
+ }finally{for(const app of apps)await app.close();for(const s of stores)await s.close();}
+});
+
 test('manual publication through two real APIs is atomic, idempotent and revision fenced', { skip: !process.env.CURSUS_TEST_DATABASE_URL }, async () => {
   const a=new StatefulStore(process.env.CURSUS_TEST_DATABASE_URL!), b=new StatefulStore(process.env.CURSUS_TEST_DATABASE_URL!);
   const tenant=`manual-${randomUUID()}`, f=manualFixture();
@@ -200,7 +230,8 @@ test('manual publication cannot overwrite a newer current plan at the same scena
     const publisher=new ManualPlanPublisher(store,tenant,async()=>{entered();await held;return f.context;});
     const pending=publisher.publish(f.scenario.id,1,{parentPlanId:f.parent.id,batch:{operationId:'pointer-race',datasetSha256:'a'.repeat(64),commands:[{op:'deassign',requestId:91}]}});
     await seen;
-    // Model the exact same-revision pointer update performed by completeSolve.
+    // Model a same-revision pointer update from explicit candidate adoption
+    // (or completion of an older client without a selection pointer).
     const newer={...f.parent,id:'new-current'};
     await store.tx(async client=>{
       await client.query('SELECT revision FROM scenarios WHERE tenant_id=$1 AND id=$2 FOR UPDATE',[tenant,f.scenario.id]);
@@ -314,6 +345,13 @@ test('real native replanning across replicas retains, releases and fences manual
       // Target only this disposable job; unrelated test leases are untouched.
       await a.pool.query("UPDATE jobs SET state='running',lease_owner='old',lease_expires_at=now()+interval '30 seconds',fence=1,attempt=1 WHERE tenant_id=$1 AND id=$2",[tenant,id]);
       const snapshot=(await a.getJob(tenant,id))!.payload as {scenario:Scenario};
+      const choose=async(plan:import('../types.js').Plan)=>{
+        const current=(await a.getScenario(tenant,snapshot.scenario.id))!;
+        assert.equal(current.manualPlanId,snapshot.scenario.manualPlanId,'completion preserves the selected incumbent until adoption');
+        const choice=await apps[0]!.inject({method:'POST',url:`${url}/select-plan`,headers:{'if-match':`"${revision}"`},
+          payload:{planId:plan.id,selectionVersion:current.selectionVersion??0,acknowledgeIncomplete:true}});
+        assert.equal(choice.statusCode,200,choice.body);return plan;
+      };
       const execute=()=>solveConvertedDataset(objects,tenant,manifest,snapshot.scenario,1,'vehicles',new AbortController().signal);
       const output=await execute();
       const lease:Lease={tenantId:tenant,id,owner:'old',fence:1,attempt:1,payload:snapshot};
@@ -326,9 +364,9 @@ test('real native replanning across replicas retains, releases and fences manual
         await assert.rejects(()=>b.completeSolve({...lease,owner:'new',fence:2},forged.id,snapshot.scenario.id,revision,forged),/provenance/);
         assert.equal((await b.getJob(tenant,id))?.state,'running');
         await b.completeSolve({...lease,owner:'new',fence:2},winner.id,snapshot.scenario.id,revision,winner);
-        return winner;
+        return choose(winner);
       }
-      await b.completeSolve(lease,output.id,snapshot.scenario.id,revision,output);return output;
+      await b.completeSolve(lease,output.id,snapshot.scenario.id,revision,output);return choose(output);
     };
     const retained=await solve(2);
     assert.equal(retained.vehicles.find(v=>v.id===42)?.trips.flatMap(t=>t.stops).some(s=>s.requestId===91),true);

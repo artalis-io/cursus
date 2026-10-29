@@ -64,6 +64,18 @@ test('parent locks and scenario sequences are checked before manual validation',
   assert.throws(()=>evaluateManualInput(input,original,f.scenario),/locked/);
 });
 
+test('stable locked sequences distinguish deliveries with identical display references', () => {
+  const f=manualFixture();
+  f.context.day.request.tasks[1]!.ref='ORDER-1';
+  f.parent.vehicles[0]!.trips[0]!.stops[1]!.orderNo='ORDER-1';
+  f.context.day.verifiedSharedAccessRefs=new Set(['ORDER-1']);
+  f.scenario.sequences=[{vehicleId:7,orderNos:['ORDER-1','ORDER-1'],requestIds:[91,92],locked:true}];
+  const input=prepareManualInput(f.parent,f.scenario,f.context),original=structuredClone(input.layout);
+  assert.equal(evaluateManualInput(input,original,f.scenario).validation.valid,true);
+  input.layout.routes[0]!.requestIds.reverse();
+  assert.throws(()=>evaluateManualInput(input,original,f.scenario),/sequence|locked/);
+});
+
 test('native precedence is checked after deterministic schedule calculation', () => {
   const f=manualFixture(); f.context.day.request.precedences=[{before:92,after:91}];
   const input=prepareManualInput(f.parent,f.scenario,f.context);

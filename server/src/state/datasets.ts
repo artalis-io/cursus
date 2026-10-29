@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import type { ObjectStore, ImmutableObject } from './objects.js';
 import type { StatefulStore } from './postgres.js';
+import { preparedBundle } from './prepared-bundle.js';
 
 export interface DatasetUpload { datasetId: string; object: ImmutableObject; status: 'uploaded' }
 
@@ -23,21 +24,33 @@ export class DatasetRepository {
     const source = (current.manifest as { source?: ImmutableObject }).source;
     if (!source) throw new Error('dataset source object is missing');
     const bytes = await this.objects.getVerified(source);
-    let bundle: { schemaVersion?: unknown; days?: unknown; surgeRequest?: unknown };
+    let bundle: { schemaVersion?: unknown; days?: unknown; surgeRequest?: unknown;geocoded?:unknown;shipments?:unknown };
     try { bundle = JSON.parse(new TextDecoder().decode(bytes)); } catch { throw new Error('dataset is not valid JSON'); }
     if (bundle.schemaVersion !== 1 || !Array.isArray(bundle.days) || !bundle.days.length || !bundle.surgeRequest || typeof bundle.surgeRequest !== 'object')
       throw new Error('unsupported dataset bundle (requires schemaVersion=1, days[], and surgeRequest)');
-    const manifest = { ...(current.manifest as object), validation: { valid: true, schemaVersion: 1, days: bundle.days } };
+    const prepared=bundle.geocoded!==undefined||bundle.shipments!==undefined;
+    if(prepared)preparedBundle(bundle);
+    const manifest = { ...(current.manifest as object), validation: { valid: true, schemaVersion: 1, days: bundle.days,prepared } };
     await this.db.validateDataset(this.tenantId, datasetId, manifest);
     return (await this.db.getDataset(this.tenantId, datasetId))!;
   }
 
   async admit(datasetId: string, derived: ImmutableObject[] = []): Promise<Record<string, unknown>> {
     const current = await this.db.getDataset(this.tenantId, datasetId); if (!current) throw new Error('dataset not found');
-    for (const object of derived) await this.db.stageObject(this.tenantId, object);
-    const manifest = current.manifest as { source?: ImmutableObject };
-    const objects = [manifest.source, ...derived].filter((x): x is ImmutableObject => Boolean(x));
-    await this.db.publishDataset(this.tenantId, datasetId, { ...manifest, objects }, objects.map((x) => x.key));
+    if(current.status!=='validated')throw new Error('Dataset must be validated before admission.');
+    const manifest = current.manifest as { source?: ImmutableObject;validation?:{prepared?:boolean} };
+    let artifacts:Record<string,ImmutableObject>|undefined,days:ReturnType<typeof preparedBundle>['days']|undefined;
+    if(manifest.validation?.prepared){
+      if(!manifest.source)throw new Error('Dataset source is missing.');
+      const bundle=preparedBundle(JSON.parse(new TextDecoder().decode(await this.objects.getVerified(manifest.source))));
+      artifacts={request:await this.objects.putImmutable(this.tenantId,bundle.requestBytes,'application/json'),
+        geocoded:await this.objects.putImmutable(this.tenantId,Buffer.from(JSON.stringify({records:bundle.geocoded})),'application/json'),
+        shipments:await this.objects.putImmutable(this.tenantId,Buffer.from(JSON.stringify(bundle.shipments)),'application/json')};
+      days=bundle.days;
+    }
+    const objects = [...new Map([manifest.source,...derived,...Object.values(artifacts??{})].filter((x):x is ImmutableObject=>!!x).map(o=>[o.key,o])).values()];
+    for (const object of objects) await this.db.stageObject(this.tenantId, object);
+    await this.db.publishDataset(this.tenantId, datasetId, { ...manifest, objects,...(artifacts?{artifacts,days}: {}) }, objects.map((x) => x.key));
     return (await this.db.getDataset(this.tenantId, datasetId))!;
   }
 

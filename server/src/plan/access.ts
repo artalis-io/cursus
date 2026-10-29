@@ -29,10 +29,10 @@ export function grossTonnage(vehicle: SurgeRequestVehicle, info: Map<string, Veh
 /** Run AFTER pins, route locks and vehicle edits. Add immutable safety exclusions
  * rather than an empty allowlist (which Surge interprets as unrestricted).
  * A conflicting pin must remain infeasible, not silently become unrestricted. */
-export function applyAccessLimits(request: SurgeRequest, orders: Map<string, OrderInfo>, vehicles: Map<string, VehicleInfo>): void {
+export function applyAccessLimits(request: SurgeRequest, orders: Map<string, OrderInfo>, vehicles: Map<string, VehicleInfo>, deliveries?:Map<number,OrderInfo>): void {
   const taskRefs = new Map(request.tasks.map(t => [t.id, String(t.ref)]));
   for (const order of request.requests) {
-    const requirements = orders.get(taskRefs.get(order.delivery_task_id) ?? '');
+    const requirements = deliveries?.get(order.id) ?? orders.get(taskRefs.get(order.delivery_task_id) ?? '');
     const limit = requirements?.maxTonnage;
     if (limit == null && !requirements?.requiresTailLift) continue;
     if (limit != null && (!Number.isFinite(limit) || limit <= 0)) throw new Error('invalid destination gross-weight access limit');

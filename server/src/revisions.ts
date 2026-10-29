@@ -13,7 +13,7 @@ export function registerScenarioPreconditions(app: FastifyInstance,
   app.addHook('preHandler', async (req, reply) => {
     const route = req.routeOptions.url;
     const guarded = req.method === 'DELETE' && route === '/api/scenarios/:id'
-      || req.method === 'POST' && /^\/api\/scenarios\/:id\/(edit|edits|rename|solve)$/.test(route ?? '');
+      || req.method === 'POST' && /^\/api\/scenarios\/:id\/(edit|edits|rename|solve|select-plan)$/.test(route ?? '');
     if (!guarded) return;
     if (req.headers['if-match'] === undefined)
       return reply.code(428).send({ error: 'Reload the scenario before making changes: If-Match revision required.' });

@@ -21,6 +21,7 @@ import { AuthService, cookieValue } from './auth.js';
  * running in parallel and OOMing the single process. */
 const importSem = new Semaphore(config.maxConcurrentImports);
 import { comparePlans } from './plan/compare.js';
+import { tripPermutation } from './plan/identity.js';
 import { weekSummary } from './plan/week.js';
 import { importSummary, rawSample, canonicalSample } from './data/import.js';
 import { sageReachable, narratePlan, narrateComparison, type Lang } from './sage.js';
@@ -36,7 +37,7 @@ import { newUploadPath, uploadPath, sampleUpload, runIngestPreview, runGeocode, 
 import type { Plan } from './types.js';
 import { buildInfo } from './build-info.js';
 import { registerAccessControl, viewIdentity } from './access-control.js';
-import { registerScenarioPreconditions } from './revisions.js';
+import { registerScenarioPreconditions,expectedRevision } from './revisions.js';
 import { rolePermissions } from './roles.js';
 
 const ENTITIES: Entity[] = ['orders', 'vehicles', 'routes'];
@@ -174,11 +175,11 @@ app.post<{ Querystring: { token?: string } }>('/api/auth/verify', async (req, re
 });
 app.get('/api/auth/me', async (req, reply) => {
   reply.header('Cache-Control', 'private, no-store');
-  if (!auth) return { email: 'local@cursus', tenantId: 'local', tenantName: config.authTenantName, role: 'admin', permissions: rolePermissions.admin.filter(p => p !== 'role.preview' && p !== 'plan.review' && p !== 'plan.approve'), build: buildInfo };
+  if (!auth) return { email: 'local@cursus', tenantId: 'local', tenantName: config.authTenantName, role: 'admin', permissions: rolePermissions.admin.filter(p => p !== 'role.preview' && p !== 'plan.review' && p !== 'plan.approve' && !p.startsWith('profile.') && !p.startsWith('handoff.')), build: buildInfo };
   const principal = auth.authenticate(cookieValue(req.headers.cookie, 'cursus_session'));
   if (!principal) return reply.code(401).send({ error: 'authentication required' });
   const identity = viewIdentity(principal, req.headers.cookie);
-  return { ...identity, permissions: identity.permissions.filter(p => p !== 'plan.review' && p !== 'plan.approve'), tenantName: config.authTenantName, build: buildInfo };
+  return { ...identity, permissions: identity.permissions.filter(p => p !== 'plan.review' && p !== 'plan.approve' && !p.startsWith('profile.') && !p.startsWith('handoff.')), tenantName: config.authTenantName, build: buildInfo };
 });
 app.post('/api/auth/logout', async (req, reply) => {
   if (auth && req.headers.origin !== config.authPublicOrigin) return reply.code(403).send({ error: 'invalid request origin' });
@@ -263,6 +264,11 @@ app.post<{ Params: { id: string }; Body: { edits?: unknown; label?: string } }>(
   }
 });
 
+app.post<{Params:{id:string};Body:{planId?:unknown;selectionVersion?:unknown;acknowledgeIncomplete?:unknown}}>('/api/scenarios/:id/select-plan',async(req,reply)=>{
+ const b=req.body,revision=expectedRevision(req.headers);
+ if(revision===null||typeof b?.planId!=='string'||!b.planId||!Number.isSafeInteger(b.selectionVersion)||Number(b.selectionVersion)<0||b.acknowledgeIncomplete!==undefined&&typeof b.acknowledgeIncomplete!=='boolean')return reply.code(400).send({error:'Plan identity, selection version and revision required.'});
+ try{return store.selectPlan(req.params.id,revision,b.planId,Number(b.selectionVersion),b.acknowledgeIncomplete===true);}catch(e){return reply.code(409).send({error:(e as Error).message});}
+});
 app.get<{ Params: { id: string } }>('/api/scenarios/:id', async (req, reply) => {
   const s = store.getScenario(req.params.id);
   if (!s) return reply.code(404).send({ error: 'scenario not found' });
@@ -420,7 +426,7 @@ for (const kind of ['export.csv', 'routes.csv', 'routesheet.html', 'handoff.json
  * re-solve. The browser lacks the N^2 travel matrix and the (confidential) tariff,
  * so it posts the proposed order here and gets back the recomputed trip (times,
  * distance, cost) for an honest reorder preview. See plan/evaluate.ts. */
-app.post<{ Params: { id: string }; Body: { vehicleId?: number; tripIndex?: number; startSec?: number; reloadSecAfter?: number; orderNos?: unknown } }>(
+app.post<{ Params: { id: string }; Body: { vehicleId?: number; tripIndex?: number; startSec?: number; reloadSecAfter?: number; orderNos?: unknown;requestIds?:unknown } }>(
   '/api/plans/:id/evaluate', async (req, reply) => {
     const plan = store.getPlan(req.params.id);
     if (!plan) return reply.code(404).send({ error: 'plan not found' });
@@ -433,9 +439,8 @@ app.post<{ Params: { id: string }; Body: { vehicleId?: number; tripIndex?: numbe
     const tripIndex = typeof b.tripIndex === 'number' ? b.tripIndex : 0;
     const srcTrip = vehicle.trips.find((tr) => tr.index === tripIndex) ?? vehicle.trips[0];
     // the proposed order must be a permutation of the trip's existing orders
-    const have = new Set((srcTrip?.stops ?? []).map((s) => s.orderNo));
     const want = b.orderNos as string[];
-    if (!srcTrip || want.length !== have.size || !want.every((o) => have.has(o)))
+    if (!srcTrip || !tripPermutation(srcTrip.stops,want,b.requestIds))
       return reply.code(400).send({ error: 'orderNos must be a permutation of the trip stops' });
     // plan.day is the ISO date; loadDay wants the day id (builtin or uploaded).
     const dayId = allDayIds().find((d) => d.isoDate === plan.day)?.id;
@@ -446,7 +451,7 @@ app.post<{ Params: { id: string }; Body: { vehicleId?: number; tripIndex?: numbe
       startSec: typeof b.startSec === 'number' ? b.startSec : srcTrip.startSec,
       tripCountOnVehicle: vehicle.trips.length,
       reloadSecAfter: typeof b.reloadSecAfter === 'number' ? b.reloadSecAfter : srcTrip.reloadSecAfter,
-      orderNos: want, vehicleInfo,
+      orderNos: want,...(Array.isArray(b.requestIds)?{requestIds:b.requestIds as number[]}:{}), vehicleInfo,
     });
     return { trip };
   },

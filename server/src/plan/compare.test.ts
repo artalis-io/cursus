@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 
 import { comparePlans } from './compare.js';
 import type { Plan, PlanStop, PlanTrip, PlanVehicle, PlanStats } from '../types.js';
+import { deliveryComparison,tripPermutation } from './identity.js';
 
 /* ---- Minimal, type-correct Plan builders (synthetic) ---- */
 
@@ -110,6 +111,27 @@ function stats(over: Partial<PlanStats>): PlanStats {
     ...over,
   };
 }
+
+test('duplicate order numbers remain distinct deliveries, including equal-count service swaps',()=>{
+ const p=mkPlan('before',[mkVehicle('A',[mkStop('DUP',{requestId:1}),mkStop('DUP',{requestId:2})])],stats({servedOrders:2,totalOrders:3}),[]);
+ p.unassigned=[{orderNo:'DUP',requestId:3,orderId:null,customer:null,city:null,lat:null,lon:null,reason:null,reasonCode:null}];
+ p.provenance.datasetSha256='a'.repeat(64);
+ const q=structuredClone(p);q.id='after';q.vehicles[0]!.trips[0]!.stops[1]!.requestId=3;q.unassigned[0]!.requestId=2;
+ const cmp=comparePlans(p,q);
+ assert.equal(cmp.newlyUnassigned[0]?.requestId,2);assert.equal(cmp.nowServed[0]?.requestId,3);
+ assert.equal(cmp.deltas.servedOrders,0);assert.equal(deliveryComparison(p,q).lostService,true);
+ assert.equal(cmp.improvementEligible,false);
+ q.provenance.datasetSha256='b'.repeat(64);assert.equal(comparePlans(p,q).identityAmbiguous,true);
+ assert.deepEqual(comparePlans(p,q).movedOrders,[]);
+});
+test('ambiguous legacy labels are not collapsed into invented per-delivery comparisons',()=>{
+ const p=mkPlan('old',[mkVehicle('A',[mkStop('DUP'),mkStop('DUP')])],stats({servedOrders:2,totalOrders:2}),[]);
+ const q=structuredClone(p);q.vehicles[0]!.ref='B';
+ assert.equal(comparePlans(p,q).identityAmbiguous,true);assert.deepEqual(comparePlans(p,q).movedOrders,[]);
+ assert.equal(tripPermutation(p.vehicles[0]!.trips[0]!.stops,['DUP','DUP']),false);
+ assert.equal(tripPermutation([{orderNo:'DUP',requestId:1},{orderNo:'DUP',requestId:2}],['DUP','DUP'],[2,1]),true);
+ assert.equal(tripPermutation([{orderNo:'DUP',requestId:1},{orderNo:'DUP',requestId:2}],['DUP','DUP'],[2,2]),false);
+});
 
 /* ------------------------------------------------------------------
  * Base:

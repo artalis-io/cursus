@@ -27,6 +27,7 @@ const en: Dict = {
   'manual.assigned':'Assigned','manual.available':'Available','manual.excluded':'Excluded',
   'manual.unavailable':'Unavailable','manual.verificationRequired':'Fleet identity or capabilities need verification before assignment.',
   'manual.policyChanged':'This saved plan uses earlier fleet or tariff settings. Create a fresh draft or Replan to validate the current settings.',
+  'compare.policyChanged':'The planning policies differ. Numerical changes are not verified efficiency improvements.',
   'manual.freshPlanRequired':'This historical plan has no unambiguous delivery identities. Replan to create a fresh plan before manual editing.',
   'manual.pending':'Apply or discard pending scenario edits before manual planning.','manual.identity':'This delivery has no unambiguous request identity. Reload the dataset before editing.',
   'freshness.changed': 'This scenario changed in another workspace. Reload before continuing.',
@@ -140,6 +141,7 @@ const en: Dict = {
   'inspector.loadNote': 'Aggregate scalar capacity (weight & pallet count). Physical 3L loading feasibility — pallet positions, stackability, unloading access — has not been checked; no loading checker is wired.',
 
   'compare.title': 'Plan comparison — {label}', 'compare.comparing': 'Comparing…',
+  'compare.identityUnknown':'Delivery identities cannot be matched reliably. Per-delivery changes are unavailable; no improvement is claimed.',
   'compare.fewerServed': '{n} fewer order(s) served with the reduced fleet{save}. Distance savings here come at the cost of service, not efficiency.',
   'compare.saveFragment': ', saving {km}',
   'compare.metric': 'Metric', 'compare.baseline': 'Baseline', 'compare.revised': 'Revised', 'compare.delta': 'Δ',
@@ -309,6 +311,7 @@ const hu: Dict = {
   'manual.assigned':'Kiosztott','manual.available':'Elérhető','manual.excluded':'Kizárt',
   'manual.unavailable':'Nem használható','manual.verificationRequired':'A jármű azonosítója vagy képességei ellenőrzést igényelnek a hozzárendelés előtt.',
   'manual.policyChanged':'Ez a mentett terv korábbi flotta- vagy díjbeállításokat használ. Az aktuális beállítások ellenőrzéséhez készítsen új tervezetet vagy tervezzen újra.',
+  'compare.policyChanged':'A tervezési szabályok eltérnek. A számszerű változások nem igazolt hatékonyságjavulások.',
   'manual.freshPlanRequired':'A korábbi terv szállításaihoz nem tartozik egyértelmű azonosító. A kézi szerkesztéshez először tervezzen újra.',
   'manual.pending':'Kézi tervezés előtt alkalmazza vagy vesse el a függő módosításokat.','manual.identity':'A szállítás nem azonosítható egyértelműen. Szerkesztés előtt töltse újra az adatokat.',
   'freshness.changed': 'A forgatókönyv másik munkaterületen megváltozott. Folytatás előtt töltse újra.',
@@ -422,6 +425,7 @@ const hu: Dict = {
   'inspector.loadNote': 'Csak összesített skaláris kapacitás (súly és raklapszám). A fizikai 3L rakodhatóság — raklappozíciók, torlaszolhatóság, lerakodási hozzáférés — nincs ellenőrizve; nincs rakodásellenőrző bekötve.',
 
   'compare.title': 'Terv-összehasonlítás — {label}', 'compare.comparing': 'Összehasonlítás…',
+  'compare.identityUnknown':'A kézbesítések nem azonosíthatók egyértelműen. A tételes változások nem érhetők el; javulás nem igazolható.',
   'compare.fewerServed': '{n} megrendeléssel kevesebbet szolgál ki a csökkentett flotta{save}. Az itteni távolságmegtakarítás a kiszolgálás rovására megy, nem hatékonyság.',
   'compare.saveFragment': ', {km} megtakarítással',
   'compare.metric': 'Mutató', 'compare.baseline': 'Alapterv', 'compare.revised': 'Módosított', 'compare.delta': 'Δ',

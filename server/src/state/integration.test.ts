@@ -185,7 +185,7 @@ integration('schema-2 upgrade preserves memberships and sessions under concurren
   await Promise.all([a.migrate(), b.migrate()]);
   assert.deepEqual((await a.pool.query('SELECT * FROM memberships ORDER BY tenant_id,user_id')).rows, members);
   assert.deepEqual((await b.pool.query('SELECT * FROM sessions ORDER BY token_hash')).rows, sessions);
-  assert.deepEqual((await a.pool.query('SELECT version FROM schema_migrations ORDER BY version')).rows.map(r => r.version), [1, 2, 3]);
+  assert.deepEqual((await a.pool.query('SELECT version FROM schema_migrations ORDER BY version')).rows.map(r => r.version), [1, 2, 3, 4, 5]);
 });
 
 integration('Admin, Planner and Reviewer sessions enforce tenant-scoped permissions on both replicas', async () => {
@@ -409,6 +409,7 @@ integration('two real HTTP server instances share scenarios, jobs, and fenced pl
     const evalLease = await a.claimJob('solve', 'evaluate-solver', 30); assert.ok(evalLease);
     await a.completeSolve(evalLease!, evalPlan, evalScenario, 1, {
       id: evalPlan, scenarioId: evalScenario, scenarioRevision: 1, day: '2026-05-06', createdAt: new Date().toISOString(),
+      provenance: { datasetSha256: requestObject.sha256 },
       objective: 'vehicles', source: 'live', stats: { vehiclesUsed: 1, servedOrders: 2, totalOrders: 2, totalDistanceKm: 3 },
       vehicles: [{ id: 7, ref: 'TEST-7', trips: [{ index: 0, startSec: 0, reloadSecAfter: 0,
         stops: [{ orderNo: 'ORDER-A' }, { orderNo: 'ORDER-B' }] }] }], unassigned: [],

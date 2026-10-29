@@ -22,6 +22,8 @@ export function withPlanningPolicy(day: LoadedDay, policy?: PlanningPolicy): Loa
       !Array.isArray(policy.exceptions) || policy.exceptions.length > 100)
     throw new Error('planning policy does not match the approved dataset/day');
   const enrichment = new Map(day.enrichment);
+  const deliveryEnrichment=new Map(day.deliveryEnrichment);
+  const taskRefs=new Map(day.request.tasks.map(task=>[task.id,task.ref]));
   const refs = new Set(day.request.tasks.filter(t => day.scopeTaskIds.has(t.id)).map(t => t.ref));
   const seen = new Set<string>();
   for (const exception of policy.exceptions) {
@@ -44,6 +46,15 @@ export function withPlanningPolicy(day: LoadedDay, policy?: PlanningPolicy): Loa
       effective.requiresTailLift = exception.requiresTailLift;
     }
     enrichment.set(exception.orderNo, effective);
+    for(const request of day.request.requests){
+      if(taskRefs.get(request.delivery_task_id)!==exception.orderNo)continue;
+      const info=deliveryEnrichment.get(request.id)??original;
+      if(exception.maxTonnage!==undefined&&info.maxTonnage!==exception.originalMaxTonnage||
+        exception.requiresTailLift!==undefined&&info.requiresTailLift!==exception.originalRequiresTailLift)
+        throw new Error('approved exception does not match every referenced delivery');
+      deliveryEnrichment.set(request.id,{...info,...(exception.maxTonnage===undefined?{}:{maxTonnage:exception.maxTonnage}),
+        ...(exception.requiresTailLift===undefined?{}:{requiresTailLift:exception.requiresTailLift})});
+    }
   }
-  return { ...day, enrichment, planningPolicy: structuredClone(policy) };
+  return { ...day, enrichment,deliveryEnrichment, planningPolicy: structuredClone(policy) };
 }

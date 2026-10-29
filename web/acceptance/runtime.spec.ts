@@ -135,6 +135,11 @@ test(`manual ${role}: keyboard move, deassign, reload, release and native replan
   const replanned=await finishSolve(page,()=>page.getByRole('button',{name:'Replan',exact:true}).click());
   independentManualKpis(replanned);expect(replanned.stats.servedOrders).toBe(6);
   expect(replanned.assignments?.layout.history.length).toBe(3);
+  await manualStop(page,replanned,'PUBLIC-2');
+  await page.getByRole('button',{name:'Return to unassigned',exact:true}).click();
+  const afterAdoption=await applyManualDialog(page);
+  expect((await get<Scenario>(page.request,`${peer}/api/scenarios/${afterAdoption.scenarioId}`)).selectedPlanId).toBe(afterAdoption.id);
+  await page.reload();await expect(page.getByText('5 / 6',{exact:true})).toBeVisible();
 });
 }
 
@@ -532,7 +537,7 @@ async function shortBudget(page: Page) {
   await page.getByRole('menu').locator('input[type=range]').fill('15');
   await page.keyboard.press('Escape');
 }
-async function finishSolve(page: Page, start: () => Promise<unknown>): Promise<Plan> {
+async function finishSolve(page: Page, start: () => Promise<unknown>, options:{keep?:boolean;reload?:boolean}={}): Promise<Plan> {
   const submitted = page.waitForResponse(response => response.request().method() === 'POST' && /\/api\/scenarios\/[^/]+\/solve$/.test(new URL(response.url()).pathname));
   await start();
   const submission = await submitted;
@@ -553,6 +558,16 @@ async function finishSolve(page: Page, start: () => Promise<unknown>): Promise<P
   await expect(page.getByRole('dialog').getByText(/Plan comparison/)).toBeVisible();
   await expect(page.getByRole('dialog').getByText('Comparing…')).toHaveCount(0);
   await expect(page.getByRole('alert')).toHaveCount(0);
+  await page.keyboard.press('Escape');
+  const candidate = page.getByRole('region', { name: 'Plan candidate' });
+  await expect(candidate).toBeVisible();
+  if(options.reload){await page.reload();await expect(candidate).toBeVisible();}
+  if (plan.unassigned.length) await candidate.getByRole('checkbox').check();
+  await candidate.getByRole('button', { name: options.keep?'Keep previous':'Use candidate', exact: true }).click();
+  await expect(candidate).toHaveCount(0);
+  if(!options.keep){
+    expect((await get<Scenario>(page.request,`${peer}/api/scenarios/${scenarioId}`)).selectedPlanId).toBe(plan.id);
+  }
   const handoff = await get<{ summary: { servedOrders: number; totalOrders: number; cost: { total: number } }; routes: { stops: { orderNo: string }[] }[] }>(page.request, `${peer}/api/plans/${plan.id}/handoff.json`);
   expect(handoff.summary.servedOrders).toBe(plan.stats.servedOrders);
   expect(handoff.summary.totalOrders).toBe(plan.stats.totalOrders);
@@ -564,6 +579,17 @@ async function finishSolve(page: Page, start: () => Promise<unknown>): Promise<P
   expect(Number.isFinite(comparison.deltas.costTotal)).toBe(true);
   return plan;
 }
+
+test('pending native candidates survive reload and keeping the previous plan preserves both results',async({page})=>{
+  await login(page);await shortBudget(page);
+  const base=await baseline(page),vehicle=base.vehicles[0]!;
+  await page.locator('aside').first().getByText(vehicle.ref,{exact:true}).click();
+  await page.getByRole('button',{name:`Mark ${vehicle.ref} unavailable`}).click();
+  const candidate=await finishSolve(page,()=>page.getByRole('button',{name:'Replan',exact:true}).click(),{keep:true,reload:true});
+  expect((await get<Scenario>(page.request,`${peer}/api/scenarios/${candidate.scenarioId}`)).selectedPlanId).toBeUndefined();
+  expect((await get<Plan>(page.request,`${peer}/api/plans/${base.id}`)).stats).toEqual(base.stats);
+  expect((await get<Plan>(page.request,`${peer}/api/plans/${candidate.id}`)).id).toBe(candidate.id);
+});
 
 test.beforeEach(async ({ page }) => {
   const errors: string[] = [];
@@ -1348,4 +1374,153 @@ test('history, week, provenance, and upload render with real stateful responses'
   expect(await page.locator('table select').count()).toBeGreaterThan(0);
   // An uploaded but unvalidated source must not become a solver dataset.
   expect(await get<unknown[]>(page.request, `${peer}/api/import/datasets`)).toHaveLength(1);
+});
+
+test('approved fleet profiles are explicitly pinned, replan with native Surge and preserve earlier revisions',async({page})=>{
+ await login(page);await shortBudget(page);
+ await page.getByRole('button',{name:'Planning profiles',exact:true}).click();
+ const dialog=page.getByRole('dialog',{name:'Planning profiles',exact:true});
+ await dialog.getByRole('button',{name:'New fleet profile',exact:true}).click();
+ const label='Public approved fleet '+Date.now();
+ await dialog.getByRole('textbox',{name:'Profile name',exact:true}).fill(label);
+ await dialog.getByRole('textbox',{name:'Change reason',exact:true}).fill('Verified public fleet and capacity evidence');
+ await dialog.getByRole('button',{name:'Propose revision',exact:true}).click();
+ const card=dialog.locator('article').filter({hasText:label});
+ await expect(card).toContainText('Proposed');
+ await card.getByText('Profile details',{exact:true}).click();
+ await expect(card).toContainText('Payload'); // accessible business values, not raw JSON
+ await card.getByRole('button',{name:'Approve and activate',exact:true}).click();
+ await expect(card).toContainText('Active');
+ await card.getByRole('checkbox',{name:'Use in this scenario',exact:true}).check();
+ await dialog.getByRole('button',{name:'Apply profile selection — Replan required',exact:true}).click();
+ await expect(dialog).toHaveCount(0);
+ const plan=await finishSolve(page,()=>page.getByRole('button',{name:'Replan',exact:true}).click());
+ expect(plan.provenance.planningProfiles).toHaveLength(1);expect(plan.provenance.planningProfiles![0].revision).toBe(1);
+ await page.getByRole('button',{name:'Planning profiles',exact:true}).click();
+ await dialog.locator('article').filter({hasText:label}).getByRole('button',{name:'Propose changes',exact:true}).click();
+ await dialog.getByRole('textbox',{name:'Change reason',exact:true}).fill('Later proposed revision, not activated');
+ await dialog.getByRole('button',{name:'Propose revision',exact:true}).click();
+ await expect(dialog.locator('article').filter({hasText:label})).toHaveCount(2);
+ expect((await get<Scenario>(page.request,`${peer}/api/scenarios/${plan.scenarioId}`)).planningProfiles).toEqual(plan.provenance.planningProfiles);
+ expect((await get<Plan>(page.request,`${peer}/api/plans/${plan.id}`)).provenance.planningProfiles![0].revision).toBe(1);
+});
+
+test('Planner may propose profiles but cannot activate them; Reviewer cannot propose',async({page})=>{
+ await login(page,'planner@acceptance.example.test');
+ await page.getByRole('button',{name:'Planning profiles',exact:true}).click();
+ const dialog=page.getByRole('dialog',{name:'Planning profiles',exact:true});
+ await dialog.getByRole('button',{name:'New fleet profile',exact:true}).click();
+ await dialog.getByRole('textbox',{name:'Profile name',exact:true}).fill('Planner proposal');
+ await dialog.getByRole('textbox',{name:'Change reason',exact:true}).fill('Requires Admin verification');
+ const submitted=page.waitForResponse(r=>r.request().method()==='POST'&&new URL(r.url()).pathname==='/api/profiles');
+ await dialog.getByRole('button',{name:'Propose revision',exact:true}).click();
+ const response=await submitted;expect(response.status()).toBe(201);const profile=await response.json() as {id:string;revision:number;version:number};
+ await expect(dialog.getByRole('button',{name:'Approve and activate',exact:true})).toHaveCount(0);
+ expect((await page.request.post(`/api/profiles/${profile.id}/activate`,{headers:{origin:new URL(page.url()).origin,'if-match':`"${profile.version}"`},data:{revision:profile.revision}})).status()).toBe(403);
+ await page.keyboard.press('Escape');
+ await page.getByRole('button',{name:'Sign out',exact:true}).click();
+ await expect(page.getByRole('heading',{name:'Continue to Cursus',exact:true})).toBeVisible();
+ await login(page,'reviewer@acceptance.example.test');
+ await page.getByRole('button',{name:'Planning profiles',exact:true}).click();
+ await expect(dialog.getByRole('button',{name:'New fleet profile',exact:true})).toHaveCount(0);
+ await expect(dialog.getByRole('button',{name:'Propose changes',exact:true})).toHaveCount(0);
+ expect((await page.request.post('/api/profiles',{headers:{origin:new URL(page.url()).origin,'if-match':'"0"'},data:{content:{}}})).status()).toBe(403);
+});
+
+test('shipment detail preserves source line items and load units without changing order KPIs',async({page})=>{
+ await login(page);const plan=await baseline(page),stop=plan.vehicles[0].trips[0].stops[0];
+ await manualStop(page,plan,stop.orderNo);
+ const details=page.getByRole('region',{name:'Shipment details',exact:true});
+ await expect(details).toContainText('Gross');await expect(details).toContainText('case');await expect(details).toContainText('EUR pallet');
+ await expect(details).toContainText('Spatial loading feasibility and axle loads have not been verified.');
+ const delivery=plan.shipmentMetadata!.deliveries.find(d=>d.requestId===stop.requestId)!;
+ await expect(details).toContainText(delivery.id);
+ const handoff=await get<{shipmentMetadata:Plan['shipmentMetadata'];summary:{servedOrders:number}}>(page.request,`${peer}/api/plans/${plan.id}/handoff.json`);
+ expect(handoff.shipmentMetadata).toEqual(plan.shipmentMetadata);expect(handoff.summary.servedOrders).toBe(plan.stats.servedOrders);
+});
+
+test('duplicate display references survive keyboard reordering, native replanning and individual bulk assignment',async({page})=>{
+ await login(page);await shortBudget(page);
+ const days=await get<DaySummary[]>(page.request,'/api/days'),day=days.find(d=>d.id==='acceptance-day-two')!;
+ const base=await get<Plan>(page.request,`/api/plans/${day.baselinePlanId}`);
+ await page.getByRole('combobox').first().click();await page.getByRole('option',{name:/7 May 2026/}).click();
+ await expect(page.getByText('2 / 2',{exact:true})).toBeVisible();
+ const vehicle=base.vehicles.find(v=>v.trips.some(t=>t.stops.length===2))!,trip=vehicle.trips.find(t=>t.stops.length===2)!;
+ expect(new Set(trip.stops.map(s=>s.orderNo)).size).toBe(1);
+ await page.locator('aside').first().getByText(vehicle.ref,{exact:true}).click();
+ const inspector=page.locator('aside').last();await inspector.getByRole('button',{name:/Trip 1 ·/}).click();
+ const evaluated=page.waitForResponse(r=>r.request().method()==='POST'&&r.url().endsWith('/evaluate'));
+ await inspector.locator('ol li').first().locator('button[data-move$=":1"]').click();expect((await evaluated).status()).toBe(200);
+ const submitted=page.waitForResponse(r=>r.request().method()==='POST'&&r.url().endsWith('/solve'));
+ await page.getByRole('button',{name:'Replan',exact:true}).click();const submission=await submitted;expect(submission.status()).toBe(202);
+ const {jobId}=await submission.json() as {jobId:string};let job:Job;
+ await expect.poll(async()=>{job=await get<Job>(page.request,`${peer}/api/jobs/${jobId}`);if(job.status==='failed')throw Error(job.error);return job.status;},{timeout:60000}).toBe('completed');
+ const candidate=await get<Plan>(page.request,`${peer}/api/plans/${job!.planId}`);
+ expect(candidate.vehicles.find(v=>v.id===vehicle.id)!.trips.flatMap(t=>t.stops.map(s=>s.requestId))).toEqual(trip.stops.map(s=>s.requestId).reverse());
+ await expect(page.getByRole('dialog')).toContainText('Plan comparison');await page.keyboard.press('Escape');
+ await page.getByRole('region',{name:'Plan candidate'}).getByRole('button',{name:'Use candidate',exact:true}).click();
+ await expect(page.getByRole('region',{name:'Plan candidate'})).toHaveCount(0);
+ // Keep the sequenced scenario intact and reopen the untouched day snapshot
+ // for independent manual deassignment checks.
+ await page.getByRole('button',{name:'Plans',exact:true}).click();
+ page.once('dialog',dialog=>void dialog.accept());
+ const reopenedContext=page.waitForResponse(r=>r.url().endsWith(`/api/plans/${base.id}/manual-context`));
+ await page.getByRole('dialog').locator(`[data-plan-id="${base.id}"]`).getByRole('button',{name:'Reopen',exact:true}).click();
+ expect((await reopenedContext).status()).toBe(200);
+ await page.getByRole('button',{name:'Manual planning',exact:true}).click();
+ await expect(page.getByRole('button',{name:'Manual planning',exact:true})).toHaveAttribute('aria-pressed','true');
+ let current=base;
+ for(const requestId of [170,130]){
+  const v=current.vehicles.find(v=>v.trips.some(t=>t.stops.some(s=>s.requestId===requestId)))!,tr=v.trips.find(t=>t.stops.some(s=>s.requestId===requestId))!,s=tr.stops.find(s=>s.requestId===requestId)!;
+  await page.locator('aside').first().getByText(v.ref,{exact:true}).click();
+  await inspector.getByRole('button',{name:new RegExp(`Trip ${tr.index+1} ·`)}).click();
+  const target=inspector.locator('ol li > button').filter({hasText:s.customer!});
+  await expect(target).toHaveAttribute('data-request-id',String(requestId));await target.click();
+  await expect(inspector.getByRole('region',{name:'Shipment details',exact:true})).toContainText(`delivery-${requestId}`);
+  await page.getByRole('button',{name:'Return to unassigned',exact:true}).click();current=await applyManualDialog(page);
+  expect(current.manual?.layout.history.at(-1)?.requestId).toBe(requestId);
+ }
+ expect(current.unassigned.map(o=>o.requestId).sort()).toEqual([130,170]);
+ const target=page.getByRole('checkbox',{name:'Select order PUBLIC-REPEAT · 170',exact:true});
+ if(!(await target.count()))await page.locator('aside').first().getByRole('button',{name:/Unassigned orders/i}).click();
+ await target.check();await expect(page.getByRole('checkbox',{name:'Select order PUBLIC-REPEAT · 130',exact:true})).not.toBeChecked();
+ await page.getByRole('combobox',{name:'Assign to vehicle…',exact:true}).selectOption('10');await page.getByRole('button',{name:'Assign',exact:true}).click();
+ const assigned=await applyManualDialog(page);expect(assigned.unassigned.map(o=>o.requestId)).toEqual([130]);
+ expect(assigned.stats.servedOrders).toBe(1);expect(assigned.stats.totalOrders).toBe(2);
+ const handoff=await get<{routes:{stops:{requestId:number}[]}[]}>(page.request,`${peer}/api/plans/${assigned.id}/handoff.json`);
+ expect(handoff.routes.flatMap(r=>r.stops.map(s=>s.requestId))).toEqual([170]);
+});
+
+test('approved handoff is durable across replicas, read-only for Planner/Reviewer, acknowledged and explicitly cancelled',async({page})=>{
+ await login(page);await shortBudget(page);
+ const plan=await finishSolve(page,()=>page.getByRole('button',{name:'Optimize',exact:true}).click());
+ const approval=page.getByRole('region',{name:'Plan approval',exact:true});
+ await approval.getByRole('checkbox').check();await approval.getByRole('button',{name:'Mark reviewed',exact:true}).click();
+ await expect(approval).toContainText('Reviewed');await approval.getByRole('checkbox').check();await approval.getByRole('button',{name:'Approve plan',exact:true}).click();await expect(approval).toContainText('Approved');
+ await page.getByRole('button',{name:'Acknowledged handoff',exact:true}).click();
+ const dialog=page.getByRole('dialog');await expect(dialog).toContainText('Acceptance warehouse');
+ await expect(dialog.getByRole('button',{name:'Send approved plan',exact:true})).toBeDisabled();
+ await dialog.getByRole('textbox',{name:'Handoff reason',exact:true}).fill('Public acceptance dispatch');await dialog.getByRole('checkbox').check();
+ const queued=page.waitForResponse(r=>r.request().method()==='POST'&&r.url().endsWith('/transfers/publish'));
+ await dialog.getByRole('button',{name:'Send approved plan',exact:true}).click();const response=await queued;expect(response.status()).toBe(202);const intent=await response.json() as {id:string};
+ const status=()=>get<{intents:{id:string;state:string;receipt:{receiptId:string}|null}[];heads:{acceptedIntentId:string}[]}>(page.request,`${peer}/api/plans/${plan.id}/transfers`);
+ await expect.poll(async()=>(await status()).intents.find(i=>i.id===intent.id)?.state).toBe('acknowledged');
+ await expect(dialog).toContainText(`test-receipt-${intent.id}`);
+ await page.keyboard.press('Escape');
+ const headers={origin:new URL(page.url()).origin};
+ for(const role of ['planner','reviewer']){
+  expect((await page.request.post('/api/auth/view-as',{headers,data:{role}})).status()).toBe(200);await page.evaluate(()=>window.dispatchEvent(new Event('focus')));
+  await expect(page.getByRole('contentinfo')).toContainText(role==='planner'?'Planner':'Reviewer');
+  await page.getByRole('button',{name:'Acknowledged handoff',exact:true}).click();await expect(dialog).toContainText(`test-receipt-${intent.id}`);
+  await expect(dialog.getByRole('textbox',{name:'Handoff reason',exact:true})).toHaveCount(0);await expect(dialog.getByRole('button',{name:'Cancel accepted instruction',exact:true})).toHaveCount(0);
+  expect((await page.request.post(`${peer}/api/plans/${plan.id}/transfers/cancel`,{headers:{...headers,'if-match':`"${plan.scenarioRevision}"`},data:{}})).status()).toBe(403);
+  expect((await page.request.post(`/api/handoff/${intent.id}/retry`,{headers,data:{mode:'lookup'}})).status()).toBe(403);await page.keyboard.press('Escape');
+ }
+ expect((await page.request.post('/api/auth/view-as',{headers,data:{role:null}})).status()).toBe(200);await page.evaluate(()=>window.dispatchEvent(new Event('focus')));
+ await expect(page.getByRole('contentinfo')).toContainText('Admin');await page.getByRole('button',{name:'Acknowledged handoff',exact:true}).click();
+ await dialog.getByRole('textbox',{name:'Handoff reason',exact:true}).fill('Public acceptance cancellation');await dialog.getByRole('checkbox').check();
+ const cancelled=page.waitForResponse(r=>r.request().method()==='POST'&&r.url().endsWith('/transfers/cancel'));
+ await dialog.getByRole('button',{name:'Cancel accepted instruction',exact:true}).click();const cancellation=await cancelled;expect(cancellation.status()).toBe(202);const second=await cancellation.json() as {id:string};
+ await expect.poll(async()=>(await status()).intents.find(i=>i.id===second.id)?.state).toBe('acknowledged');
+ expect((await status()).heads[0]!.acceptedIntentId).toBe(second.id);await expect(dialog).toContainText(`test-receipt-${second.id}`);
 });

@@ -21,6 +21,7 @@ routes('scenario.create', 'POST', ['/api/scenarios']);
 routes('scenario.rename', 'POST', ['/api/scenarios/:id/rename']);
 routes('scenario.edit', 'POST', ['/api/scenarios/:id/edit', '/api/scenarios/:id/edits']);
 routes('scenario.edit', 'POST', ['/api/scenarios/:id/manual-plan']);
+routes('scenario.edit', 'POST', ['/api/scenarios/:id/select-plan']);
 routes('plan.evaluate', 'POST', ['/api/scenarios/:id/manual-preview']);
 routes('workspace.read', 'GET', ['/api/plans/:id/manual-context']);
 routes('scenario.import', 'POST', ['/api/scenarios/import']);

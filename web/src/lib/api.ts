@@ -1,4 +1,5 @@
 import type { Comparison, DaySummary, Job, Objective, Plan, Scenario, ScenarioEdit, Trip } from '@/types';
+import type {ProfileContent,ProfileRef,ProfileRevision,ProfileKind} from '../../../server/src/planning-profile-contract';
 
 /* Same-origin API client. In dev, Vite proxies /api and /tiles to the backend
  * (VITE_API_ORIGIN); in production the backend serves the SPA and these paths. */
@@ -50,6 +51,16 @@ async function jsend<T>(url: string, method: string, body?: unknown, revision?: 
 }
 
 export const api = {
+  transferDestinations:()=>jget<import('../../../server/src/integration-contract').DestinationSummary[]>('/api/handoff/destinations'),
+  transfers:(id:string)=>jget<{intents:import('../../../server/src/integration-contract').TransferSummary[];heads:{destinationId:string;version:number;currentIntentId:string|null;acceptedIntentId:string|null}[]}>(`/api/plans/${encodeURIComponent(id)}/transfers`),
+  queueTransfer:(id:string,revision:number,command:unknown)=>jsend<import('../../../server/src/integration-contract').TransferSummary>(`/api/plans/${encodeURIComponent(id)}/transfers/${(command as {operation:string}).operation}`,'POST',command,revision),
+  retryTransfer:(id:string,mode:'retry'|'lookup')=>jsend(`/api/handoff/${encodeURIComponent(id)}/retry`,'POST',{mode}),
+  profiles:()=>jget<ProfileRevision[]>('/api/profiles'),
+  profileTemplate:(planId:string,kind:ProfileKind)=>jget<ProfileContent>(`/api/profiles/template?planId=${encodeURIComponent(planId)}&kind=${kind}`),
+  proposeProfile:(content:ProfileContent,version:number,id?:string)=>jsend<ProfileRef&{version:number}>(id?`/api/profiles/${encodeURIComponent(id)}/revisions`:'/api/profiles','POST',{content},version),
+  activateProfile:(id:string,revision:number,version:number)=>jsend<ProfileRef&{version:number}>(`/api/profiles/${encodeURIComponent(id)}/activate`,'POST',{revision},version),
+  bindProfiles:(scenario:Scenario,profiles:ProfileRef[])=>jsend<Scenario>(`/api/scenarios/${encodeURIComponent(scenario.id)}/profiles`,'POST',{profiles},scenario.revision),
+  selectPlan:(id:string,revision:number,planId:string,selectionVersion:number,acknowledgeIncomplete=false)=>jsend<Scenario>(`/api/scenarios/${encodeURIComponent(id)}/select-plan`,'POST',{planId,selectionVersion,acknowledgeIncomplete},revision),
   manualContext:(id:string)=>jget<import('@/types').ManualContext>(`/api/plans/${encodeURIComponent(id)}/manual-context`),
   manualPreview:(id:string,revision:number,intent:import('@/types').ManualIntent)=>jsend<import('@/types').ManualPreview>(`/api/scenarios/${encodeURIComponent(id)}/manual-preview`,'POST',intent,revision),
   manualApply:(id:string,revision:number,intent:import('@/types').ManualIntent)=>jsend<Plan>(`/api/scenarios/${encodeURIComponent(id)}/manual-plan`,'POST',intent,revision),
@@ -70,7 +81,7 @@ export const api = {
   days: () => jget<DaySummary[]>('/api/days'),
   plan: (id: string) => jget<Plan>(`/api/plans/${id}`),
   /** Recompute one vehicle trip under a proposed stop order (no re-solve). */
-  evaluateTrip: (planId: string, body: { vehicleId: number; tripIndex: number; startSec: number; reloadSecAfter: number; orderNos: string[] }) =>
+  evaluateTrip: (planId: string, body: { vehicleId: number; tripIndex: number; startSec: number; reloadSecAfter: number; orderNos: string[];requestIds?:number[] }) =>
     jsend<{ trip: Trip }>(`/api/plans/${planId}/evaluate`, 'POST', body),
   scenario: (id: string) => jget<Scenario & { ordersInScope: number; vehicleCount: number; isoDate: string }>(`/api/scenarios/${id}`),
 
@@ -88,9 +99,9 @@ export const api = {
   editScenarioBatch: (id: string, revision: number, edits: ScenarioEdit[], label?: string) =>
     jsend<Scenario>(`/api/scenarios/${id}/edits`, 'POST', { edits, ...(label ? { label } : {}) }, revision),
 
-  solve: (scenarioId: string, revision: number, budgetSec?: number, objective?: Objective, fullBudget?: boolean) =>
+  solve: (scenarioId: string, revision: number, budgetSec?: number, objective?: Objective, fullBudget?: boolean,referencePlanId?:string) =>
     jsend<{ jobId: string; scenarioId: string; scenarioRevision: number; budgetSec: number; objective: Objective }>(
-      `/api/scenarios/${scenarioId}/solve`, 'POST', { ...(budgetSec ? { budgetSec } : {}), ...(objective ? { objective } : {}), ...(fullBudget ? { fullBudget: true } : {}) }, revision),
+      `/api/scenarios/${scenarioId}/solve`, 'POST', { ...(budgetSec ? { budgetSec } : {}), ...(objective ? { objective } : {}), ...(fullBudget ? { fullBudget: true } : {}),...(referencePlanId?{referencePlanId}:{}) }, revision),
 
   exportCsvUrl: (planId: string) => `/api/plans/${planId}/export.csv`,
   routeSheetUrl: (planId: string) => `/api/plans/${planId}/routesheet.html`,
@@ -145,7 +156,7 @@ export const api = {
 };
 
 export interface ScenarioExport {
-  otto_scenario: 1; day: string; label: string;
+  otto_scenario: 1|2; day: string; label: string;
   edits: { removedVehicleIds: number[]; pins: unknown[]; forbids: unknown[]; vehicleOverrides: unknown[]; sequences: unknown[] };
 }
 

@@ -1,0 +1,12 @@
+# Explicit opt-in overlay on compose.stateful.yaml. No destinations by default.
+# External directory contains config.json plus credential files referenced by it.
+services:
+  cursus:
+    environment:
+      CURSUS_HANDOFF_CONFIG_FILE: /handoff/config.json
+    volumes:
+      - type: bind
+        source: ${CURSUS_HANDOFF_DIRECTORY:?set an existing external handoff configuration directory}
+        target: /handoff
+        read_only: true
+        bind: {create_host_path: false}

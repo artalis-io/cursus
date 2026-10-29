@@ -44,6 +44,7 @@ export function TopBar({
   days, dayId, onDayChange, scenario, plan, job, solving, exportPending = false,
   objective, onObjectiveChange, budgetSec, onBudgetChange, fullBudget, onFullBudgetChange, changesCount, dirty,
   onOptimize, onCancel, onReset, onOpenChanges, showCompare, onCompare, onOpenImport, onOpenHistory, onOpenWeek, onOpenIssues, issuesCount, onOpenScenarios, onOpenHelp,
+  onOpenProfiles,onOpenHandoff,
 }: {
   days: DaySummary[]; dayId: string; onDayChange: (id: string) => void;
   scenario: Scenario; plan: Plan; job: JobView | null; solving: boolean;
@@ -53,6 +54,8 @@ export function TopBar({
   onOptimize: () => void; onCancel: () => void; onReset: () => void; onOpenChanges: () => void;
   showCompare: boolean; onCompare: () => void; onOpenImport: () => void; onOpenHistory: () => void; onOpenWeek: () => void;
   onOpenIssues: () => void; issuesCount: number; onOpenScenarios: () => void; onOpenHelp: () => void;
+  onOpenProfiles?:()=>void;
+  onOpenHandoff?:()=>void;
 }) {
   const { lang, setLang } = useI18n();
   const t = useT();
@@ -151,6 +154,8 @@ export function TopBar({
           <IconButton onClick={onOpenWeek} label={t('topbar.week')}><CalendarRange className="h-4 w-4" /></IconButton>
           <IconButton onClick={onOpenHistory} label={t('topbar.plans')}><History className="h-4 w-4" /></IconButton>
           <IconButton onClick={onOpenImport} label={t('topbar.data')}><Database className="h-4 w-4" /></IconButton>
+          {onOpenProfiles&&<IconButton onClick={onOpenProfiles} label={lang==='hu'?'Tervezési profilok':'Planning profiles'}><SlidersHorizontal className="h-4 w-4" /></IconButton>}
+          {onOpenHandoff&&<IconButton onClick={onOpenHandoff} label={lang==='hu'?'Visszaigazolt átadás':'Acknowledged handoff'}><FileJson className="h-4 w-4" /></IconButton>}
           <IconButton onClick={onOpenHelp} label={t('help.title')}><HelpCircle className="h-4 w-4" /></IconButton>
         </div>
 

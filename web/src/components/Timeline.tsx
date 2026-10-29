@@ -47,7 +47,7 @@ function Header({ title, hint, controls }: { title: string; hint: string; contro
   );
 }
 
-function VehicleTimeline({ vehicle, selection, onSelect, clockSec, onSeek }: { vehicle: Vehicle; selection: Selection; onSelect: (s: Selection) => void; clockSec: number | null; onSeek: (sec: number) => void }) {
+function VehicleTimeline({ planId,vehicle, selection, onSelect, clockSec, onSeek }: { planId:string;vehicle: Vehicle; selection: Selection; onSelect: (s: Selection) => void; clockSec: number | null; onSeek: (sec: number) => void }) {
   const t = useT();
   const translate = t; // `t` is shadowed by the trip loop variable below; alias for i18n inside it
   const [ref, width] = useWidth<HTMLDivElement>();
@@ -63,7 +63,7 @@ function VehicleTimeline({ vehicle, selection, onSelect, clockSec, onSeek }: { v
   const xOf = (s: number) => padL + ((s - lo) / span) * plotW;
   const secOf = (clientX: number, rect: DOMRect) => lo + ((clientX - rect.left - padL) / plotW) * span;
   const H = 78;
-  const selStopSeq = selection?.kind === 'stop' && selection.vehicleId === vehicle.id ? selection.seq : null;
+  const selStop = selection?.kind === 'stop' && selection.vehicleId === vehicle.id&&(selection.planId===undefined||selection.planId===planId) ? selection : null;
   const selTrip = selection && (selection.kind === 'trip' || selection.kind === 'stop') && selection.vehicleId === vehicle.id ? selection.tripIndex : null;
   const cursorX = clockSec != null && clockSec >= lo && clockSec <= hi ? xOf(clockSec) : null;
 
@@ -102,10 +102,10 @@ function VehicleTimeline({ vehicle, selection, onSelect, clockSec, onSeek }: { v
                 const sx = xOf(s.serviceStartSec);
                 const sw = Math.max(2, xOf(s.departureSec) - sx);
                 const ww = Math.max(0, xOf(s.serviceStartSec) - xOf(s.arrivalSec));
-                const isSel = selStopSeq === s.seq;
+                const isSel = selStop?.tripIndex===t.index&&(selStop.requestId===undefined?selStop.seq===s.seq:selStop.requestId===s.requestId);
                 const isActive = clockSec != null && clockSec >= s.arrivalSec && clockSec <= s.departureSec;
                 return (
-                  <g key={s.seq} onClick={(e) => { e.stopPropagation(); onSelect({ kind: 'stop', vehicleId: vehicle.id, tripIndex: t.index, seq: s.seq }); }} style={{ cursor: 'pointer' }}>
+                  <g key={s.requestId??s.seq} onClick={(e) => { e.stopPropagation(); onSelect({ kind: 'stop', vehicleId: vehicle.id, tripIndex: t.index, seq: s.seq,requestId:s.requestId,planId }); }} style={{ cursor: 'pointer' }}>
                     {ww > 0.5 && <rect x={xOf(s.arrivalSec)} y={laneY + 3} width={ww} height={laneH - 6} fill="#d97706" fillOpacity={0.6} />}
                     <rect x={sx} y={laneY} width={sw} height={laneH} rx={2} fill={vehicle.color} stroke={isSel || isActive ? '#111' : 'none'} strokeWidth={isSel || isActive ? 1.5 : 0} />
                     {isActive && <rect x={sx - 1} y={laneY - 3} width={sw + 2} height={laneH + 6} rx={3} fill="none" stroke="#111" strokeWidth={1} strokeDasharray="2 2" />}
@@ -207,7 +207,7 @@ export function Timeline({ plan, selection, onSelect, clockSec, playing, speed, 
         controls={<PlaybackControls clockSec={clockSec} playing={playing} speed={speed} onTogglePlay={onTogglePlay} onStop={onStop} onSpeed={onSpeed} onSeek={onSeek} dayRange={dayRange} />}
       />
       <div className="min-h-0 flex-1 overflow-hidden pb-1">
-        {vehicle ? <VehicleTimeline vehicle={vehicle} selection={selection} onSelect={onSelect} clockSec={clockSec} onSeek={onSeek} /> : <FleetOverview plan={plan} onSelect={onSelect} clockSec={clockSec} onSeek={onSeek} />}
+        {vehicle ? <VehicleTimeline planId={plan.id} vehicle={vehicle} selection={selection} onSelect={onSelect} clockSec={clockSec} onSeek={onSeek} /> : <FleetOverview plan={plan} onSelect={onSelect} clockSec={clockSec} onSeek={onSeek} />}
       </div>
     </div>
   );

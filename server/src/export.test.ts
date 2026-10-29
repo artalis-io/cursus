@@ -41,6 +41,21 @@ function mkPlan(): Plan {
   };
 }
 
+test('exports retain distinct delivery IDs sharing the same display reference',()=>{
+  const plan=mkPlan();plan.provenance.datasetSha256='b'.repeat(64);
+  plan.vehicles[0]!.trips[0]!.stops=[mkStop('REPEATED',{requestId:91}),mkStop('REPEATED',{requestId:92,seq:2})];
+  const json=planToHandoffJson(plan,plan.day);
+  assert.equal(json.datasetSha256,plan.provenance.datasetSha256);
+  assert.deepEqual(json.routes.flatMap(r=>r.stops.map(s=>s.requestId)),[91,92]);
+  for(const csv of [planToCsv(plan),planToRoutesCsv(plan,plan.day)]){
+    const [header,...rows]=csv.trim().split('\n').map(row=>row.split(','));
+    const id=header!.indexOf('request_id'),sha=header!.indexOf('dataset_sha256');
+    assert.ok(id>=0&&sha>=0);
+    assert.deepEqual(rows.slice(0,2).map(row=>row[id]),['91','92']);
+    assert.ok(rows.every(row=>row[sha]==='b'.repeat(64)));
+  }
+});
+
 test('handoff metadata is additive, explicit, escaped and never manufactures legacy approval', () => {
   const plan = mkPlan();
   const metadata = legacyHandoff(plan, undefined, 'a'.repeat(64));
@@ -95,7 +110,8 @@ test('planToCsv: header, assigned rows, and an unassigned row', () => {
 test('planToCsv: late minutes computed from lateBySec', () => {
   const csv = planToCsv(mkPlan());
   const o2 = csv.split('\n').find((l) => l.includes(',O2,'))!;
-  assert.ok(o2.endsWith(',15')); // 900s -> 15 min late, last column
+  const index=csv.split('\n')[0]!.split(',').indexOf('late_min');
+  assert.equal(o2.split(',')[index],'15'); // additive identity columns follow lateness
 });
 
 test('planToRouteSheetHtml: contains vehicle, subcontractor tag, maps link, cost', () => {
@@ -123,8 +139,9 @@ test('planToRoutesCsv: routes_fact shape with cumulative sequence + unassigned',
   // O1 seq 1, O2 seq 2 on the same vehicle; date present; assigned
   assert.ok(lines[1]!.startsWith('O1,TRK-1,1,2026-05-06,'));
   assert.ok(lines[2]!.startsWith('O2,TRK-1,2,2026-05-06,'));
-  assert.ok(lines[1]!.endsWith(',assigned'));
-  assert.ok(lines.at(-1)!.startsWith('U9,,,2026-05-06,') && lines.at(-1)!.endsWith(',unassigned'));
+  const status=lines[0]!.split(',').indexOf('status');
+  assert.equal(lines[1]!.split(',')[status],'assigned');
+  assert.ok(lines.at(-1)!.startsWith('U9,,,2026-05-06,'));assert.equal(lines.at(-1)!.split(',')[status],'unassigned');
 });
 
 test('planToHandoffJson: clean structured dispatch plan', () => {

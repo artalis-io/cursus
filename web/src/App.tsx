@@ -1,6 +1,7 @@
 import { useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { WorkspaceTenantContext } from '@/workspace';
+import { WorkspaceTenantContext,WorkspaceFeaturesContext } from '@/workspace';
 import { selectedUnassigned } from '@/lib/unassigned-selection';
+import {selectedStop} from '@/lib/stop-selection';
 import { ChevronLeft, ChevronRight, ChevronUp, ChevronDown, RotateCcw } from 'lucide-react';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import { Button } from '@/components/ui/button';
@@ -23,6 +24,10 @@ import { WeekDialog } from '@/components/WeekDialog';
 import { IssuesDialog } from '@/components/IssuesDialog';
 import { ScenariosDialog } from '@/components/ScenariosDialog';
 import { HelpOverlay } from '@/components/HelpOverlay';
+import { CandidatePanel } from '@/components/CandidatePanel';
+import {ProfilesDialog} from '@/components/ProfilesDialog';
+import {HandoffDialog} from '@/components/HandoffDialog';
+import { deliveryReference,deliveryToken } from '@/lib/dnd';
 import { api, ApiError, pollJob } from '@/lib/api';
 import { useT, describeApiError } from '@/i18n';
 import type { DaySummary, Job, Objective, Plan, Scenario, ScenarioEdit, Selection, ManualContext, ManualIntent } from '@/types';
@@ -39,7 +44,7 @@ export interface JobView { id: string; status: Job['status']; elapsedSec: number
 /* A running solve is persisted so a page reload can reconnect to it (the solve
  * runs server-side, independent of the tab). */
 const ACTIVE_JOB_KEY = 'otto.activeJob';
-interface ActiveJobRef { jobId: string; scenarioId: string; dayId: string }
+interface ActiveJobRef { jobId: string; scenarioId: string; dayId: string; referencePlanId?:string }
 function persistActiveJob(v: ActiveJobRef | null): void {
   try { if (v) localStorage.setItem(ACTIVE_JOB_KEY, JSON.stringify(v)); else localStorage.removeItem(ACTIVE_JOB_KEY); } catch { /* ignore */ }
 }
@@ -69,42 +74,44 @@ async function loadPlanWithGeometry(id: string): Promise<Plan> {
  * each affected trip exactly (a reassignment would need a full re-solve). Returns
  * null when nothing is staged / in flight. */
 function usePreviewTotals(plan: Plan | null, scenario: Scenario | null): { distanceKm: number; costTotal: number | null } | null {
-  const [res, setRes] = useState<{ distanceKm: number; costTotal: number | null } | null>(null);
+  const [res, setRes] = useState<{key:string; distanceKm: number; costTotal: number | null } | null>(null);
   const jobs = useMemo(() => {
-    const out: { vehicleId: number; tripIndex: number; startSec: number; reloadSecAfter: number; orderNos: string[]; oldDist: number; oldCost: number }[] = [];
+    const out: { vehicleId: number; tripIndex: number; startSec: number; reloadSecAfter: number; orderNos: string[];requestIds?:number[]; oldDist: number; oldCost: number }[] = [];
     if (!plan || !scenario) return out;
+    if(JSON.stringify(plan.provenance.planningProfiles??[])!==JSON.stringify(scenario.planningProfiles??[]))return out;
     for (const q of scenario.sequences) {
       if (q.locked) continue;
       const v = plan.vehicles.find((x) => x.id === q.vehicleId);
       if (!v) continue;
-      const pos = new Map(q.orderNos.map((o, i) => [o, i]));
+      const pos = new Map(q.orderNos.map((o, i) => [q.requestIds?deliveryToken(o,q.requestIds[i]):o, i]));
       for (const trip of v.trips) {
-        const current = trip.stops.map((s) => s.orderNo);
+        const current = trip.stops.map((s) => q.requestIds?deliveryToken(s.orderNo,s.requestId):s.orderNo);
         const reordered = [...current].sort((a, b) => (pos.get(a) ?? Infinity) - (pos.get(b) ?? Infinity));
         if (current.length === reordered.length && current.every((o, i) => o === reordered[i])) continue;
-        out.push({ vehicleId: v.id, tripIndex: trip.index, startSec: trip.startSec, reloadSecAfter: trip.reloadSecAfter, orderNos: reordered, oldDist: trip.distanceKm, oldCost: trip.costFt ?? 0 });
+        const refs=reordered.map(deliveryReference);
+        out.push({ vehicleId: v.id, tripIndex: trip.index, startSec: trip.startSec, reloadSecAfter: trip.reloadSecAfter, orderNos: refs.map(r=>r.orderNo),...(refs.every(r=>r.requestId!==undefined)?{requestIds:refs.map(r=>r.requestId!)}:{}),oldDist: trip.distanceKm, oldCost: trip.costFt ?? 0 });
       }
     }
     return out;
   }, [plan, scenario]);
-  const key = plan ? `${plan.id}|${jobs.map((j) => `${j.vehicleId}:${j.tripIndex}:${j.orderNos.join('.')}`).join('|')}` : '';
+  const key = plan&&scenario ? `${plan.id}|${scenario.id}|${scenario.revision}|${jobs.map((j) => `${j.vehicleId}:${j.tripIndex}:${(j.requestIds??j.orderNos).join('.')}`).join('|')}` : '';
   useEffect(() => {
     if (!plan || jobs.length === 0) { setRes(null); return; }
     let cancelled = false;
-    Promise.all(jobs.map((j) => api.evaluateTrip(plan.id, { vehicleId: j.vehicleId, tripIndex: j.tripIndex, startSec: j.startSec, reloadSecAfter: j.reloadSecAfter, orderNos: j.orderNos })
+    Promise.all(jobs.map((j) => api.evaluateTrip(plan.id, { vehicleId: j.vehicleId, tripIndex: j.tripIndex, startSec: j.startSec, reloadSecAfter: j.reloadSecAfter, orderNos: j.orderNos,requestIds:j.requestIds })
       .then((r) => ({ dDist: r.trip.distanceKm - j.oldDist, dCost: (r.trip.costFt ?? 0) - j.oldCost }))
       .catch(() => null)))
       .then((results) => {
         if (cancelled) return;
         const ok = results.filter(Boolean) as { dDist: number; dCost: number }[];
-        if (ok.length === 0) { setRes(null); return; }
+        if (ok.length !== results.length) { setRes(null); return; }
         const dDist = ok.reduce((a, r) => a + r.dDist, 0);
         const dCost = ok.reduce((a, r) => a + r.dCost, 0);
-        setRes({ distanceKm: plan.stats.totalDistanceKm + dDist, costTotal: plan.cost ? plan.cost.total + dCost : null });
+        setRes({key, distanceKm: plan.stats.totalDistanceKm + dDist, costTotal: plan.cost ? plan.cost.total + dCost : null });
       });
     return () => { cancelled = true; };
   }, [key]); // eslint-disable-line react-hooks/exhaustive-deps
-  return res;
+  return res?.key===key?res:null;
 }
 
 /** A short, localized confirmation for a staged edit, for the toast. */
@@ -131,6 +138,9 @@ function sameSel(a: Selection, b: Selection): boolean {
 }
 
 export default function App() {
+  const features=useContext(WorkspaceFeaturesContext);
+  const [profilesOpen,setProfilesOpen]=useState(false);
+  const [handoffOpen,setHandoffOpen]=useState(false);
   const tenant=useContext(WorkspaceTenantContext);
   const manualStorageKey=`cursus.manual-workspace.v1:${tenant??'local'}`;
   const [freshnessError, setFreshnessError] = useState<string | null>(null);
@@ -194,6 +204,8 @@ export default function App() {
   const [solveActive, setSolveActive] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [compareOpen, setCompareOpen] = useState(false);
+  const [candidate,setCandidate]=useState<{plan:Plan;reference:Plan}|null>(null);
+  const [candidateBusy,setCandidateBusy]=useState(false);
   const [importOpen, setImportOpen] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [changesOpen, setChangesOpen] = useState(false);
@@ -299,8 +311,9 @@ export default function App() {
             const generation=navigationGeneration.current;
             try{
               let p=await api.plan(saved.planId);const sc=await api.scenario(p.scenarioId);
-              if(sc.manualPlanId&&sc.manualPlanId!==p.id)p=await api.plan(sc.manualPlanId);
-              if(generation===navigationGeneration.current&&writeAccess.current.mounted&&(p.manual||p.assignments)){
+              const selected=sc.selectedPlanId??sc.manualPlanId;
+              if(selected&&selected!==p.id)p=await api.plan(selected);
+              if(generation===navigationGeneration.current&&writeAccess.current.mounted&&(p.manual||p.assignments||sc.selectedPlanId===p.id)){
                 scenarioRef.current=sc;planRef.current=p;setScenario(sc);setPlan(p);
               }
             }catch{/* a deleted or inaccessible draft must not prevent loading */}
@@ -312,7 +325,7 @@ export default function App() {
   }, []);
   useEffect(()=>{
     if(!plan)return;
-    try{if(plan.manual||plan.assignments)localStorage.setItem(manualStorageKey,JSON.stringify({planId:plan.id,day:scenario?.day??dayId}));
+    try{if(plan.manual||plan.assignments||scenario?.selectedPlanId===plan.id)localStorage.setItem(manualStorageKey,JSON.stringify({planId:plan.id,day:scenario?.day??dayId}));
       else localStorage.removeItem(manualStorageKey);}catch{/* storage may be unavailable */}
   },[plan,manualStorageKey,scenario,dayId]);
 
@@ -324,6 +337,7 @@ export default function App() {
     activeJobId.current = null;
     persistActiveJob(null);
     setJob(null);
+    setCandidate(null); setCompareOpen(false);
     setPlaying(false); setClockSec(null);
     resetSelection();
     try {
@@ -337,7 +351,8 @@ export default function App() {
   // the plan only if still current. Shared by fresh solves and reload-resume.
   const followJob = useCallback(async (jobId: string, scenarioId: string, dayId: string, ctrl: AbortController): Promise<Plan | null> => {
     activeJobId.current = jobId;
-    persistActiveJob({ jobId, scenarioId, dayId });
+    const saved=readActiveJob(),referenceId=saved?.jobId===jobId?saved.referencePlanId:planRef.current?.id;
+    persistActiveJob({ jobId, scenarioId, dayId,referencePlanId:referenceId });
     setJob({ id: jobId, status: 'running', elapsedSec: 0, scenarioId, error: null });
     try {
       const final = await pollJob(jobId, (j) => {
@@ -346,13 +361,14 @@ export default function App() {
           elapsedSec: Math.max(current?.elapsedSec ?? 0, j.elapsedSec), scenarioId, error: j.error }));
       }, { signal: ctrl.signal });
       if (activeJobId.current !== jobId) return null; // superseded
-      persistActiveJob(null);
       if (final.status === 'completed' && final.planId) {
         const revised = await loadPlanWithGeometry(final.planId);
-        setPlan(revised);
-        resetSelection();
+        const reference=referenceId?await loadPlanWithGeometry(referenceId):planRef.current;
+        if(reference){setCandidate({plan:revised,reference});setCompareOpen(true);}
+        else{setError('The previous plan could not be restored. Open the saved result from Plans.');persistActiveJob(null);}
         return revised;
       }
+      persistActiveJob(null);
       if (final.status === 'failed') setError(final.error ?? 'Optimization failed.');
       return null;
     } catch (e) {
@@ -375,7 +391,7 @@ export default function App() {
     try {
       const current = scenarioRef.current;
       if (!current || current.id !== scenarioId) return null;
-      const { jobId } = await api.solve(scenarioId, current.revision, budgetSec, objective, fullBudget);
+      const { jobId } = await api.solve(scenarioId, current.revision, budgetSec, objective, fullBudget,planRef.current?.id);
       return await followJob(jobId, scenarioId, dayIdForJob, ctrl);
     } catch (e) {
       if ((e as Error).name === 'AbortError') return null;
@@ -412,12 +428,12 @@ export default function App() {
       setBaseline(await loadPlanWithGeometry(d.baselinePlanId));
       setScenario(sc);
       if (j.status === 'completed' && j.planId) {
-        persistActiveJob(null);
-        setPlan(await loadPlanWithGeometry(j.planId));
+        const reference=await loadPlanWithGeometry(ref.referencePlanId??d.baselinePlanId);
+        setPlan(reference);setCandidate({plan:await loadPlanWithGeometry(j.planId),reference});
         return true;
       }
       // still running: show its scenario's last plan context and resume polling
-      setPlan(await loadPlanWithGeometry(d.baselinePlanId));
+      setPlan(await loadPlanWithGeometry(ref.referencePlanId??d.baselinePlanId));
       const ctrl = new AbortController();
       pollAbort.current = ctrl;
       void followJob(ref.jobId, ref.scenarioId, d.id, ctrl);
@@ -430,6 +446,7 @@ export default function App() {
   // staged edit so the tune loop has positive feedback (nothing else changes
   // on the map until Replan).
   const applyEdit = useCallback((edit: ScenarioEdit): Promise<boolean> => {
+    if('requestId' in edit&&edit.requestId!==undefined||'requestIds' in edit&&edit.requestIds)edit={...edit,datasetSha256:planRef.current?.provenance.datasetSha256};
     if (manualBusyRef.current || !writeAccess.current.mounted || !writeAccess.current.edit) return Promise.resolve(false);
     setPendingEdits(n => n + 1);
     const epoch = writeAccess.current.epoch;
@@ -453,6 +470,7 @@ export default function App() {
 
   // Apply several staged edits at once (bulk actions); one fork + one revision.
   const applyEdits = useCallback((edits: ScenarioEdit[], toastMsg?: string): Promise<boolean> => {
+    edits=edits.map(edit=>'requestId' in edit&&edit.requestId!==undefined||'requestIds' in edit&&edit.requestIds?{...edit,datasetSha256:planRef.current?.provenance.datasetSha256}:edit);
     if (manualBusyRef.current || !writeAccess.current.mounted || !writeAccess.current.edit) return Promise.resolve(false);
     const epoch = writeAccess.current.epoch;
     if (edits.length === 0) return Promise.resolve(true);
@@ -478,7 +496,7 @@ export default function App() {
   // Bulk-assign: pin many orders to one vehicle in a single staged batch.
   const onBulkAssign = useCallback((orderNos: string[], vehicleId: number) => {
     const ref = planRef.current?.vehicles.find((v) => v.id === vehicleId)?.ref ?? `#${vehicleId}`;
-    void applyEdits(orderNos.map((orderNo) => ({ op: 'pin', orderNo, vehicleId })), t('bulk.assignedToast', { n: orderNos.length, ref }));
+    void applyEdits(orderNos.map((token) => ({ op: 'pin', ...deliveryReference(token), vehicleId })), t('bulk.assignedToast', { n: orderNos.length, ref }));
   }, [applyEdits, t]);
 
   // Replan: solve the current (edited) scenario, then surface the comparison if
@@ -529,6 +547,7 @@ export default function App() {
   // baseline, and stage its edits (Replan solves it). It has no result yet.
   const onImportScenario = useCallback(async (s: Scenario) => {
     writeAccess.current.epoch++;
+    setCandidate(null);setCompareOpen(false);persistActiveJob(null);
     try {
       if (s.day !== dayId) { const d = days.find((x) => x.id === s.day); if (d) await loadDay(d); }
       setScenario(s);
@@ -544,6 +563,7 @@ export default function App() {
     activeJobId.current = null;
     persistActiveJob(null);
     setJob(null); resetSelection(); setError(null);
+    setCandidate(null);setCompareOpen(false);
     try {
       const p = await loadPlanWithGeometry(planId);
       const sc = await api.scenario(p.scenarioId);
@@ -598,7 +618,7 @@ export default function App() {
   }
   function manualOrders(orderNos:string[],vehicleId:number){
     const orders=[...(plan?.vehicles.flatMap(v=>v.trips.flatMap(tr=>tr.stops))??[]),...(plan?.unassigned??[])];
-    const resolved=orderNos.map(orderNo=>orders.filter(o=>o.orderNo===orderNo));
+    const resolved=orderNos.map(token=>{const ref=deliveryReference(token);return orders.filter(o=>o.orderNo===ref.orderNo&&(ref.requestId===undefined||o.requestId===ref.requestId));});
     if(resolved.some(matches=>matches.length!==1||matches[0]?.requestId===undefined)){setError(t('manual.identity'));return;}
     openManual({action:'assign',requestIds:resolved.map(matches=>matches[0]!.requestId!),targetVehicleId:vehicleId});
   }
@@ -628,7 +648,7 @@ export default function App() {
   // The plan no longer reflects the scenario once it has been edited since solve.
   const dirty = scenario.revision !== plan.scenarioRevision;
   const selectedOrder=selection?.kind==='unassigned'?selectedUnassigned(plan.unassigned,selection)
-    :selection?.kind==='stop'?plan.vehicles.find(v=>v.id===selection.vehicleId)?.trips.find(tr=>tr.index===selection.tripIndex)?.stops.find(s=>s.seq===selection.seq):null;
+    :selection?.kind==='stop'?selectedStop(plan.vehicles.find(v=>v.id===selection.vehicleId)?.trips.find(tr=>tr.index===selection.tripIndex)?.stops??[],selection,plan.id):null;
   const manualActions=manualMode&&manualContext?.enabled&&selectedOrder?.requestId!==undefined?<ManualOrderActions plan={plan} requestId={selectedOrder.requestId} actors={manualContext.actors}
     assigned={selection?.kind==='stop'} disabled={!!solving||manualBusy||dirty||pendingEdits>0}
     onAction={action=>openManual({action,requestIds:[selectedOrder.requestId!]})}/>:manualMode&&selectedOrder?<p className="text-xs text-muted-foreground">{t(dirty?'manual.pending':'manual.identity')}</p>:undefined;
@@ -636,11 +656,30 @@ export default function App() {
     if(manualMode&&manualContext?.enabled)openManual({action:'deassign',requestIds:plan!.vehicles.find(v=>v.id===id)?.trips.flatMap(tr=>tr.stops.map(s=>s.requestId!))??[],vehicle:{id,excluded}});
     else void applyEdit({op:excluded?'removeVehicle':'restoreVehicle',vehicleId:id});
   }
+  async function chooseCandidate(useNew:boolean,ack=false){
+    if(!candidate||candidateBusy)return;
+    const choice=candidate,selected=useNew?choice.plan:choice.reference,current=scenarioRef.current;
+    if(!current||current.id!==choice.plan.scenarioId){setError('The workspace changed. Open the saved candidate from Plans.');return;}
+    const epoch=writeAccess.current.epoch,generation=navigationGeneration.current;
+    setCandidateBusy(true);
+    try{
+      if(useNew||writeAccess.current.edit&&selected.scenarioId===current.id&&selected.scenarioRevision===current.revision){
+        if(!writeAccess.current.edit)return;
+        const updated=await api.selectPlan(current.id,current.revision,selected.id,current.selectionVersion??0,ack);
+        if(!writeAccess.current.mounted||epoch!==writeAccess.current.epoch||generation!==navigationGeneration.current)return;
+        scenarioRef.current=updated;setScenario(updated);
+      }
+      setPlan(selected);planRef.current=selected;setCandidate(null);setCompareOpen(false);persistActiveJob(null);resetSelection();
+    }catch(e){rejectStaleIntent(e);setError(describeApiError(e,t));}
+    finally{setCandidateBusy(false);}
+  }
 
   return (
-    <StaleWorkspaceContext.Provider value={!!freshnessError || workspaceLoading || !!(plan.manual||plan.assignments)&&!manualContext?.enabled}><TooltipProvider delayDuration={200}>
+    <StaleWorkspaceContext.Provider value={!!candidate || !!freshnessError || workspaceLoading || !!(plan.manual||plan.assignments)&&!manualContext?.enabled}><TooltipProvider delayDuration={200}>
       <div className="flex h-full flex-col overflow-hidden">
         <TopBar
+          onOpenProfiles={features.planningProfiles?()=>setProfilesOpen(true):undefined}
+          onOpenHandoff={features.acknowledgedHandoff?()=>setHandoffOpen(true):undefined}
           days={days} dayId={dayId} onDayChange={(id) => { if (!okToSwitch()) return; const d = days.find((x) => x.id === id); if (d) void loadDay(d); }}
           scenario={scenario} plan={plan} job={job} solving={!!solving} exportPending={workspaceLoading}
           objective={objective} onObjectiveChange={setObjective}
@@ -661,6 +700,7 @@ export default function App() {
           onOpenScenarios={() => setScenariosOpen(true)}
           onOpenHelp={() => setHelpOpen(true)}
         />
+        {candidate&&<CandidatePanel key={candidate.plan.id} {...candidate} busy={candidateBusy} canAdopt={canEdit} onAdopt={ack=>void chooseCandidate(true,ack)} onKeep={()=>void chooseCandidate(false)} onCompare={()=>setCompareOpen(true)}/>}
         <div id="cursus-kpi-pane" className="shrink-0" hidden={!workspace.visibility.kpis}>
           <KpiStrip plan={plan} baseline={baseline} compare={isReplan} job={job}
             previewDistanceKm={previewTotals?.distanceKm} previewCostTotal={previewTotals?.costTotal} />
@@ -668,7 +708,7 @@ export default function App() {
         {manualContext?.requiresRevalidation&&<div role="status" className="shrink-0 border-b border-warning/40 bg-warning/10 px-4 py-2 text-sm">{t('manual.policyChanged')}</div>}
         {manualContext?.reason==='fresh_plan_required'&&<div role="status" className="shrink-0 border-b border-warning/40 bg-warning/10 px-4 py-2 text-sm">{t('manual.freshPlanRequired')}</div>}
         <ReadinessPanel plan={plan} baseline={baseline} scenario={scenario} pending={pendingEdits > 0 || !!solving || !!freshnessError || workspaceLoading} />
-        <PlanApproval key={plan.id} planId={plan.id} revision={scenario.revision} pending={pendingEdits > 0 || !!solving || !!freshnessError || workspaceLoading || scenario.id !== plan.scenarioId} />
+        <PlanApproval key={plan.id} planId={plan.id} revision={scenario.revision} pending={!!candidate || pendingEdits > 0 || !!solving || !!freshnessError || workspaceLoading || scenario.id !== plan.scenarioId} />
         {freshnessError && <div role="alert" className="border-b border-warning/40 bg-warning/10 px-4 py-2 text-sm">
           {t(freshnessError)} <button className="underline" onClick={() => {
             if (!window.confirm(t('freshness.confirm'))) return;
@@ -690,12 +730,12 @@ export default function App() {
             <aside id="cursus-fleet-pane" className="w-[310px] shrink-0 overflow-hidden border-r border-divider" style={{ width: workspace.layout.fleet }}>
               <FleetPanel plan={plan} scenario={scenario} selection={selection} onSelect={navigate}
                 fleet={manualMode&&manualContext?.enabled?manualContext.fleet:undefined}
-                manualMode={manualMode} onToggleManual={manualContext?.enabled?()=>setManualOptIn(value=>!value):undefined}
+                manualMode={manualMode} onToggleManual={manualContext?.enabled&&!workspaceLoading?()=>setManualOptIn(value=>!value):undefined}
                 onUndoManual={manualMode&&manualContext?.canUndo?()=>openManual({undo:true,action:'release',requestIds:[]}):undefined}
                 onMarkUnavailable={(id) => changeVehicle(id,true)}
                 onRestoreVehicle={(id) => changeVehicle(id,false)} solving={!!solving||manualBusy}
                 onFilterChange={setVisibleVehicleIds}
-                onAssignOrder={(orderNo, vehicleId) => manualMode&&manualContext?.enabled?manualOrders([orderNo],vehicleId):void applyEdit({ op: 'pin', orderNo, vehicleId })}
+                onAssignOrder={(orderNo, vehicleId) => manualMode&&manualContext?.enabled?manualOrders([orderNo],vehicleId):void applyEdit({ op: 'pin', ...deliveryReference(orderNo), vehicleId })}
                 onBulkAssign={manualMode&&manualContext?.enabled?manualOrders:onBulkAssign} />
             </aside>
           )}
@@ -746,11 +786,11 @@ export default function App() {
                 onRestoreVehicle={(id) => changeVehicle(id,false)}
                 onSetConstraint={(vehicleId, patch) => void applyEdit({ op: 'setVehicleConstraint', vehicleId, patch })}
                 onClearConstraint={(vehicleId) => void applyEdit({ op: 'clearVehicleConstraint', vehicleId })}
-                onPin={(orderNo, vehicleId) => void applyEdit({ op: 'pin', orderNo, vehicleId })}
-                onUnpin={(orderNo) => void applyEdit({ op: 'unpin', orderNo })}
-                onForbid={(orderNo, vehicleId) => void applyEdit({ op: 'forbid', orderNo, vehicleId })}
+                onPin={(token, vehicleId) => void applyEdit({ op: 'pin', ...deliveryReference(token), vehicleId })}
+                onUnpin={(token) => void applyEdit({ op: 'unpin', ...deliveryReference(token) })}
+                onForbid={(token, vehicleId) => void applyEdit({ op: 'forbid', ...deliveryReference(token), vehicleId })}
                 onClearOverrides={() => void applyEdit({ op: 'clearOverrides' })}
-                onSetSequence={(vehicleId, orderNos, locked) => void applyEdit({ op: 'setSequence', vehicleId, orderNos, ...(locked ? { locked: true } : {}) })}
+                onSetSequence={(vehicleId, tokens, locked) => {const refs=tokens.map(deliveryReference);void applyEdit({ op: 'setSequence', vehicleId, orderNos:refs.map(r=>r.orderNo),...(refs.every(r=>r.requestId!==undefined)?{requestIds:refs.map(r=>r.requestId!)}:{}), ...(locked ? { locked: true } : {}) });}}
                 onClearSequence={(vehicleId) => void applyEdit({ op: 'clearSequence', vehicleId })} />
             </aside>
           )}
@@ -760,12 +800,12 @@ export default function App() {
       {manualRequest&&manualContext?.enabled&&<ManualPlanningDialog datasetSha256={manualContext.datasetSha256!} plan={plan} scenario={scenario} fleet={manualContext.fleet??plan.vehicles} request={manualRequest}
         onClose={()=>setManualRequest(null)} onApply={applyManual}/>}
 
-      {isReplan && plan.source === 'live' && (
+      {(candidate || isReplan && plan.source === 'live') && (
         <CompareDialog
           open={compareOpen}
           onOpenChange={setCompareOpen}
-          basePlanId={baseline.id}
-          revisedPlanId={plan.id}
+          basePlanId={candidate?.reference.id??baseline.id}
+          revisedPlanId={candidate?.plan.id??plan.id}
           scenarioLabel={scenario.label}
         />
       )}
@@ -780,6 +820,8 @@ export default function App() {
       <IssuesDialog open={issuesOpen} onOpenChange={setIssuesOpen} plan={plan} onSelect={navigate} />
       <ScenariosDialog open={scenariosOpen} onOpenChange={setScenariosOpen} dayId={dayId} currentScenarioId={scenario.id} onOpen={(id) => { if (okToSwitch()) void reopenPlan(id); }} onImport={(s) => void onImportScenario(s)} />
       <HelpOverlay open={helpOpen} onClose={closeHelp} />
+      {features.planningProfiles&&<ProfilesDialog open={profilesOpen} onOpenChange={setProfilesOpen} plan={plan} scenario={scenario} onBound={s=>void onImportScenario(s)}/>}
+      {features.acknowledgedHandoff&&<HandoffDialog key={plan.id} open={handoffOpen} onOpenChange={setHandoffOpen} plan={plan} scenario={scenario}/>}
       {toast && (
         <div role="status" className="pointer-events-none fixed bottom-16 left-1/2 z-40 -translate-x-1/2 rounded-md bg-graphite px-3.5 py-2 text-xs font-medium text-graphite-foreground shadow-lg">
           {toast}

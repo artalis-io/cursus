@@ -14,6 +14,7 @@ export interface SurgeTask {
 }
 
 export interface SurgeRequestVehicle {
+  approved_capacity?:number[]; // application-only upper bounds from an approved profile
   trip_reload_seconds?:number;
   id: number;
   ref: string; // e.g. "RIC-124"
@@ -175,6 +176,9 @@ export interface PlanUnassigned {
 }
 
 export interface PlanProvenance {
+  shipmentSha256?:string;
+  planningProfiles?: import('./planning-profiles.js').ProfileRef[];
+  warmStart?:{planId:string;used:boolean};
   tariffSha256?:string;
   datasetSha256?: string;
   planningPolicy?: import('./plan/policy.js').PlanningPolicy;
@@ -216,6 +220,7 @@ export interface PlanCost {
 }
 
 export interface Plan {
+  shipmentMetadata?:import('./shipment-contract.js').ShipmentSnapshot;
   assignments?: { version: 1; parentPlanId: string; layout: import('./plan/manual.js').ManualLayout };
   manual?: { version: 1; parentPlanId: string; layout: import('./plan/manual.js').ManualLayout;
     parentScenario?:import('./store.js').Scenario;

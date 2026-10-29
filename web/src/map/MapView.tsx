@@ -9,6 +9,8 @@ import 'maplibre-gl/dist/maplibre-gl.css';
 import { cartaStyle } from './cartaStyle';
 import { useT } from '@/i18n';
 import type { Plan, Scenario, Selection, Vehicle } from '@/types';
+import {selectedStop as resolveStop} from '@/lib/stop-selection';
+import {deliveryToken} from '@/lib/dnd';
 
 /*
  * The dispatch map. Basemap is the reused "Carta Quiet" style; routes, stops and
@@ -30,7 +32,7 @@ function routesFC(plan: Plan): FeatureCollection {
       v.trips.filter((t) => t.geometry).map((t) => ({
         type: 'Feature' as const,
         id: v.id * 100 + t.index,
-        properties: { vehicleId: v.id, color: v.color, tripIndex: t.index },
+        properties: { planId:plan.id,vehicleId: v.id, color: v.color, tripIndex: t.index },
         geometry: t.geometry as LineString,
       }))),
   };
@@ -42,7 +44,7 @@ function stopsFC(plan: Plan): FeatureCollection {
       v.trips.flatMap((t) =>
         t.stops.map((s) => ({
           type: 'Feature' as const,
-          properties: { vehicleId: v.id, color: v.color, tripIndex: t.index, seq: s.seq },
+          properties: { planId:plan.id,requestId:s.requestId,vehicleId: v.id, color: v.color, tripIndex: t.index, seq: s.seq },
           geometry: { type: 'Point' as const, coordinates: [s.lon, s.lat] },
         })))),
   };
@@ -75,13 +77,17 @@ function ghostFCs(plan: Plan, scenario: Scenario | null | undefined): { lines: F
     const vehById = new globalThis.Map(plan.vehicles.map((v) => [v.id, v] as const));
     const stopLoc = new globalThis.Map<string, [number, number]>();
     const orderVeh = new globalThis.Map<string, number>();
-    for (const v of plan.vehicles) for (const t of v.trips) for (const s of t.stops) { stopLoc.set(s.orderNo, [s.lon, s.lat]); orderVeh.set(s.orderNo, v.id); }
+    const refs=new globalThis.Map<string,string[]>();
+    const remember=(s:{orderNo:string;requestId?:number})=>{const key=deliveryToken(s.orderNo,s.requestId);refs.set(s.orderNo,[...(refs.get(s.orderNo)??[]),key]);return key;};
+    for (const v of plan.vehicles) for (const t of v.trips) for (const s of t.stops) { const key=remember(s);stopLoc.set(key, [s.lon, s.lat]); orderVeh.set(key, v.id); }
     const unLoc = new globalThis.Map<string, [number, number]>();
-    for (const u of plan.unassigned) if (typeof u.lon === 'number' && typeof u.lat === 'number') unLoc.set(u.orderNo, [u.lon, u.lat]);
+    for (const u of plan.unassigned){const key=remember(u);if (typeof u.lon === 'number' && typeof u.lat === 'number') unLoc.set(key, [u.lon, u.lat]);}
+    const identity=(orderNo:string,requestId?:number)=>{const candidates=refs.get(orderNo)??[],key=deliveryToken(orderNo,requestId);return requestId===undefined?(candidates.length===1?candidates[0]:undefined):candidates.includes(key)?key:undefined;};
 
     for (const p of scenario.pins) {
-      if (orderVeh.get(p.orderNo) === p.vehicleId) continue;              // already on the target vehicle
-      const from = stopLoc.get(p.orderNo) ?? unLoc.get(p.orderNo);
+      const key=identity(p.orderNo,p.requestId);if(!key)continue;
+      if (orderVeh.get(key) === p.vehicleId) continue;              // already on the target vehicle
+      const from = stopLoc.get(key) ?? unLoc.get(key);
       const target = vehById.get(p.vehicleId);
       const to = target ? centroid(target) : null;
       if (!from || !target || !to) continue;
@@ -93,9 +99,11 @@ function ghostFCs(plan: Plan, scenario: Scenario | null | undefined): { lines: F
       if (q.locked) continue;
       const v = vehById.get(q.vehicleId);
       if (!v) continue;
-      const current = v.trips.flatMap((t) => t.stops.map((s) => s.orderNo));
-      if (current.length === q.orderNos.length && current.every((o, i) => o === q.orderNos[i])) continue; // unchanged
-      const coords = q.orderNos.map((o) => stopLoc.get(o)).filter(Boolean) as [number, number][];
+      const ordered=q.orderNos.map((o,i)=>identity(o,q.requestIds?.[i]));
+      if(ordered.some(key=>key===undefined))continue;
+      const current = v.trips.flatMap((t) => t.stops.map((s) => deliveryToken(s.orderNo,s.requestId)));
+      if (current.length === ordered.length && current.every((o, i) => o === ordered[i])) continue; // unchanged
+      const coords = ordered.map(key=>stopLoc.get(key!)).filter(Boolean) as [number, number][];
       if (coords.length < 2) continue;
       const path: [number, number][] = [[plan.depot.lon, plan.depot.lat], ...coords, [plan.depot.lon, plan.depot.lat]];
       lineFeats.push({ type: 'Feature', properties: { color: v.color, kind: 'reorder' }, geometry: { type: 'LineString', coordinates: path } });
@@ -262,7 +270,7 @@ export function MapView({ plan, scenario, selection, onSelect, clockSec, visible
     if (!selection || selection.kind !== 'stop') return null;
     const v = plan.vehicles.find((x) => x.id === selection.vehicleId);
     const t = v?.trips.find((x) => x.index === selection.tripIndex);
-    const s = t?.stops.find((x) => x.seq === selection.seq);
+    const s = resolveStop(t?.stops??[],selection,plan.id);
     return s ? pointFC(s.lon, s.lat, { color: v!.color }) : null;
   }, [selection, plan]);
 
@@ -304,7 +312,7 @@ export function MapView({ plan, scenario, selection, onSelect, clockSec, visible
       fitTo((t?.geometry?.coordinates ?? []) as [number, number][]);
     } else {
       const t = v.trips.find((x) => x.index === selection.tripIndex);
-      const s = t?.stops.find((x) => x.seq === selection.seq);
+      const s = resolveStop(t?.stops??[],selection,plan.id);
       if (s) map.easeTo({ center: [s.lon, s.lat], zoom: Math.max(map.getZoom(), 13), duration: dur(500) });
     }
     // Intentionally keyed on selection identity + plan.id only (see comment above).
@@ -314,13 +322,14 @@ export function MapView({ plan, scenario, selection, onSelect, clockSec, visible
   const onClick = useCallback((e: MapLayerMouseEvent) => {
     const f = e.features?.[0];
     if (!f) { onSelect(null); return; }
-    const p = f.properties as { vehicleId?: number; tripIndex?: number; seq?: number } | null;
+    const p = f.properties as { planId?:string;requestId?:number;vehicleId?: number; tripIndex?: number; seq?: number } | null;
+    if(p?.planId!==plan.id)return;
     if (f.layer.id === 'stops' && p?.vehicleId != null) {
-      onSelect({ kind: 'stop', vehicleId: p.vehicleId, tripIndex: p.tripIndex ?? 0, seq: p.seq ?? 1 });
+      onSelect({ kind: 'stop', vehicleId: p.vehicleId, tripIndex: p.tripIndex ?? 0, seq: p.seq ?? 1,planId:plan.id,...(Number.isSafeInteger(p.requestId)?{requestId:p.requestId}:{}) });
     } else if ((f.layer.id === 'route-line' || f.layer.id === 'route-hit') && p?.vehicleId != null) {
       onSelect({ kind: 'trip', vehicleId: p.vehicleId, tripIndex: p.tripIndex ?? 0 });
     }
-  }, [onSelect]);
+  }, [onSelect,plan.id]);
 
   const zoomBy = (d: number) => { const m = mapRef.current; if (m) m.easeTo({ zoom: m.getZoom() + d, duration: dur(200) }); };
 
@@ -403,5 +412,5 @@ function selectionKey(s: Selection): string {
   if (s.kind === 'unassigned') return `u:${s.requestId??s.orderNo}`;
   if (s.kind === 'vehicle') return `v:${s.vehicleId}`;
   if (s.kind === 'trip') return `t:${s.vehicleId}:${s.tripIndex}`;
-  return `s:${s.vehicleId}:${s.tripIndex}:${s.seq}`;
+  return `s:${s.planId??''}:${s.vehicleId}:${s.tripIndex}:${s.requestId??s.seq}`;
 }

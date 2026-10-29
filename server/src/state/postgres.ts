@@ -25,6 +25,9 @@ export class JobQueueFullError extends Error {
 export class RevisionConflictError extends Error {
   constructor() { super('scenario revision conflict'); this.name = 'RevisionConflictError'; }
 }
+export class ScenarioHandoffHistoryError extends Error {
+  constructor(){super('Scenario has handoff history and cannot be deleted.');}
+}
 
 export class StatefulStore {
   readonly pool: Pool;
@@ -43,6 +46,10 @@ export class StatefulStore {
       if (!reviewer.rowCount) await client.query(await readFile(resolve(here, '../../migrations/002_reviewer.sql'), 'utf8'));
       const planner = await client.query('SELECT 1 FROM schema_migrations WHERE version=3');
       if (!planner.rowCount) await client.query(await readFile(resolve(here, '../../migrations/003_planner.sql'), 'utf8'));
+      const profiles = await client.query('SELECT 1 FROM schema_migrations WHERE version=4');
+      if (!profiles.rowCount) await client.query(await readFile(resolve(here, '../../migrations/004_planning_profiles.sql'), 'utf8'));
+      const handoff = await client.query('SELECT 1 FROM schema_migrations WHERE version=5');
+      if (!handoff.rowCount) await client.query(await readFile(resolve(here, '../../migrations/005_acknowledged_handoff.sql'), 'utf8'));
       await client.query('COMMIT');
     } catch (error) { await client.query('ROLLBACK'); throw error; }
     finally { client.release(); }
@@ -74,7 +81,9 @@ export class StatefulStore {
   }
 
   async deleteScenario(tenantId: string, id: string, expectedRevision?: number): Promise<boolean> {
-    const result = await this.pool.query("DELETE FROM scenarios WHERE tenant_id=$1 AND id=$2 AND body->>'kind'='copy' AND ($3::bigint IS NULL OR revision=$3)", [tenantId, id, expectedRevision ?? null]);
+    let result;
+    try{result = await this.pool.query("DELETE FROM scenarios WHERE tenant_id=$1 AND id=$2 AND body->>'kind'='copy' AND ($3::bigint IS NULL OR revision=$3)", [tenantId, id, expectedRevision ?? null]);}
+    catch(error){if((error as {constraint?:string}).constraint==='handoff_heads_scenario_fk')throw new ScenarioHandoffHistoryError();throw error;}
     if (!result.rowCount && expectedRevision !== undefined && await this.getScenario(tenantId, id)) throw new RevisionConflictError();
     return result.rowCount === 1;
   }
@@ -148,7 +157,7 @@ export class StatefulStore {
     return rows;
   }
 
-  async enqueueJob(tenantId: string, kind: 'solve' | 'dataset-admit', idempotencyKey: string, payload: unknown, maxQueued?: number, scenarioGuard?: { id: string; revision: number }): Promise<string> {
+  async enqueueJob(tenantId: string, kind: 'solve' | 'dataset-admit' | 'handoff', idempotencyKey: string, payload: unknown, maxQueued?: number, scenarioGuard?: { id: string; revision: number }): Promise<string> {
     return this.tx(async (client) => {
       if (scenarioGuard) {
         const found = await client.query<{ revision: string }>('SELECT revision FROM scenarios WHERE tenant_id=$1 AND id=$2 FOR SHARE', [tenantId, scenarioGuard.id]);
@@ -171,21 +180,21 @@ export class StatefulStore {
     });
   }
 
-  async claimJob(kind: 'solve' | 'dataset-admit', owner: string, leaseSeconds = 30): Promise<Lease | null> {
+  async claimJob(kind: 'solve' | 'dataset-admit' | 'handoff', owner: string, leaseSeconds = 30,tenantId?:string): Promise<Lease | null> {
     const { rows } = await this.pool.query(`WITH candidate AS (
-      SELECT tenant_id,id FROM jobs WHERE kind=$1 AND
+      SELECT tenant_id,id FROM jobs WHERE kind=$1 AND ($4::text IS NULL OR tenant_id=$4) AND available_at<=clock_timestamp() AND
         (state='queued' OR (state='running' AND lease_expires_at < now()))
       ORDER BY created_at FOR UPDATE SKIP LOCKED LIMIT 1)
       UPDATE jobs j SET state='running',lease_owner=$2,lease_expires_at=now()+make_interval(secs=>$3),
         heartbeat_at=now(),attempt=attempt+1,fence=fence+1,updated_at=now()
       FROM candidate c WHERE j.tenant_id=c.tenant_id AND j.id=c.id
-      RETURNING j.tenant_id "tenantId",j.id,j.lease_owner owner,j.fence,j.payload,j.attempt`, [kind, owner, leaseSeconds]);
+      RETURNING j.tenant_id "tenantId",j.id,j.lease_owner owner,j.fence,j.payload,j.attempt`, [kind, owner, leaseSeconds,tenantId??null]);
     return rows[0] ? { ...rows[0], fence: Number(rows[0].fence), attempt: Number(rows[0].attempt) } as Lease : null;
   }
 
   async heartbeatJob(lease: Lease, leaseSeconds = 30): Promise<void> {
     const result = await this.pool.query(`UPDATE jobs SET lease_expires_at=now()+make_interval(secs=>$5),heartbeat_at=now(),updated_at=now()
-      WHERE tenant_id=$1 AND id=$2 AND state='running' AND lease_owner=$3 AND fence=$4 AND lease_expires_at>=now()`,
+      WHERE tenant_id=$1 AND id=$2 AND state='running' AND lease_owner=$3 AND fence=$4 AND lease_expires_at>=clock_timestamp()`,
       [lease.tenantId, lease.id, lease.owner, lease.fence, leaseSeconds]);
     if (result.rowCount !== 1) throw new StaleFenceError();
   }
@@ -202,12 +211,12 @@ export class StatefulStore {
         assertRetainedPlan(plan as Plan, scenario.rows[0].body);
       }
       const owned = await client.query(`UPDATE jobs SET state='succeeded',result=$5,lease_owner=NULL,lease_expires_at=NULL,updated_at=now()
-        WHERE tenant_id=$1 AND id=$2 AND state='running' AND lease_owner=$3 AND fence=$4 AND lease_expires_at>=now() RETURNING id`,
+        WHERE tenant_id=$1 AND id=$2 AND state='running' AND lease_owner=$3 AND fence=$4 AND lease_expires_at>=clock_timestamp() RETURNING id`,
         [lease.tenantId, lease.id, lease.owner, lease.fence, { planId }]);
       if (owned.rowCount !== 1) throw new StaleFenceError();
       await client.query(`INSERT INTO plans(tenant_id,id,scenario_id,scenario_revision,body) VALUES($1,$2,$3,$4,$5)
         ON CONFLICT(tenant_id,id) DO NOTHING`, [lease.tenantId, planId, scenarioId, scenarioRevision, plan]);
-      if (scenario.rows[0]?.body.manualPlanId) {
+      if (scenario.rows[0]?.body.manualPlanId&&!scenario.rows[0].body.selectedPlanId) {
         const body = { ...scenario.rows[0].body, manualPlanId: planId };
         await client.query('UPDATE scenarios SET body=$3,updated_at=now() WHERE tenant_id=$1 AND id=$2', [lease.tenantId, scenarioId, body]);
       }
@@ -216,7 +225,7 @@ export class StatefulStore {
 
   async failJob(lease: Lease, error: string): Promise<void> {
     const result = await this.pool.query(`UPDATE jobs SET state='failed',error=$5,lease_owner=NULL,lease_expires_at=NULL,updated_at=now()
-      WHERE tenant_id=$1 AND id=$2 AND state='running' AND lease_owner=$3 AND fence=$4 AND lease_expires_at>=now()`,
+      WHERE tenant_id=$1 AND id=$2 AND state='running' AND lease_owner=$3 AND fence=$4 AND lease_expires_at>=clock_timestamp()`,
       [lease.tenantId, lease.id, lease.owner, lease.fence, error.slice(0, 2000)]);
     if (result.rowCount !== 1) throw new StaleFenceError();
   }
@@ -228,7 +237,7 @@ export class StatefulStore {
     await this.tx(async (client) => {
       const owned = await client.query(`UPDATE jobs SET state='succeeded',result=$5,lease_owner=NULL,lease_expires_at=NULL,updated_at=now()
         WHERE tenant_id=$1 AND id=$2 AND kind='dataset-admit' AND state='running' AND lease_owner=$3 AND fence=$4
-        AND lease_expires_at>=now() RETURNING id`, [lease.tenantId, lease.id, lease.owner, lease.fence, { datasetId }]);
+        AND lease_expires_at>=clock_timestamp() RETURNING id`, [lease.tenantId, lease.id, lease.owner, lease.fence, { datasetId }]);
       if (owned.rowCount !== 1) throw new StaleFenceError();
       for (const artifact of artifacts) {
         const published = await client.query(`INSERT INTO objects(tenant_id,object_key,sha256,size_bytes,media_type,state,published_at)
@@ -267,7 +276,7 @@ export class StatefulStore {
 
   async emailSent(lease: OutboxLease, providerId: string): Promise<void> {
     const result = await this.pool.query(`UPDATE email_outbox SET state='sent',provider_id=$5,sent_at=now(),lease_owner=NULL,lease_expires_at=NULL
-      WHERE tenant_id=$1 AND id=$2 AND state='sending' AND lease_owner=$3 AND fence=$4 AND lease_expires_at>=now()`,
+      WHERE tenant_id=$1 AND id=$2 AND state='sending' AND lease_owner=$3 AND fence=$4 AND lease_expires_at>=clock_timestamp()`,
       [lease.tenantId, lease.id, lease.owner, lease.fence, providerId]);
     if (result.rowCount !== 1) throw new StaleFenceError();
   }
@@ -276,14 +285,14 @@ export class StatefulStore {
     const result = await this.pool.query(`UPDATE email_outbox SET
       state=CASE WHEN created_at < now()-interval '23 hours' THEN 'failed' ELSE 'pending' END,
       last_error=$5,next_attempt_at=now()+make_interval(secs=>$6),lease_owner=NULL,lease_expires_at=NULL
-      WHERE tenant_id=$1 AND id=$2 AND state='sending' AND lease_owner=$3 AND fence=$4 AND lease_expires_at>=now()`,
+      WHERE tenant_id=$1 AND id=$2 AND state='sending' AND lease_owner=$3 AND fence=$4 AND lease_expires_at>=clock_timestamp()`,
       [lease.tenantId, lease.id, lease.owner, lease.fence, error.slice(0, 2000), retrySeconds]);
     if (result.rowCount !== 1) throw new StaleFenceError();
   }
 
   async emailFailed(lease: OutboxLease, error: string): Promise<void> {
     const result = await this.pool.query(`UPDATE email_outbox SET state='failed',last_error=$5,lease_owner=NULL,lease_expires_at=NULL
-      WHERE tenant_id=$1 AND id=$2 AND state='sending' AND lease_owner=$3 AND fence=$4 AND lease_expires_at>=now()`,
+      WHERE tenant_id=$1 AND id=$2 AND state='sending' AND lease_owner=$3 AND fence=$4 AND lease_expires_at>=clock_timestamp()`,
       [lease.tenantId, lease.id, lease.owner, lease.fence, error.slice(0, 2000)]);
     if (result.rowCount !== 1) throw new StaleFenceError();
   }

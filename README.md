@@ -1,5 +1,9 @@
 # Cursus
 
+Product planning foundations: [safe replanning](docs/safe-replan-and-delivery-identity.md),
+[profiles and shipments](docs/profiles-and-shipments.md), and
+[acknowledged integration handoff](docs/acknowledged-handoff.md).
+
 ## Access roles
 
 Admins can select **View as Planner** or **View as Reviewer** in the account bar
@@ -149,6 +153,10 @@ Before releasing the stateful runtime, run the [production-image acceptance
 suite and release gate](docs/release-acceptance.md). It tests two authenticated
 replicas sharing PostgreSQL and S3-compatible storage, with native Surge solves;
 an optional external Gyermelyi check exercises the conversion pipeline.
+
+Planning workflow contracts: [safe Replan and delivery identity](docs/safe-replan-and-delivery-identity.md),
+and [versioned profiles and shipment metadata](docs/profiles-and-shipments.md).
+Production activation and database compatibility checks remain separate from implementation.
 
 | Path | What |
 |------|------|

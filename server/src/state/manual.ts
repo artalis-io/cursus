@@ -81,7 +81,12 @@ export class ManualPlanPublisher {
     const tasks = new Map(context.day.request.tasks.map(task => [task.id, task.ref]));
     const refs = new Map(context.day.request.requests.map(order => [order.id, tasks.get(order.delivery_task_id)]));
     const editedRefs = new Set(intent.batch.commands.map(command => refs.get(command.requestId)));
-    let effectiveScenario: Scenario = { ...scenario, pins: scenario.pins.filter(pin => !editedRefs.has(pin.orderNo)) };
+    const editedIds = new Set(intent.batch.commands.map(command => command.requestId));
+    if(scenario.pins.some(pin=>pin.requestId===undefined&&editedRefs.has(pin.orderNo)&&
+      [...refs.values()].filter(ref=>ref===pin.orderNo).length>1))
+      throw new ManualPublicationError(409,'Clear the ambiguous legacy pin explicitly before editing this delivery.');
+    let effectiveScenario: Scenario = { ...scenario, pins: scenario.pins.filter(pin =>
+      pin.requestId === undefined ? !editedRefs.has(pin.orderNo) : !editedIds.has(pin.requestId)) };
     if (intent.vehicle) {
       if (!context.day.request.vehicles.some(vehicle => vehicle.id === intent.vehicle!.id)) throw new ManualPublicationError(400,'Unknown vehicle.');
       if(context.unavailableVehicleIds?.includes(intent.vehicle.id)&&!intent.vehicle.excluded)
@@ -135,6 +140,9 @@ export class ManualPlanPublisher {
         unavailableVehicleIds:[...(context.unavailableVehicleIds??[])],
         requestIds: [...input.layout.requestIds],
         origins: structuredClone(input.layout.origins), history: structuredClone(input.layout.history) } };
+    if(updated.id!==scenarioId){delete updated.selectedPlanId;delete updated.selectionVersion;}
+    updated.selectedPlanId=updated.manualPlanId;
+    updated.selectionVersion=updated.id===scenarioId?(scenario.selectionVersion??0)+1:1;
     const plan = materializeManualPlan(parent, updated, input, evaluation, context, updated.manualPlanId!, at);
     plan.manual!.parentScenario=structuredClone(scenario);
     if (preview) return plan;
@@ -148,6 +156,8 @@ export class ManualPlanPublisher {
       // revision. Do not overwrite a result published while evaluation ran.
       if (current.rows[0]?.body.manualPlanId !== scenario.manualPlanId)
         throw new ManualPublicationError(409, 'Current plan changed during evaluation; reload before planning.');
+      if((current.rows[0]?.body.selectionVersion??0)!==(scenario.selectionVersion??0)||current.rows[0]?.body.selectedPlanId!==scenario.selectedPlanId)
+        throw new ManualPublicationError(409,'Current plan selection changed during evaluation; reload before planning.');
       const base = await client.query<{ body: Plan }>('SELECT body FROM plans WHERE tenant_id=$1 AND id=$2', [this.tenantId, parent.id]);
       if (!base.rows[0] || planDigest(base.rows[0].body) !== parentHash) throw new ManualPublicationError(409, 'Parent plan changed during evaluation.');
       if (updated.id === scenarioId) await client.query('UPDATE scenarios SET revision=$3,body=$4,updated_at=now() WHERE tenant_id=$1 AND id=$2', [this.tenantId, scenarioId, updated.revision, updated]);
