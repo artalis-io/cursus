@@ -27,6 +27,7 @@ import { HelpOverlay } from '@/components/HelpOverlay';
 import { CandidatePanel } from '@/components/CandidatePanel';
 import {ProfilesDialog} from '@/components/ProfilesDialog';
 import {HandoffDialog} from '@/components/HandoffDialog';
+import {addPlanGeometry} from '@/lib/plan-geometry';
 import { deliveryReference,deliveryToken } from '@/lib/dnd';
 import { api, ApiError, pollJob } from '@/lib/api';
 import { useT, describeApiError } from '@/i18n';
@@ -172,15 +173,19 @@ export default function App() {
   const [pendingEdits, setPendingEdits] = useState(0);
   const [manualContext,setManualContext]=useState<ManualContext|null>(null);
   const [manualOptIn,setManualOptIn]=useState(false);
+  const [initialWorkspaceLoaded,setInitialWorkspaceLoaded]=useState(false);
+  const [restoredGeometryPlanId,setRestoredGeometryPlanId]=useState<string|null>(null);
   const manualMode=manualOptIn||!!plan?.manual||!!plan?.assignments;
   const [manualRequest,setManualRequest]=useState<ManualRequest|null>(null);
   const [manualBusy,setManualBusy]=useState(false);
   const manualBusyRef=useRef(false);
+  const contextPlanId=plan?.id,contextPlanRevision=plan?.scenarioRevision,contextScenarioId=scenario?.id,contextScenarioRevision=scenario?.revision,
+    contextManualPlanId=scenario?.manualPlanId,contextSelectedPlanId=scenario?.selectedPlanId,contextSelectionVersion=scenario?.selectionVersion;
   useEffect(()=>{
     let alive=true;setManualContext(null);setManualRequest(null);
-    if(plan&&scenario&&plan.scenarioRevision===scenario.revision)void api.manualContext(plan.id).then(value=>{if(alive)setManualContext(value);}).catch(()=>{});
+    if(contextPlanId&&contextScenarioId&&contextPlanRevision===contextScenarioRevision)void api.manualContext(contextPlanId).then(value=>{if(alive)setManualContext(value);}).catch(()=>{});
     return()=>{alive=false;};
-  },[plan,scenario]);
+  },[contextPlanId,contextPlanRevision,contextScenarioId,contextScenarioRevision,contextManualPlanId,contextSelectedPlanId,contextSelectionVersion]);
   useEffect(()=>{if(!canEdit)setManualRequest(null);},[canEdit]);
   // Selection history: browser-style back/forward through inspected items.
   const [nav, setNav] = useState<{ stack: Selection[]; idx: number }>({ stack: [null], idx: 0 });
@@ -306,28 +311,41 @@ export default function App() {
         const ds = await api.days();
         setDays(ds);
         if (!(await tryResume(ds))) {
-          await loadDay(ds.find(d=>d.id===saved?.day)??ds.find((d) => d.id === 'day1') ?? ds[0]!);
           if(saved?.planId){
-            const generation=navigationGeneration.current;
+            const generation=++navigationGeneration.current;
+            setWorkspaceLoading(true);
             try{
-              let p=await api.plan(saved.planId);const sc=await api.scenario(p.scenarioId);
+              let p=await api.planSnapshot(saved.planId);const sc=await api.scenario(p.scenarioId);
               const selected=sc.selectedPlanId??sc.manualPlanId;
-              if(selected&&selected!==p.id)p=await api.plan(selected);
-              if(generation===navigationGeneration.current&&writeAccess.current.mounted&&(p.manual||p.assignments||sc.selectedPlanId===p.id)){
-                scenarioRef.current=sc;planRef.current=p;setScenario(sc);setPlan(p);
+              if(selected&&selected!==p.id)p=await api.planSnapshot(selected);
+              const day=ds.find(d=>d.id===sc.day);
+              if(day&&(p.manual||p.assignments||sc.selectedPlanId===p.id)){
+                const base=day.baselinePlanId===p.id?p:await api.planSnapshot(day.baselinePlanId);
+                if(generation!==navigationGeneration.current||!writeAccess.current.mounted)return;
+                scenarioRef.current=sc;planRef.current=p;setDayId(day.id);setBaseline(base);setScenario(sc);setPlan(p);setRestoredGeometryPlanId(hasCompleteRouteGeometry(p)?null:p.id);
+                return;
               }
-            }catch{/* a deleted or inaccessible draft must not prevent loading */}
+            }catch(e){if(!(e instanceof ApiError&&e.status===404))throw e;/* deleted drafts fall back to the day baseline */}
+            finally{if(generation===navigationGeneration.current)setWorkspaceLoading(false);}
           }
+          await loadDay(ds.find(d=>d.id===saved?.day)??ds.find((d) => d.id === 'day1') ?? ds[0]!);
         }
       } catch (e) { setError(describeApiError(e, t)); }
+      finally{if(writeAccess.current.mounted)setInitialWorkspaceLoaded(true);}
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   useEffect(()=>{
-    if(!plan)return;
+    if(!initialWorkspaceLoaded||!plan)return;
     try{if(plan.manual||plan.assignments||scenario?.selectedPlanId===plan.id)localStorage.setItem(manualStorageKey,JSON.stringify({planId:plan.id,day:scenario?.day??dayId}));
       else localStorage.removeItem(manualStorageKey);}catch{/* storage may be unavailable */}
-  },[plan,manualStorageKey,scenario,dayId]);
+  },[plan,manualStorageKey,scenario,dayId,initialWorkspaceLoaded]);
+  useEffect(()=>{
+    if(!restoredGeometryPlanId)return;
+    let alive=true;const id=restoredGeometryPlanId;
+    void loadPlanWithGeometry(id).then(enriched=>{if(alive&&writeAccess.current.mounted)setPlan(current=>current?addPlanGeometry(current,enriched):current);}).catch(()=>{/* roads are optional; never discard the restored workspace */});
+    return()=>{alive=false;};
+  },[restoredGeometryPlanId]);
 
   const loadDay = useCallback(async (d: DaySummary) => {
     const generation = ++navigationGeneration.current;

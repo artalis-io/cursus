@@ -1439,6 +1439,43 @@ test('shipment detail preserves source line items and load units without changin
  expect(handoff.shipmentMetadata).toEqual(plan.shipmentMetadata);expect(handoff.summary.servedOrders).toBe(plan.stats.servedOrders);
 });
 
+test('saved manual workspace survives failed metadata reads and slow road geometry without losing its preview',async({page})=>{
+ await login(page);const base=await baseline(page);
+ await page.getByRole('button',{name:'Manual planning',exact:true}).click();await manualStop(page,base,'PUBLIC-2');
+ await page.getByRole('button',{name:'Return to unassigned',exact:true}).click();const saved=await applyManualDialog(page);
+ const key='cursus.manual-workspace.v1:acceptance';await expect.poll(()=>page.evaluate(k=>JSON.parse(localStorage.getItem(k)??'null')?.planId,key)).toBe(saved.id);
+ let failStored=true;const roads=gate(),finished=gate();
+ await page.route(`**/api/plans/${saved.id}*`,async route=>{
+  const url=new URL(route.request().url());
+  if(url.pathname!==`/api/plans/${saved.id}`){await route.continue();return;}
+  if(url.searchParams.get('geometry')==='stored'){
+   if(failStored){await route.fulfill({status:503,json:{error:'Temporary snapshot outage'}});return;}
+   await route.continue();return;
+  }
+  await roads.wait;const response=await route.fetch();const value=await response.json();
+  value.stats.servedOrders=999;
+  for(const vehicle of value.vehicles)for(const trip of vehicle.trips)if(trip.stops.length)trip.geometry={type:'LineString',coordinates:[[19,47],[19.01,47.01]]};
+  await route.fulfill({response,json:value});finished.release();
+ });
+ try{
+  const outage=page.waitForResponse(r=>r.url().includes(`/api/plans/${saved.id}?geometry=stored`)&&r.status()===503);
+  await page.reload();await outage;await expect(page.getByText('Served / Total',{exact:true})).toHaveCount(0);
+  expect(await page.evaluate(k=>JSON.parse(localStorage.getItem(k)??'null')?.planId,key)).toBe(saved.id);
+  failStored=false;await page.reload();await expect(page.getByText('5 / 6',{exact:true})).toBeVisible();
+  await expect(page.getByRole('region',{name:'Plan approval',exact:true})).toHaveAttribute('data-plan-id',saved.id);
+  await page.getByRole('button',{name:'Undo manual change',exact:true}).click();const dialog=page.getByRole('dialog',{name:'Manual planning',exact:true});
+  const previewRequest=page.waitForRequest(r=>r.method()==='POST'&&r.url().endsWith('/manual-preview'));
+  await dialog.getByRole('button',{name:'Calculate preview',exact:true}).click();const intent=(await previewRequest).postDataJSON();
+  await expect(dialog.getByTestId('manual-preview')).toBeVisible();roads.release();await finished.wait;
+  await page.evaluate(()=>new Promise<void>(r=>requestAnimationFrame(()=>requestAnimationFrame(()=>r()))));
+  await expect(page.getByText('5 / 6',{exact:true})).toBeVisible();await expect(dialog.getByTestId('manual-preview')).toBeVisible();
+  const applied=page.waitForResponse(r=>r.request().method()==='POST'&&r.url().endsWith('/manual-plan'));
+  await dialog.getByRole('button',{name:'Apply manual change',exact:true}).click();const response=await applied;
+  expect(response.status()).toBe(201);expect(response.request().postDataJSON().batch.operationId).toBe(intent.batch.operationId);
+  await expect(page.getByText('6 / 6',{exact:true})).toBeVisible();
+ }finally{roads.release();}
+});
+
 test('duplicate display references survive keyboard reordering, native replanning and individual bulk assignment',async({page})=>{
  await login(page);await shortBudget(page);
  const days=await get<DaySummary[]>(page.request,'/api/days'),day=days.find(d=>d.id==='acceptance-day-two')!;
