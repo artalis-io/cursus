@@ -128,8 +128,9 @@ test(`manual ${role}: keyboard move, deassign, reload, release and native replan
   expect(unassigned.unassigned.find(o=>o.orderNo==='PUBLIC-2')?.reasonCode).toBe('MANUAL_UNASSIGNED');
   await page.reload();await expect(page.getByText('5 / 6',{exact:true})).toBeVisible();
   const fleet=page.locator('aside').first();
-  await fleet.getByRole('button',{name:/Unassigned orders/i}).click();
-  await fleet.getByRole('button').filter({hasText:'#PUBLIC-2'}).click();
+  const unassignedOrder=fleet.getByRole('button').filter({hasText:'#PUBLIC-2'});
+  if(!(await unassignedOrder.isVisible()))await fleet.getByRole('button',{name:/Unassigned orders/i}).click();
+  await unassignedOrder.click();
   await page.getByRole('button',{name:'Let optimizer decide',exact:true}).click();
   const released=await applyManualDialog(page);expect(released.manual?.layout.history.length).toBe(3);
   const replanned=await finishSolve(page,()=>page.getByRole('button',{name:'Replan',exact:true}).click());
