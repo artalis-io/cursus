@@ -15,6 +15,9 @@ snapshot, or cancel the last accepted instruction with a reason and confirmation
 Planner and Reviewer can inspect history and continue downloading ordinary
 draft/approved exports; they cannot send, retry or cancel. The backend checks both
 the effective permission and current tenant membership at the write boundary.
+Operational publish/amend also requires a complete, unique dataset-scoped
+delivery inventory. Historical plans missing that identity remain exportable,
+but must be replanned before an acknowledged operational handoff.
 
 Queuing uses an operation ID, expected scenario revision, expected destination
 generation, exact approval version and previous accepted instruction. Approval

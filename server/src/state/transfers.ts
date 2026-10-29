@@ -65,6 +65,12 @@ export class TransferRepository {
   try{await this.workflow.renderExport(planId,command.operation!=='cancel',(plan,metadata)=>JSON.stringify(planToHandoffJson(plan,plan.day,metadata)),async(client,plan,metadata,body)=>{
    const existing=await this.operation(client,command.operationId,requestHash);if(existing){created=existing;return;}
    if(metadata.currentScenarioRevision!==revision)throw new WorkflowError(409,'Scenario changed before handoff.');
+   if(command.operation!=='cancel'){
+    const ids=plan.vehicles.flatMap(v=>v.trips.flatMap(t=>t.stops.map(s=>s.requestId)));
+    if(!/^[a-f0-9]{64}$/.test(plan.provenance.datasetSha256??'')||ids.length!==plan.stats.totalOrders||
+     ids.some(id=>!Number.isSafeInteger(id)||Number(id)<0)||new Set(ids).size!==ids.length)
+     throw new WorkflowError(409,'Acknowledged handoff requires complete dataset-scoped delivery identities. Replan legacy results before sending.');
+   }
    await client.query('INSERT INTO handoff_heads(tenant_id,scenario_id,destination_id) VALUES($1,$2,$3) ON CONFLICT DO NOTHING',[this.tenantId,plan.scenarioId,destination.id]);
    const heads=await client.query<HeadRow>('SELECT generation,current_intent,accepted_intent FROM handoff_heads WHERE tenant_id=$1 AND scenario_id=$2 AND destination_id=$3 FOR UPDATE',[this.tenantId,plan.scenarioId,destination.id]);
    const head=heads.rows[0]!;

@@ -14,6 +14,7 @@ import {workOneTransfer} from './transfer-worker.js';
 import {createStatefulApi} from './api.js';
 import type {Scenario} from '../store.js';
 import type {TransferAcknowledgement} from '../integration-contract.js';
+function transferablePlan(){const plan=validPlan();plan.provenance.datasetSha256='a'.repeat(64);plan.vehicles[0]!.trips[0]!.stops[0]!.requestId=91;return plan;}
 
 test('durable handoff across replicas: approval, deduplication after provider acceptance, fencing, amendments, cancellation and isolation',{
  skip:!process.env.CURSUS_TEST_DATABASE_URL,timeout:60000},async()=>{
@@ -32,7 +33,7 @@ test('durable handoff across replicas: approval, deduplication after provider ac
  const destination=parseDestinations({destinations:[{id:'warehouse',tenantId:tenant,label:'Public receiver',protocol:'cursus.handoff.v1',url:`http://127.0.0.1:${port}`,tokenFile:token}]},true)[0]!;
  const sender=await HttpHandoffSender.create([destination]);
  await a.migrate();await a.ensureTenant(tenant,'Transfer test');
- const plan=validPlan(),scenario:Scenario={id:plan.scenarioId,day:plan.day,kind:'copy',parentId:null,revision:1,label:'Public',createdAt:new Date().toISOString(),removedVehicleIds:[],pins:[],forbids:[],sequences:[],vehicleOverrides:[]};
+ const plan=transferablePlan(),scenario:Scenario={id:plan.scenarioId,day:plan.day,kind:'copy',parentId:null,revision:1,label:'Public',createdAt:new Date().toISOString(),removedVehicleIds:[],pins:[],forbids:[],sequences:[],vehicleOverrides:[]};
  await a.createScenario(tenant,scenario.id,scenario);await a.pool.query('INSERT INTO plans(tenant_id,id,scenario_id,scenario_revision,body) VALUES($1,$2,$3,1,$4)',[tenant,plan.id,scenario.id,plan]);
  const workflow=new PlanWorkflow(a,tenant),repo=new TransferRepository(a,tenant),peer=new TransferRepository(b,tenant);
  const apps=await Promise.all([a,b].map(store=>createStatefulApi({store,tenantId:tenant,tenantName:'Transfer test',handoffDestinations:[destination]})));
@@ -41,12 +42,22 @@ test('durable handoff across replicas: approval, deduplication after provider ac
  try{
   assert.equal((await send(0,command(0))).statusCode,409);
   await workflow.transition(plan.id,'plan.review',0,1,true);await workflow.transition(plan.id,'plan.approve',1,1,true);
+  const legacy={...plan,id:'legacy-plan',provenance:{...plan.provenance,datasetSha256:undefined}};
+  await a.pool.query('INSERT INTO plans(tenant_id,id,scenario_id,scenario_revision,body) VALUES($1,$2,$3,1,$4)',[tenant,legacy.id,scenario.id,legacy]);
+  await workflow.transition(legacy.id,'plan.review',0,1,true);await workflow.transition(legacy.id,'plan.approve',1,1,true);
+  const blocked=await send(0,command(0),1,legacy.id);assert.equal(blocked.statusCode,409);assert.match(blocked.body,/dataset-scoped delivery identities/);
+  const userId=randomUUID();await a.pool.query('INSERT INTO users(id,email) VALUES($1,$2)',[userId,`public-${userId}@example.test`]);
+  await a.pool.query("INSERT INTO memberships(tenant_id,user_id,role) VALUES($1,$2,'reviewer')",[tenant,userId]);
+  await assert.rejects(()=>repo.enqueue(plan.id,1,command(0),destination,{userId,tenantId:tenant,email:'public@example.test',role:'admin'}),/permission changed/);
   const c=command(0),[queued,concurrent]=await Promise.all([send(0,c),send(1,c)]);assert.equal(queued.statusCode,202,queued.body);const first=queued.json();
   assert.equal(concurrent.statusCode,202,concurrent.body);assert.equal(concurrent.json().id,first.id);
   assert.equal((await send(1,c)).json().id,first.id);
   assert.equal((await send(1,{...c,reason:'Different bytes'})).statusCode,409);
   assert.equal((await send(1,command(0))).statusCode,409);
-  const old=(await a.claimJob('handoff','lost-worker',30,tenant))!,prepared=await repo.prepare(old,destination);
+  const old=(await a.claimJob('handoff','lost-worker',30,tenant))!;
+  await assert.rejects(()=>repo.prepare(old,{...destination,sha256:'f'.repeat(64)}),TransferHalt);
+  assert.equal((await repo.status(plan.id)).intents[0]!.attempts,0);
+  const prepared=await repo.prepare(old,destination);
   const ack=await sender.send(destination,prepared.request,new AbortController().signal);assert.equal(posts,1);
   // Simulate crash AFTER receiver commit, BEFORE local acknowledgement.
   await a.pool.query("UPDATE jobs SET lease_expires_at=clock_timestamp()-interval '1 second' WHERE tenant_id=$1 AND id=$2",[tenant,old.id]);
@@ -76,7 +87,7 @@ test('durable handoff across replicas: approval, deduplication after provider ac
 test('handoff ambiguity after an edit becomes receipt-only; expired lease cannot publish after waiting for a scenario lock',{
  skip:!process.env.CURSUS_TEST_DATABASE_URL,timeout:30000},async()=>{
  const a=new StatefulStore(process.env.CURSUS_TEST_DATABASE_URL!),b=new StatefulStore(process.env.CURSUS_TEST_DATABASE_URL!),tenant='transfer-stale-'+randomUUID();
- await a.migrate();await a.ensureTenant(tenant,'Public');const plan=validPlan(),scenario={id:plan.scenarioId,day:plan.day,kind:'copy',parentId:null,revision:1,label:'Public',createdAt:new Date().toISOString(),removedVehicleIds:[],pins:[],forbids:[],sequences:[],vehicleOverrides:[]} as Scenario;
+ await a.migrate();await a.ensureTenant(tenant,'Public');const plan=transferablePlan(),scenario={id:plan.scenarioId,day:plan.day,kind:'copy',parentId:null,revision:1,label:'Public',createdAt:new Date().toISOString(),removedVehicleIds:[],pins:[],forbids:[],sequences:[],vehicleOverrides:[]} as Scenario;
  await a.createScenario(tenant,scenario.id,scenario);await a.pool.query('INSERT INTO plans(tenant_id,id,scenario_id,scenario_revision,body) VALUES($1,$2,$3,1,$4)',[tenant,plan.id,scenario.id,plan]);
  const workflow=new PlanWorkflow(a,tenant),repo=new TransferRepository(a,tenant),destination=parseDestinations({destinations:[{id:'warehouse',tenantId:tenant,label:'Public',url:'https://receiver.example.test',tokenFile:'/public/test-only',protocol:'cursus.handoff.v1'}]})[0]!;
  try{
@@ -94,5 +105,12 @@ test('handoff ambiguity after an edit becomes receipt-only; expired lease cannot
   const pending=repo.acknowledge(next,ack);const caught=pending.then(()=>null,e=>e);
   await new Promise(r=>setTimeout(r,1200));await locker.query('COMMIT');locker.release();assert.ok(await caught instanceof StaleFenceError);
   assert.equal((await repo.status(plan.id)).intents[0]!.receipt,null);
+  // After the POST attempt cap, receipt recovery is still possible, but a
+  // replacement worker must never send the stale approved bytes again.
+  await a.pool.query("UPDATE jobs SET lease_expires_at=clock_timestamp()-interval '1 second',attempt=8 WHERE tenant_id=$1 AND id=$2",[tenant,next.id]);
+  const recovered=(await b.claimJob('handoff','receipt-only',30,tenant))!;
+  assert.equal((await new TransferRepository(b,tenant).prepare(recovered,destination)).lookupOnly,true);
+  const recorded=await new TransferRepository(b,tenant).acknowledge(recovered,ack);assert.equal(recorded.state,'acknowledged_superseded');
+  assert.equal((await repo.status(plan.id)).heads[0]!.acceptedIntentId,queued.id);
  }finally{await a.close();await b.close();}
 });
