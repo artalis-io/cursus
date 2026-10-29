@@ -2,6 +2,12 @@
 
 Status: authorized implementation, in progress. Production activation is separate.
 
+Progress:
+
+- Candidate-safe Replan and stable identity: committed as `db42035`; 68/68 isolated production-image Playwright tests passed. Later profile/shipment work adds regression protection for subsequent manual selection and portable-file compatibility.
+- Profiles and canonical shipment metadata: implemented on the feature branch; native unit, two-replica HTTP/integration, frontend build and deployment-tool checks pass. Full production-image acceptance is the next gate.
+- Revision-bound acknowledged handoff: next implementation milestone, after the first two groups.
+
 Implement in this order:
 
 1. Candidate-safe replanning and stable delivery identity throughout comparison and manual selection. Preserve both results and their approval evidence; explicit adoption must not confer approval. Legacy ambiguous references fail closed.

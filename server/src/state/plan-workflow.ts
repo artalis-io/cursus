@@ -23,6 +23,8 @@ export const planDigest = (plan: unknown): string => createHash('sha256').update
 export function approvalBlockers(plan: Plan, revision: number, scenario?: Scenario): string[] {
   const issues: string[] = [];
   if (plan.scenarioRevision !== revision) issues.push('Plan does not match the current scenario revision.');
+  if(scenario&&canonical(plan.provenance?.planningProfiles??[])!==canonical(scenario.planningProfiles??[]))
+    issues.push('Plan uses different planning profile revisions.');
   if (plan.provenance?.validation?.valid !== true || !Array.isArray(plan.provenance?.validation?.violations)
     || plan.provenance.validation.violations.some(v => !v || typeof v !== 'object' || (v as { soft?: boolean }).soft !== true
       || ['VEHICLE_SIZE', 'TAIL_LIFT', 'CAPACITY', 'HARD_TW'].includes(String((v as { type?: string }).type))))
@@ -34,6 +36,13 @@ export function approvalBlockers(plan: Plan, revision: number, scenario?: Scenar
   const finite = (n: unknown): n is number => typeof n === 'number' && Number.isFinite(n);
   try {
     const stops = plan.vehicles.flatMap(v => v.trips.flatMap(t => t.stops));
+    if(plan.shipmentMetadata){
+      const metadata=plan.shipmentMetadata,ids=[...stops,...plan.unassigned].map(s=>s.requestId);
+      const described=metadata.deliveries.map(d=>d.requestId);
+      if(metadata.datasetSha256!==plan.provenance.datasetSha256||metadata.sourceSha256!==plan.provenance.shipmentSha256||
+        new Set(ids).size!==ids.length||ids.some(id=>id===undefined)||new Set(described).size!==described.length||
+        described.length!==ids.length||ids.some(id=>!described.includes(id!)))issues.push('Shipment metadata does not match the plan delivery inventory.');
+    }
     if (!stops.length || plan.stats.deliveryStops !== stops.length) issues.push('Stop inventory does not match coverage.');
     for (const vehicle of plan.vehicles) for (const trip of vehicle.trips) {
       if (![trip.loadKg, trip.loadPallets, vehicle.capacityKg, vehicle.capacityPallets].every(finite)

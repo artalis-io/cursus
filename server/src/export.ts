@@ -105,6 +105,7 @@ export function planToRoutesCsv(plan: Plan, isoDate: string, metadata?: HandoffM
 /* A clean, documented dispatch-plan document for programmatic handoff (not the
  * raw internal Plan, which carries geometry + provenance). */
 export interface HandoffPlan {
+  shipmentMetadata?:Plan['shipmentMetadata'];
   datasetSha256?:string;
   assignments?: {datasetSha256:string;decisions:import('./plan/manual.js').ManualLayout['decisions'];origins:Record<string,string>;history:import('./plan/manual.js').AssignmentEvent[]};
   handoff?: HandoffMetadata;
@@ -118,6 +119,7 @@ export interface HandoffPlan {
 export function planToHandoffJson(plan: Plan, isoDate: string, metadata?: HandoffMetadata): HandoffPlan {
   const assignmentLayout=(plan.manual??plan.assignments)?.layout;
   return {
+    ...(plan.shipmentMetadata?{shipmentMetadata:plan.shipmentMetadata}:{}),
     ...(datasetIdentity(plan)?{datasetSha256:datasetIdentity(plan)}:{}),
     ...(assignmentLayout?{assignments:{datasetSha256:assignmentLayout.datasetSha256,decisions:assignmentLayout.decisions,origins:assignmentLayout.origins,history:assignmentLayout.history}}:{}),
     ...(metadata ? { handoff: metadata } : {}),

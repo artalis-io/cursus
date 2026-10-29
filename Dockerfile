@@ -8,6 +8,8 @@ COPY web/ ./
 COPY server/src/roles.ts /src/server/src/roles.ts
 COPY server/src/workflow-contract.ts /src/server/src/workflow-contract.ts
 COPY server/src/plan/identity.ts /src/server/src/plan/identity.ts
+COPY server/src/planning-profile-contract.ts /src/server/src/planning-profile-contract.ts
+COPY server/src/shipment-contract.ts /src/server/src/shipment-contract.ts
 RUN npm run build
 
 FROM node:20.19.5-bookworm-slim@sha256:9e70124bd00f47dd023e349cd587132ae61892acc0e47ed641416c3e18f401c3 AS server-build
@@ -35,7 +37,7 @@ FROM node:20.19.5-bookworm-slim@sha256:9e70124bd00f47dd023e349cd587132ae61892acc
 ARG OTTO_REVISION=unknown
 ARG CURSUS_REVISION=unknown
 ARG CURSUS_SCHEMA_MIN=1
-ARG CURSUS_SCHEMA_MAX=3
+ARG CURSUS_SCHEMA_MAX=4
 LABEL org.opencontainers.image.title="Cursus" \
       org.opencontainers.image.source="https://github.com/artalis-io/cursus" \
       org.opencontainers.image.revision="$CURSUS_REVISION" \

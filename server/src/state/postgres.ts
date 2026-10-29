@@ -43,6 +43,8 @@ export class StatefulStore {
       if (!reviewer.rowCount) await client.query(await readFile(resolve(here, '../../migrations/002_reviewer.sql'), 'utf8'));
       const planner = await client.query('SELECT 1 FROM schema_migrations WHERE version=3');
       if (!planner.rowCount) await client.query(await readFile(resolve(here, '../../migrations/003_planner.sql'), 'utf8'));
+      const profiles = await client.query('SELECT 1 FROM schema_migrations WHERE version=4');
+      if (!profiles.rowCount) await client.query(await readFile(resolve(here, '../../migrations/004_planning_profiles.sql'), 'utf8'));
       await client.query('COMMIT');
     } catch (error) { await client.query('ROLLBACK'); throw error; }
     finally { client.release(); }
@@ -207,7 +209,7 @@ export class StatefulStore {
       if (owned.rowCount !== 1) throw new StaleFenceError();
       await client.query(`INSERT INTO plans(tenant_id,id,scenario_id,scenario_revision,body) VALUES($1,$2,$3,$4,$5)
         ON CONFLICT(tenant_id,id) DO NOTHING`, [lease.tenantId, planId, scenarioId, scenarioRevision, plan]);
-      if (scenario.rows[0]?.body.manualPlanId) {
+      if (scenario.rows[0]?.body.manualPlanId&&!scenario.rows[0].body.selectedPlanId) {
         const body = { ...scenario.rows[0].body, manualPlanId: planId };
         await client.query('UPDATE scenarios SET body=$3,updated_at=now() WHERE tenant_id=$1 AND id=$2', [lease.tenantId, scenarioId, body]);
       }

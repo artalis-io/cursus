@@ -11,6 +11,12 @@ import { applyOverrides, applySequences, applyVehicleOverrides, type Objective }
 import { mapSolutionToPlan } from '../plan/mapper.js';
 import { fillPlanGeometry } from '../geometry/velo.js';
 import { warmStart } from '../plan/warm-start.js';
+import { applyProfileSnapshots } from '../plan/profiles.js';
+import type { ApprovedProfile } from '../planning-profiles.js';
+import { profileDigest } from '../planning-profiles.js';
+import { manualSettings } from './manual-settings.js';
+import { summarizeShipments,validateShipments } from '../shipments.js';
+import type {ShipmentDocument} from '../shipment-contract.js';
 import type { Plan, SurgeRequest, SurgeSolution } from '../types.js';
 import type { Scenario } from '../store.js';
 import { execFile } from 'node:child_process';
@@ -51,7 +57,7 @@ export async function conversionIdentity(payload: ConversionPayload): Promise<{ 
   for (const [name, path] of Object.entries(paths)) converters[name] = await fileDigest(path);
   const identity = { source: payload.source.sha256, mapping: payload.mapping, fleet: payload.fleet ? { source: payload.fleet.source.sha256, mapping: payload.fleet.mapping } : null, converters,
     matrix: { profile: config.veloProfile, maxLocations: config.maxMatrixLocations }, outputSchemaVersion: OUTPUT_SCHEMA_VERSION,
-    fleetEncodingVersion: 3 }; // preserves explicit GVW and tail-lift capabilities in uploaded fleets
+    fleetEncodingVersion: 3,deliveryIdentityVersion:1,shipmentMetadataVersion:1 }; // additive identity and explicit summary metadata
   return { fingerprint: createHash('sha256').update(stable(identity)).digest('hex'), converters };
 }
 
@@ -80,10 +86,14 @@ export async function executeDatasetConversion(lease: Lease, objects: ObjectStor
     const outputDir = join(workspace, payload.datasetId);
     const request = await objects.putImmutable(lease.tenantId, await readFile(join(outputDir, 'request.json')), 'application/json');
     const geocoded = await objects.putImmutable(lease.tenantId, await readFile(join(outputDir, 'orders.geocoded.json')), 'application/json');
-    const artifacts = [payload.source, request, geocoded];
+    const requestData=JSON.parse(await readFile(join(outputDir,'request.json'),'utf8')) as SurgeRequest;
+    const geoData=JSON.parse(await readFile(join(outputDir,'orders.geocoded.json'),'utf8')) as {records?:Record<string,unknown>[]} | Record<string,unknown>[];
+    const shipmentData=summarizeShipments(requestData,Array.isArray(geoData)?geoData:geoData.records??[],request.sha256,result.days!);
+    const shipments=await objects.putImmutable(lease.tenantId,Buffer.from(JSON.stringify(shipmentData)),'application/json');
+    const artifacts = [payload.source, request, geocoded,shipments];
     return { datasetId: payload.datasetId, fingerprint: identity.fingerprint, artifacts,
       manifest: { schemaVersion: OUTPUT_SCHEMA_VERSION, conversionFingerprint: identity.fingerprint, converters: identity.converters,
-        source: payload.source, artifacts: { request, geocoded }, label: payload.label, days: result.days, stats: result } };
+        source: payload.source, artifacts: { request, geocoded,shipments }, label: payload.label, days: result.days, stats: result } };
   } finally { await rm(workspace, { recursive: true, force: true }); }
 }
 
@@ -111,41 +121,65 @@ export async function workOneDatasetAdmission(store: StatefulStore, objects: Obj
 
 /** Solve directly from admitted immutable artifacts; no node-local registry is
  * authoritative. This is the stateful counterpart of loadDay/buildRequest. */
-export interface ConvertedManifest { artifacts?: { request?: ImmutableObject; geocoded?: ImmutableObject };
+export interface ConvertedManifest { artifacts?: { request?: ImmutableObject; geocoded?: ImmutableObject;shipments?:ImmutableObject };
   days?: { dayId: string; date?: string; isoDate: string; label: string }[] }
 export async function loadConvertedDay(objects: ObjectStore, tenantId: string, manifest: ConvertedManifest,
-  scenario: Scenario): Promise<LoadedDay> {
+  scenario: Scenario, profiles: ApprovedProfile[] = []): Promise<LoadedDay> {
+  const bound=scenario.planningProfiles??[];
+  if(bound.length!==profiles.length||bound.some(ref=>!profiles.some(p=>p.id===ref.id&&p.kind===ref.kind&&p.revision===ref.revision&&p.sha256===ref.sha256&&profileDigest(p.content)===p.sha256)))
+    throw new Error('Pinned profiles must be resolved before loading this scenario.');
   const requestObject = manifest?.artifacts?.request as ImmutableObject | undefined;
   const geoObject = manifest?.artifacts?.geocoded as ImmutableObject | undefined;
   if (!requestObject || !geoObject) throw new Error('admitted dataset artifacts are incomplete');
   if(scenario.deliveryDatasetSha256&&scenario.deliveryDatasetSha256!==requestObject.sha256)throw new Error('Scenario delivery identities belong to another dataset');
   const prefix = `tenants/${tenantId}/sha256/`;
   if (!requestObject.key.startsWith(prefix) || !geoObject.key.startsWith(prefix)) throw new Error('dataset artifact is outside the tenant namespace');
+  const shipmentObject=manifest.artifacts?.shipments;
+  if(shipmentObject&&!shipmentObject.key.startsWith(prefix))throw new Error('shipment artifact is outside the tenant namespace');
   const [requestBytes, geoBytes] = await Promise.all([objects.getVerified(requestObject), objects.getVerified(geoObject)]);
   const request = JSON.parse(new TextDecoder().decode(requestBytes)) as SurgeRequest;
   const geoJson = JSON.parse(new TextDecoder().decode(geoBytes)) as { records?: Record<string, unknown>[] } | Record<string, unknown>[];
   const rows = Array.isArray(geoJson) ? geoJson : geoJson.records ?? [];
-  const dayMeta = manifest.days?.find((d) => d.dayId === scenario.day) ?? manifest.days?.[0];
+  let shipmentDocument:ShipmentDocument|undefined;
+  if(shipmentObject)shipmentDocument=validateShipments(JSON.parse(new TextDecoder().decode(await objects.getVerified(shipmentObject))),request,requestObject.sha256);
+  const dayMeta = manifest.days?.find((d) => d.dayId === scenario.day);
   if (!dayMeta) throw new Error('dataset day is missing');
   const refs = new Set(rows.filter((r) => String(r.delivery_date ?? '') === String(dayMeta.date ?? dayMeta.isoDate))
     .map((r) => String(r.order_no)));
   const taskRef = new Map(request.tasks.map((t) => [t.id, String(t.ref)]));
-  request.requests = request.requests.filter((r) => !refs.size || refs.has(taskRef.get(r.delivery_task_id) ?? ''));
+  const deliveryIds=shipmentDocument?new Set(shipmentDocument.deliveries.filter(d=>d.date===dayMeta.isoDate).map(d=>d.requestId)):null;
+  if(!deliveryIds){
+    const dates=new Map<string,Set<string>>();
+    for(const row of rows){const ref=String(row.order_no),set=dates.get(ref)??new Set<string>();set.add(String(row.delivery_date));dates.set(ref,set);}
+    if([...dates.values()].some(set=>set.size>1))throw new Error('Legacy display references span multiple days; admit explicit delivery identities before planning.');
+  }
+  const deliveryEnrichment=new Map<number,import('../data/dataset.js').OrderInfo>();
+  const sourceRequests=new Map(request.requests.map(r=>[r.id,r]));
+  for(const row of rows)if(Number.isSafeInteger(row.request_id)){
+    const id=Number(row.request_id),source=sourceRequests.get(id),ref=source&&taskRef.get(source.delivery_task_id);
+    if(!source||ref!==String(row.order_no)||deliveryEnrichment.has(id))throw new Error('Source delivery identity mismatch.');
+    const info=enrichmentFromRecords([row]).get(ref!);if(info)deliveryEnrichment.set(id,info);
+  }
+  request.requests = request.requests.filter((r) => deliveryIds?deliveryIds.has(r.id):refs.has(taskRef.get(r.delivery_task_id) ?? ''));
   const scopedReqIds = request.requests.map((r) => r.id);
   const solution: SurgeSolution = { status: 'OK', routes: [], unassigned: scopedReqIds,
     stats: { vehicles_used: 0, trips: 0, total_distance: 0, unassigned: scopedReqIds.length } };
-  return withPlanningPolicy({ datasetRequestSha256: requestObject.sha256,
+  const day=withPlanningPolicy({ datasetRequestSha256: requestObject.sha256,deliveryEnrichment,
+    ...(shipmentDocument?{shipmentDocument,shipmentSha256:shipmentObject!.sha256}:{}),
     def: { id: dayMeta.dayId, date: dayMeta.date ?? dayMeta.isoDate, isoDate: dayMeta.isoDate, label: dayMeta.label,
     requestFile: '', solutionFile: '' }, kind: 'uploaded', request, solution,
     scopeTaskIds: new Set(request.requests.map((r) => r.delivery_task_id)),
     depot: { name: 'Depot', lon: request.locations[0]!.x, lat: request.locations[0]!.y }, enrichment: enrichmentFromRecords(rows),
     verifiedSharedAccessRefs:verifiedSharedAccessReferences(rows) }, scenario.planningPolicy);
+  return profiles.length?applyProfileSnapshots(day,profiles).day:day;
 }
 
 export async function solveConvertedDataset(objects: ObjectStore, tenantId: string, manifest: ConvertedManifest, scenario: Scenario,
   budgetSec: number, objective: Objective, signal: AbortSignal, fullBudget = false,
-  configuredSettings?:Omit<ManualDatasetContext,'day'>,incumbent?:Plan): Promise<Plan> {
-  const day = await loadConvertedDay(objects, tenantId, manifest, scenario);
+  configuredSettings?:Omit<ManualDatasetContext,'day'>,incumbent?:Plan,profiles:ApprovedProfile[]=[]): Promise<Plan> {
+  const day = await loadConvertedDay(objects, tenantId, manifest, scenario,profiles);
+  const fleetProfile=profiles.find(p=>p.kind==='fleet');
+  if(fleetProfile)configuredSettings=manualSettings(fleetProfile.content.settings);
   const {travel,...mutable}=day.request;
   const request={...structuredClone(mutable),travel};
   const baseline = datasetAllowances(request), datasetVehicles = request.vehicles.map(vehicle => vehicle.id);
@@ -164,7 +198,7 @@ export async function solveConvertedDataset(objects: ObjectStore, tenantId: stri
   request.vehicles=request.vehicles.filter(v=>!unavailable.has(v.id));
   const available = new Set(request.vehicles.map((v) => v.id));
   applyOverrides(request, scenario, available); applyVehicleOverrides(request, scenario); applySequences(request, scenario, available);
-  applyAccessLimits(request, day.enrichment, vehicleInfo);
+  applyAccessLimits(request, day.enrichment, vehicleInfo,day.deliveryEnrichment);
   applyRetainedDecisions(request, scenario, day.datasetRequestSha256, baseline);
   const seeded=applied&&policy?warmStart(request,incumbent,scenario,{...policy,day}):false;
   request.config = populationConfig({ ...request.config, max_time_seconds: budgetSec, seed: 42, lexicographic_objective: objective !== 'distance',

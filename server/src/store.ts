@@ -42,6 +42,7 @@ export interface VehicleSequence { vehicleId: number; orderNos: string[]; reques
 export const MAX_SEQUENCE_LEN = 500;
 
 export interface Scenario {
+  planningProfiles?: import('./planning-profiles.js').ProfileRef[];
   deliveryDatasetSha256?:string;
   selectedPlanId?: string;
   selectionVersion?: number;
@@ -179,6 +180,7 @@ export function applyScenarioEdits(scenario: Scenario, edits: ScenarioEdit[]): S
 /* A portable scenario: its edits + day + label, shareable as JSON so a colleague
  * can import it to recreate the same what-if (there is no multi-user store). */
 export interface ScenarioEditsBundle {
+  planningProfiles?: import('./planning-profile-contract.js').ProfileRef[];
   deliveryDatasetSha256?:string;
   planningPolicyId?: string; // reference only; never grants new approval
   removedVehicleIds: number[];
@@ -187,12 +189,13 @@ export interface ScenarioEditsBundle {
   vehicleOverrides: VehicleOverride[];
   sequences: VehicleSequence[];
 }
-export interface ScenarioExport { otto_scenario: 1; day: string; label: string; edits: ScenarioEditsBundle }
+export interface ScenarioExport { otto_scenario: 1|2; day: string; label: string; edits: ScenarioEditsBundle }
 
 export function exportScenario(s: Scenario): ScenarioExport {
   return {
-    otto_scenario: 1, day: s.day, label: s.label,
+    otto_scenario: s.deliveryDatasetSha256||s.planningProfiles!==undefined?2:1, day: s.day, label: s.label,
     edits: {
+      ...(s.planningProfiles!==undefined?{planningProfiles:structuredClone(s.planningProfiles)}:{}),
       ...(s.deliveryDatasetSha256?{deliveryDatasetSha256:s.deliveryDatasetSha256}:{}),
       ...(s.planningPolicy ? { planningPolicyId: s.planningPolicy.id } : {}),
       removedVehicleIds: [...s.removedVehicleIds],
@@ -209,11 +212,19 @@ export function exportScenario(s: Scenario): ScenarioExport {
 export function parseScenarioImport(body: unknown): { error: string } | { day: string; label: string; edits: ScenarioEditsBundle } {
   const b = body as Record<string, unknown> | null;
   if (!b || typeof b !== 'object') return { error: 'scenario object required' };
-  if (b.otto_scenario !== 1) return { error: 'not an OTTO scenario export' };
+  if (b.otto_scenario !== 1&&b.otto_scenario!==2) return { error: 'not a supported Cursus scenario export' };
   const day = b.day;
   if (typeof day !== 'string' || day.length === 0 || day.length > 64) return { error: 'valid day required' };
   const label = typeof b.label === 'string' && b.label.length <= 120 ? b.label : 'Imported scenario';
   const e = (b.edits ?? {}) as Record<string, unknown>;
+  let planningProfiles:ScenarioEditsBundle['planningProfiles'];
+  if(e.planningProfiles!==undefined){
+    if(!Array.isArray(e.planningProfiles)||e.planningProfiles.length>2||e.planningProfiles.some(p=>!p||typeof p!=='object'||
+      !/^profile_[a-zA-Z0-9_-]{1,100}$/.test(p.id)||!['fleet','locations'].includes(p.kind)||!Number.isSafeInteger(p.revision)||p.revision<1||p.revision>2147483647||!/^[a-f0-9]{64}$/.test(p.sha256))||
+      new Set(e.planningProfiles.map(p=>p.kind)).size!==e.planningProfiles.length)return {error:'Invalid planning profile references'};
+    planningProfiles=structuredClone(e.planningProfiles);
+  }
+  if(b.otto_scenario===1&&(e.deliveryDatasetSha256!==undefined||planningProfiles!==undefined))return {error:'Dataset-bound identities and profiles require scenario export version 2'};
   const isVid = (v: unknown): v is number => typeof v === 'number' && Number.isInteger(v) && v >= 0 && v < 1e9;
   const isOrder = (v: unknown): v is string => typeof v === 'string' && v.length > 0 && v.length <= 64;
   const arr = (v: unknown): unknown[] => (Array.isArray(v) ? v : []);
@@ -246,7 +257,7 @@ export function parseScenarioImport(body: unknown): { error: string } | { day: s
     return { error: 'invalid planning policy reference' };
   if(e.deliveryDatasetSha256!==undefined&&!/^[a-f0-9]{64}$/.test(String(e.deliveryDatasetSha256)))return {error:'Invalid delivery dataset checksum'};
   if((pins.some(p=>p.requestId!==undefined)||forbids.some(p=>p.requestId!==undefined)||sequences.some(s=>s.requestIds))&&!e.deliveryDatasetSha256)return {error:'Dataset checksum required for delivery identities'};
-  return { day, label, edits: { removedVehicleIds, pins, forbids, vehicleOverrides, sequences,...(typeof e.deliveryDatasetSha256==='string'?{deliveryDatasetSha256:e.deliveryDatasetSha256}:{}),
+  return { day, label, edits: { removedVehicleIds, pins, forbids, vehicleOverrides, sequences,...(planningProfiles?{planningProfiles}:{}),...(typeof e.deliveryDatasetSha256==='string'?{deliveryDatasetSha256:e.deliveryDatasetSha256}:{}),
     ...(typeof e.planningPolicyId === 'string' ? { planningPolicyId: e.planningPolicyId } : {}) } };
 }
 
@@ -545,6 +556,7 @@ export class Store {
   }
   /** Recreate a scenario from an imported edits bundle as a new copy of the day's base. */
   importScenario(base: Scenario, label: string, edits: ScenarioEditsBundle): Scenario {
+    if(edits.planningProfiles?.length)throw new Error('Versioned planning profiles require the stateful runtime.');
     if (edits.planningPolicyId && edits.planningPolicyId !== base.planningPolicy?.id) throw new Error('planning policy reference is not approved in this workspace');
     const s = this.createCopy(base, {}, label);
     s.removedVehicleIds = [...edits.removedVehicleIds];

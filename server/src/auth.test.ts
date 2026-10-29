@@ -21,10 +21,10 @@ test('permission grants match an independent specification, not production-deriv
   const expected: Record<Role, string[]> = {
     reviewer: ['workspace.read', 'workspace.export'],
     planner: ['workspace.read', 'workspace.export', 'scenario.create', 'scenario.rename', 'scenario.edit',
-      'scenario.import', 'plan.evaluate', 'plan.review', 'optimization.submit', 'optimization.cancel', 'analysis.generate'],
+      'scenario.import', 'plan.evaluate', 'plan.review', 'optimization.submit', 'optimization.cancel', 'analysis.generate','profile.propose'],
     admin: ['workspace.read', 'workspace.export', 'scenario.create', 'scenario.rename', 'scenario.edit', 'scenario.import',
       'scenario.delete', 'plan.evaluate', 'plan.review', 'plan.approve', 'optimization.submit', 'optimization.cancel', 'analysis.generate',
-      'dataset.upload', 'dataset.convert', 'dataset.validate', 'dataset.admit', 'dataset.delete', 'role.preview'],
+      'dataset.upload', 'dataset.convert', 'dataset.validate', 'dataset.admit', 'dataset.delete', 'role.preview','profile.propose','profile.approve'],
   };
   for (const role of ['admin', 'planner', 'reviewer'] as const)
     assert.deepEqual(permissions.filter(p => hasPermission(role, p)).sort(), expected[role].sort());

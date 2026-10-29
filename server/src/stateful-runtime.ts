@@ -12,6 +12,7 @@ import { deliverOne, ResendSender } from './state/outbox.js';
 import type { Scenario } from './store.js';
 import { manualSettings } from './state/manual-settings.js';
 import { admittedManualDatasetLoader } from './state/manual-dataset.js';
+import { ProfileRepository } from './state/profiles.js';
 
 const required = (name: string, value: string): string => {
   if (!value) throw new Error(`${name} is required in stateful mode`);
@@ -43,7 +44,7 @@ const auth = config.authRequired ? new StatefulAuthService(store, {
   secureCookies: config.authPublicOrigin.startsWith('https://'),
 }) : undefined;
 const fleetSettings=process.env.CURSUS_MANUAL_SETTINGS_FILE?manualSettings(JSON.parse(await readFile(process.env.CURSUS_MANUAL_SETTINGS_FILE,'utf8'))):undefined;
-const manualPlanning = fleetSettings ? admittedManualDatasetLoader(store,objects,config.authTenantId,fleetSettings) : undefined;
+const manualPlanning = admittedManualDatasetLoader(store,objects,config.authTenantId,fleetSettings);
 const app = await createStatefulApi({ store, objects, auth, manualPlanning,fleetSettings, tenantId: config.authTenantId,
   tenantName: config.authTenantName, publicOrigin: config.authPublicOrigin, maxUploadBytes: config.maxUploadMB * 1024 * 1024 });
 await app.register(fastifyStatic, { root: config.webDist, wildcard: false });
@@ -65,10 +66,11 @@ async function solve(lease: Lease, signal: AbortSignal): Promise<SolveOutput> {
   if (payload.scenario.manualDecisions && matches.length !== 1) throw new Error('manual replanning requires exactly one pinned admitted dataset');
   const dataset = matches[0];
   if (!dataset) throw new Error(`no admitted dataset contains day ${payload.scenario.day}`);
+  const profiles=await new ProfileRepository(store,lease.tenantId).resolve(payload.scenario.planningProfiles??[]);
   const plan = await solveConvertedDataset(objects, lease.tenantId, dataset.manifest as never, payload.scenario,
     Math.max(1, payload.budgetSec ?? config.solveTimeSeconds), payload.objective ?? 'vehicles', signal, payload.fullBudget ?? false,
     lease.tenantId===config.authTenantId?fleetSettings:undefined,
-    payload.referencePlanId?(await store.getPlan(lease.tenantId,payload.referencePlanId))??undefined:undefined);
+    payload.referencePlanId?(await store.getPlan(lease.tenantId,payload.referencePlanId))??undefined:undefined,profiles);
   return { planId: plan.id, scenarioId: payload.scenario.id, scenarioRevision: payload.scenario.revision, plan };
 }
 

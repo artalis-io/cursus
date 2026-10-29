@@ -77,8 +77,8 @@ def main():
                  f'OTTO_REVISION={otto_revision}', '-t', image, '.'])
         inspected = json.loads(run(['docker', 'image', 'inspect', image], capture=True).stdout)[0]
         labels = inspected['Config']['Labels'] or {}
-        if labels.get('io.artalis.cursus.schema.minimum') != '1' or labels.get('io.artalis.cursus.schema.maximum') != '3':
-            raise ValueError('image must declare supported schema versions 1..3')
+        if labels.get('io.artalis.cursus.schema.minimum') != '1' or labels.get('io.artalis.cursus.schema.maximum') != '4':
+            raise ValueError('image must declare supported schema versions 1..4')
         report.update(image_id=inspected['Id'], architecture=inspected['Architecture'],
                       image_revision=labels.get('org.opencontainers.image.revision'),
                       otto_revision=labels.get('io.artalis.otto.revision'))

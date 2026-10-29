@@ -42,6 +42,7 @@ export type Objective = 'vehicles' | 'distance';
  * then minimizes fleet size then distance; 'distance' (false) minimizes the
  * single cost objective (fixed + distance), i.e. the least-distance plan. */
 export function buildRequest(scenario: Scenario, budgetSec: number, objective: Objective = 'vehicles', fullBudget = false): BuiltRequest {
+  if(scenario.planningProfiles?.length)throw new Error('Versioned planning profiles require the stateful runtime.');
   const day = withPlanningPolicy(loadDay(scenario.day), scenario.planningPolicy);
   if(scenario.deliveryDatasetSha256&&scenario.deliveryDatasetSha256!==day.datasetRequestSha256)throw new Error('Scenario delivery identities belong to another dataset');
   // A12: deep-clone everything we mutate, but SHARE the N^2 travel matrix by
@@ -117,6 +118,8 @@ export function applyVehicleOverrides(request: SurgeRequest, scenario: Scenario)
   for (const o of scenario.vehicleOverrides) {
     const v = byId.get(o.vehicleId);
     if (!v) continue; // vehicle removed / not in scope
+    if(v.approved_capacity&&(o.capacityKg!=null&&o.capacityKg>v.approved_capacity[0]!||o.capacityPallets!=null&&o.capacityPallets>v.approved_capacity[1]!))
+      throw new Error('Scenario capacity exceeds the approved fleet profile.');
     if (o.capacityKg != null) v.capacity[0] = o.capacityKg;
     if (o.capacityPallets != null) v.capacity[1] = o.capacityPallets;
     if (o.shiftEarlySec != null) v.shift_early = o.shiftEarlySec;

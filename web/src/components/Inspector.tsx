@@ -8,6 +8,7 @@ import { setDraggedOrder, isOrderDrag, readDraggedOrder,deliveryToken,deliveryRe
 import { violationDetail } from '@/lib/violations';
 import { selectedUnassigned } from '@/lib/unassigned-selection';
 import { NarrationPanel } from '@/components/NarrationPanel';
+import {ShipmentDetails} from '@/components/ShipmentDetails';
 import { api } from '@/lib/api';
 import { useT } from '@/i18n';
 import { useEffect, useRef, useState } from 'react';
@@ -480,7 +481,7 @@ export function Inspector({ plan, scenario, selection, onSelect, onBack, onForwa
   // Unassigned order context.
   if (selection?.kind === 'unassigned') {
     const u = selectedUnassigned(plan.unassigned,selection);
-    const pin = u ? scenario.pins.find((p) => p.orderNo === u.orderNo) : undefined;
+    const pin = u ? scenario.pins.find(p=>p.orderNo===u.orderNo&&(p.requestId===undefined||p.requestId===u.requestId)) : undefined;
     const refOf = (id: number): string => plan.vehicles.find((v) => v.id === id)?.ref ?? `#${id}`;
     return (
       <Panel nav={nav}>
@@ -491,16 +492,17 @@ export function Inspector({ plan, scenario, selection, onSelect, onBack, onForwa
             <Separator />
             <Badge variant="warning">{t('inspector.unassignedBadge')}</Badge>
             <p className="text-xs text-muted-foreground">{u.reasonCode?t(`unassigned.${u.reasonCode}`):u.reason ?? t('inspector.unassignedReason')}</p>
+            <ShipmentDetails plan={plan} requestId={u.requestId}/>
             {/* Assign by hand: pin this unassigned order to a chosen vehicle, applied on Replan. */}
             {manualActions??(canEdit && <div className="space-y-2 rounded-md border border-divider bg-muted/30 p-2.5">
               <div className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">{t('inspector.assignByHand')}</div>
               {pin ? (
                 <div className="flex items-center justify-between gap-2">
                   <Badge variant="outline" className="gap-1"><Pin className="h-3 w-3" /> {t('inspector.pinned', { ref: refOf(pin.vehicleId) })}</Badge>
-                  <button type="button" onClick={() => onUnpin(u.orderNo)} className="inline-flex items-center gap-1 rounded border border-divider px-1.5 py-0.5 text-[11px] hover:bg-accent"><PinOff className="h-3 w-3" /> {t('inspector.unpin')}</button>
+                  <button type="button" onClick={() => onUnpin(deliveryToken(u.orderNo,pin.requestId))} className="inline-flex items-center gap-1 rounded border border-divider px-1.5 py-0.5 text-[11px] hover:bg-accent"><PinOff className="h-3 w-3" /> {t('inspector.unpin')}</button>
                 </div>
               ) : (
-                <select defaultValue="" disabled={solving} onChange={(e) => { const id = Number(e.target.value); if (id) onPin(u.orderNo, id); }}
+                <select defaultValue="" disabled={solving} onChange={(e) => { const id = Number(e.target.value); if (e.target.value!=='') onPin(deliveryToken(u.orderNo,u.requestId), id); }}
                   className="h-7 w-full rounded border border-divider bg-card px-1.5 text-xs disabled:opacity-40">
                   <option value="" disabled>{t('inspector.assignTo')}</option>
                   {plan.vehicles.map((v) => <option key={v.id} value={v.id}>{v.ref}{v.vehicleClass ? ` · ${v.vehicleClass.replace(/_/g, ' ')}` : ''}</option>)}
@@ -553,7 +555,7 @@ export function Inspector({ plan, scenario, selection, onSelect, onBack, onForwa
         <ScrollArea className="min-h-0 flex-1">
           <div className="space-y-3 p-3">
             <TabsContent value="details" className="mt-0 space-y-3">
-              {stop ? <StopDetail stop={stop} vehicle={vehicle} />
+              {stop ? <><StopDetail stop={stop} vehicle={vehicle} /><ShipmentDetails plan={plan} requestId={stop.requestId}/></>
                 : trip && displayTrip ? <TripView planId={plan.id} trip={trip} displayTrip={displayTrip} reorderPending={canEdit && reorderPending} vehicle={vehicle} currency={currency} canDrag={canEdit && !solving}
                     onSelectStop={(seq) => onSelect({ kind: 'stop', vehicleId: vehicle.id, tripIndex: trip.index, seq })}
                     onResequence={canEdit && onSetSequence ? (newOrderNos) => {

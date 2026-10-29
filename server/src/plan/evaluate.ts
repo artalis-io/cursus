@@ -52,7 +52,7 @@ export function evaluateTrip(inp: EvaluateTripInput): PlanTrip {
     const task=requestId===undefined?options[0]:taskById.get(requests.get(requestId)?.delivery_task_id??-1);
     if(requestId!==undefined&&(!task||task.ref!==orderNo))throw new Error('Preview delivery identity mismatch');
     const loc = task ? request.locations[task.location_id] : undefined;
-    const info = day.enrichment.get(orderNo) ?? null;
+    const info = (requestId===undefined?undefined:day.deliveryEnrichment?.get(requestId))??day.enrichment.get(orderNo) ?? null;
     const weightKg = task?.demand[0] ?? 0;
     const pallets = task?.demand[1] ?? 0;
     loadKg += weightKg; loadPallets += pallets;

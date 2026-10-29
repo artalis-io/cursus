@@ -130,7 +130,7 @@ export function enrichmentFromRecords(recs: Record<string, unknown>[]): Map<stri
       twEnd: asStr(r.tw_end),
       serviceMin: typeof r.service_min === 'number' ? r.service_min : null,
       requiresTailLift: Boolean(r.requires_tail_lift) || hasTailLiftReq(asStr(r.special_req)),
-      maxTonnage: parseTonnage(asStr(r.special_req)),
+      maxTonnage: r.max_gross_weight_kg===null?null:typeof r.max_gross_weight_kg==='number'&&Number.isFinite(r.max_gross_weight_kg)&&r.max_gross_weight_kg>0?r.max_gross_weight_kg/1000:parseTonnage(asStr(r.special_req)),
     });
   }
   return m;
@@ -168,6 +168,10 @@ export function vehicleInfoFor(ref: string, table: Map<string, VehicleInfo>): Ve
 }
 
 export interface LoadedDay {
+  shipmentDocument?: import('../shipment-contract.js').ShipmentDocument;
+  shipmentSha256?:string;
+  deliveryEnrichment?: Map<number,OrderInfo>;
+  planningProfiles?: import('../planning-profiles.js').ProfileRef[];
   verifiedSharedAccessRefs?:Set<string>; // duplicate labels whose source safety facts agree
   datasetRequestSha256?: string; // immutable admitted input identity for server-owned approvals
   planningPolicy?: import('../plan/policy.js').PlanningPolicy;

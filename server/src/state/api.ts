@@ -34,6 +34,9 @@ import { expectedRevision, registerScenarioPreconditions } from '../revisions.js
 import { PlanWorkflow, WorkflowError } from './plan-workflow.js';
 import { selectPlan } from './plan-selection.js';
 import { tripPermutation } from '../plan/identity.js';
+import { registerProfileApi } from './profiles-api.js';
+import { ProfileRepository } from './profiles.js';
+import { manualSettings } from './manual-settings.js';
 import { exportFilename } from '../handoff.js';
 import { fleetPolicyBlockers, applyFleetSettings } from './manual-settings.js';
 import type { ManualDatasetContext } from '../plan/manual-adapter.js';
@@ -60,7 +63,8 @@ export async function createStatefulApi(options: StatefulApiOptions): Promise<Fa
   await options.auth?.initialize();
   const scenarios = new ScenarioRepository(options.store, options.tenantId);
   registerScenarioPreconditions(app, id => scenarios.get(id));
-  const policyIssues=options.fleetSettings?(plan:Plan)=>fleetPolicyBlockers(plan,options.fleetSettings!):undefined;
+  registerProfileApi(app,options.store,options.tenantId,options.manualPlanning);
+  const policyIssues=options.fleetSettings?(plan:Plan)=>plan.provenance.planningProfiles?.some(p=>p.kind==='fleet')?[]:fleetPolicyBlockers(plan,options.fleetSettings!):undefined;
   const workflow = new PlanWorkflow(options.store, options.tenantId,policyIssues);
   app.post<{Params:{id:string};Body:{planId?:unknown;selectionVersion?:unknown;acknowledgeIncomplete?:unknown}}>('/api/scenarios/:id/select-plan',async(req,reply)=>{
     const b=req.body,revision=expectedRevision(req.headers);
@@ -150,11 +154,11 @@ export async function createStatefulApi(options: StatefulApiOptions): Promise<Fa
   });
   app.get('/api/auth/me', async (req, reply) => {
     reply.header('Cache-Control', 'private, no-store');
-    if (!options.auth) return { email: 'local@cursus', tenantId: options.tenantId, tenantName: options.tenantName, role: 'admin', permissions: statefulPermissions('admin').filter(p => p !== 'role.preview'), build: buildInfo };
+    if (!options.auth) return { email: 'local@cursus', tenantId: options.tenantId, tenantName: options.tenantName, role: 'admin', permissions: statefulPermissions('admin').filter(p => p !== 'role.preview'), build: buildInfo,features:{planningProfiles:true} };
     const principal = await options.auth.authenticate(cookieValue(req.headers.cookie, 'cursus_session'));
     if (!principal || principal.tenantId !== options.tenantId) return reply.code(401).send({ error: 'authentication required' });
     const identity = viewIdentity(principal, req.headers.cookie);
-    return { ...identity, permissions: statefulPermissions(identity.effectiveRole), tenantName: await options.store.getTenantName(principal.tenantId), build: buildInfo };
+    return { ...identity, permissions: statefulPermissions(identity.effectiveRole), tenantName: await options.store.getTenantName(principal.tenantId), build: buildInfo,features:{planningProfiles:true} };
   });
   app.post('/api/auth/logout', async (req, reply) => {
     if (options.auth && req.headers.origin !== options.publicOrigin) return reply.code(403).send({ error: 'invalid request origin' });
@@ -263,14 +267,18 @@ export async function createStatefulApi(options: StatefulApiOptions): Promise<Fa
       if (!scenario) return reply.code(404).send({ error: 'scenario not found for plan' });
       if (policyIssues?.(plan).length) return reply.code(409).send({error:'Planning settings changed; create a fresh plan before previewing.'});
       let day;
+      const profiles=await new ProfileRepository(options.store,options.tenantId).resolve(scenario.planningProfiles??[]);
+      if(JSON.stringify(plan.provenance?.planningProfiles??[])!==JSON.stringify(scenario.planningProfiles??[]))
+        return reply.code(409).send({error:'Planning profile revisions changed; create a fresh plan before previewing.'});
       if (options.objects) {
         const rows = await options.store.listDatasets(options.tenantId, true);
         const row = rows.find((candidate) => ((candidate.manifest as ConvertedManifest | undefined)?.days ?? []).some((d) => d.dayId === scenario.day) &&
           (candidate.manifest as ConvertedManifest).artifacts?.request?.sha256 === (plan.provenance?.datasetSha256??plan.provenance?.planningPolicy?.datasetRequestSha256));
         if (!row) return reply.code(404).send({ error: 'dataset not available for plan' });
-        day = await loadConvertedDay(options.objects, options.tenantId, row.manifest as ConvertedManifest, scenario);
+        day = await loadConvertedDay(options.objects, options.tenantId, row.manifest as ConvertedManifest, scenario,profiles);
       } else { day = loadDay(scenario.day); }
-      const settings=options.fleetSettings;
+      const fleetProfile=profiles.find(p=>p.kind==='fleet');
+      const settings=fleetProfile?manualSettings(fleetProfile.content.settings):options.fleetSettings;
       if(settings&&!applyFleetSettings(day.request,day.datasetRequestSha256,settings))
         return reply.code(409).send({error:'Fleet settings do not match the pinned dataset.'});
       return { trip: evaluateTrip({ day, request: day.request, vehicleId: b.vehicleId, tripIndex: srcTrip.index,

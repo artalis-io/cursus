@@ -9,6 +9,7 @@ import { StatefulStore } from '/app/server/dist/state/postgres.js';
 import { ObjectStore } from '/app/server/dist/state/objects.js';
 import { solveConvertedDataset } from '/app/server/dist/state/conversion.js';
 import { manualSettings } from '/app/server/dist/state/manual-settings.js';
+import {validateShipments} from '/app/server/dist/shipments.js';
 const require = createRequire('/app/server/package.json');
 const { S3Client, CreateBucketCommand } = require('@aws-sdk/client-s3');
 const url = (await readFile(config.databaseUrlFile, 'utf8')).trim();
@@ -43,23 +44,33 @@ async function seed() {
       durations: Array.from({ length: 81 }, (_, k) => { const i = Math.floor(k / 9), j = k % 9; return i === j ? 0 : (1 + (i * 7 + j * 3) % 9) * 60; }),
     },
   };
+  // The second day intentionally has two deliveries with the same business
+  // reference; only their immutable request IDs distinguish them.
+  request.tasks[3].ref='PUBLIC-REPEAT';request.tasks[7].ref='PUBLIC-REPEAT';
   // Interleaved days retain sparse request IDs, reproducing the production
   // boundary that legacy browser tests missed. No private customers or files.
-  const geo = { records: request.tasks.map((task, i) => ({ order_no: task.ref,
+  const geo = { records: request.tasks.map((task, i) => ({ request_id:request.requests[i].id,order_no: task.ref,
     delivery_date: i % 4 === 3 ? '2026-05-07' : '2026-05-06', customer: `Public fixture ${i + 1}`,
     city: 'Budapest', lat: request.locations[i + 1].y, lon: request.locations[i + 1].x,
     ...(i === 0 ? { special_req: 'emelőhátfal 5,5 t' } : {}) })) };
   const requestObject = await objects.putImmutable('acceptance', Buffer.from(JSON.stringify(request)), 'application/json');
   const geoObject = await objects.putImmutable('acceptance', Buffer.from(JSON.stringify(geo)), 'application/json');
+  const metadata=validateShipments({schemaVersion:1,datasetSha256:requestObject.sha256,
+    shipments:request.requests.map((order,i)=>({id:`commercial-${order.id}`,reference:`Public order ${i+1}`,splitPolicy:'indivisible',
+      lines:[{id:'line-1',productRef:`SKU-${i+1}`,quantity:10,unit:'case',grossWeightKg:100}]})),
+    deliveries:request.requests.map((order,i)=>({id:`delivery-${order.id}`,requestId:order.id,reference:request.tasks[i].ref,locationId:i+1,
+      date:i%4===3?'2026-05-07':'2026-05-06',shipmentId:`commercial-${order.id}`,allocations:[{lineId:'line-1',quantity:10}],
+      planningWeightKg:100,palletEquivalent:1,weightBasis:'gross',detail:'line_items',loadUnits:[{id:'pallet',kind:'EUR pallet',quantity:1,stackable:false,grossWeightKg:100}]}))},request,requestObject.sha256);
+  const shipmentObject=await objects.putImmutable('acceptance',Buffer.from(JSON.stringify(metadata)),'application/json');
   const manifest = { schemaVersion: 1, label: 'Public acceptance fixture', name: 'public-fixture.json', source: requestObject,
-    artifacts: { request: requestObject, geocoded: geoObject }, stats: { routable: 8 },
+    artifacts: { request: requestObject, geocoded: geoObject,shipments:shipmentObject }, stats: { routable: 8 },
     days: [{ dayId: 'acceptance-day', date: '2026-05-06', isoDate: '2026-05-06', label: 'Public day one', orders: 6 },
       { dayId: 'acceptance-day-two', date: '2026-05-07', isoDate: '2026-05-07', label: 'Public day two', orders: 2 }] };
-  for (const artifact of [requestObject, geoObject]) await store.stageObject('acceptance', artifact);
+  for (const artifact of [requestObject, geoObject,shipmentObject]) await store.stageObject('acceptance', artifact);
   await store.createDatasetUpload('acceptance', 'acceptance-dataset', { source: requestObject });
   await store.enqueueJob('acceptance', 'dataset-admit', 'fixture-admission', {});
   const lease = await store.claimJob('dataset-admit', 'fixture', 120);
-  await store.completeDatasetAdmission(lease, 'acceptance-dataset', manifest, [requestObject, geoObject]);
+  await store.completeDatasetAdmission(lease, 'acceptance-dataset', manifest, [requestObject, geoObject,shipmentObject]);
   for (const day of manifest.days) {
     const scenario = { id: `${day.dayId}-base`, day: day.dayId, kind: 'base', revision: 0, parentId: null,
       label: day.label, removedVehicleIds: [], pins: [], forbids: [], sequences: [], vehicleOverrides: [], createdAt: new Date().toISOString() };

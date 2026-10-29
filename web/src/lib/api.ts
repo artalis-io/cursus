@@ -1,4 +1,5 @@
 import type { Comparison, DaySummary, Job, Objective, Plan, Scenario, ScenarioEdit, Trip } from '@/types';
+import type {ProfileContent,ProfileRef,ProfileRevision,ProfileKind} from '../../../server/src/planning-profile-contract';
 
 /* Same-origin API client. In dev, Vite proxies /api and /tiles to the backend
  * (VITE_API_ORIGIN); in production the backend serves the SPA and these paths. */
@@ -50,6 +51,11 @@ async function jsend<T>(url: string, method: string, body?: unknown, revision?: 
 }
 
 export const api = {
+  profiles:()=>jget<ProfileRevision[]>('/api/profiles'),
+  profileTemplate:(planId:string,kind:ProfileKind)=>jget<ProfileContent>(`/api/profiles/template?planId=${encodeURIComponent(planId)}&kind=${kind}`),
+  proposeProfile:(content:ProfileContent,version:number,id?:string)=>jsend<ProfileRef&{version:number}>(id?`/api/profiles/${encodeURIComponent(id)}/revisions`:'/api/profiles','POST',{content},version),
+  activateProfile:(id:string,revision:number,version:number)=>jsend<ProfileRef&{version:number}>(`/api/profiles/${encodeURIComponent(id)}/activate`,'POST',{revision},version),
+  bindProfiles:(scenario:Scenario,profiles:ProfileRef[])=>jsend<Scenario>(`/api/scenarios/${encodeURIComponent(scenario.id)}/profiles`,'POST',{profiles},scenario.revision),
   selectPlan:(id:string,revision:number,planId:string,selectionVersion:number,acknowledgeIncomplete=false)=>jsend<Scenario>(`/api/scenarios/${encodeURIComponent(id)}/select-plan`,'POST',{planId,selectionVersion,acknowledgeIncomplete},revision),
   manualContext:(id:string)=>jget<import('@/types').ManualContext>(`/api/plans/${encodeURIComponent(id)}/manual-context`),
   manualPreview:(id:string,revision:number,intent:import('@/types').ManualIntent)=>jsend<import('@/types').ManualPreview>(`/api/scenarios/${encodeURIComponent(id)}/manual-preview`,'POST',intent,revision),
@@ -146,7 +152,7 @@ export const api = {
 };
 
 export interface ScenarioExport {
-  otto_scenario: 1; day: string; label: string;
+  otto_scenario: 1|2; day: string; label: string;
   edits: { removedVehicleIds: number[]; pins: unknown[]; forbids: unknown[]; vehicleOverrides: unknown[]; sequences: unknown[] };
 }
 

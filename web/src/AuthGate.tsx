@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { ArrowRight, CheckCircle2, LoaderCircle, LockKeyhole, Mail, Route } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { AccountBar, type AccountUser } from '@/components/AccountBar';
-import { WorkspaceNameContext, WorkspaceTenantContext } from '@/workspace';
+import { WorkspaceNameContext, WorkspaceTenantContext,WorkspaceFeaturesContext } from '@/workspace';
 import { useI18n } from '@/i18n';
 import { RoleContext, PermissionsContext } from '@/permissions';
 
@@ -62,11 +62,13 @@ export function AuthGate({ children }: { children: ReactNode }) {
   if (user) return <div className="flex h-full min-h-0 flex-col overflow-hidden">
     <WorkspaceNameContext.Provider value={user.tenantName?.trim() || null}>
       <WorkspaceTenantContext.Provider value={user.tenantId}>
+      <WorkspaceFeaturesContext.Provider value={user.features??{}}>
       <RoleContext.Provider value={user.effectiveRole || user.role}>
         <PermissionsContext.Provider value={user.permissions ?? null}>
         <div data-testid="workspace-content" className="min-h-0 min-w-0 flex-1 overflow-hidden">{children}</div>
         </PermissionsContext.Provider>
       </RoleContext.Provider>
+      </WorkspaceFeaturesContext.Provider>
       </WorkspaceTenantContext.Provider>
     </WorkspaceNameContext.Provider>
     <AccountBar user={user} signingOut={signingOut} error={logoutError} onSignOut={() => void logout()} />

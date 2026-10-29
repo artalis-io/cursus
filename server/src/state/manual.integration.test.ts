@@ -230,7 +230,8 @@ test('manual publication cannot overwrite a newer current plan at the same scena
     const publisher=new ManualPlanPublisher(store,tenant,async()=>{entered();await held;return f.context;});
     const pending=publisher.publish(f.scenario.id,1,{parentPlanId:f.parent.id,batch:{operationId:'pointer-race',datasetSha256:'a'.repeat(64),commands:[{op:'deassign',requestId:91}]}});
     await seen;
-    // Model the exact same-revision pointer update performed by completeSolve.
+    // Model a same-revision pointer update from explicit candidate adoption
+    // (or completion of an older client without a selection pointer).
     const newer={...f.parent,id:'new-current'};
     await store.tx(async client=>{
       await client.query('SELECT revision FROM scenarios WHERE tenant_id=$1 AND id=$2 FOR UPDATE',[tenant,f.scenario.id]);
@@ -344,6 +345,13 @@ test('real native replanning across replicas retains, releases and fences manual
       // Target only this disposable job; unrelated test leases are untouched.
       await a.pool.query("UPDATE jobs SET state='running',lease_owner='old',lease_expires_at=now()+interval '30 seconds',fence=1,attempt=1 WHERE tenant_id=$1 AND id=$2",[tenant,id]);
       const snapshot=(await a.getJob(tenant,id))!.payload as {scenario:Scenario};
+      const choose=async(plan:import('../types.js').Plan)=>{
+        const current=(await a.getScenario(tenant,snapshot.scenario.id))!;
+        assert.equal(current.manualPlanId,snapshot.scenario.manualPlanId,'completion preserves the selected incumbent until adoption');
+        const choice=await apps[0]!.inject({method:'POST',url:`${url}/select-plan`,headers:{'if-match':`"${revision}"`},
+          payload:{planId:plan.id,selectionVersion:current.selectionVersion??0,acknowledgeIncomplete:true}});
+        assert.equal(choice.statusCode,200,choice.body);return plan;
+      };
       const execute=()=>solveConvertedDataset(objects,tenant,manifest,snapshot.scenario,1,'vehicles',new AbortController().signal);
       const output=await execute();
       const lease:Lease={tenantId:tenant,id,owner:'old',fence:1,attempt:1,payload:snapshot};
@@ -356,9 +364,9 @@ test('real native replanning across replicas retains, releases and fences manual
         await assert.rejects(()=>b.completeSolve({...lease,owner:'new',fence:2},forged.id,snapshot.scenario.id,revision,forged),/provenance/);
         assert.equal((await b.getJob(tenant,id))?.state,'running');
         await b.completeSolve({...lease,owner:'new',fence:2},winner.id,snapshot.scenario.id,revision,winner);
-        return winner;
+        return choose(winner);
       }
-      await b.completeSolve(lease,output.id,snapshot.scenario.id,revision,output);return output;
+      await b.completeSolve(lease,output.id,snapshot.scenario.id,revision,output);return choose(output);
     };
     const retained=await solve(2);
     assert.equal(retained.vehicles.find(v=>v.id===42)?.trips.flatMap(t=>t.stops).some(s=>s.requestId===91),true);

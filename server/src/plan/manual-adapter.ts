@@ -38,6 +38,8 @@ export function prepareManualInput(parent: Plan, scenario: Scenario, context: Ma
     requireThat(isDeepStrictEqual([...(snapshot.unavailableVehicleIds??[])].sort((a,b)=>a-b),[...unavailable].sort((a,b)=>a-b)), 'manual vehicle availability policy changed');
   }
   requireThat(parent.scenarioId === scenario.id && parent.scenarioRevision === scenario.revision, 'parent plan is stale');
+  requireThat(isDeepStrictEqual(parent.provenance.planningProfiles??[],scenario.planningProfiles??[])&&
+    isDeepStrictEqual(day.planningProfiles??[],scenario.planningProfiles??[]),'planning profile revision changed');
   requireThat(day.def.id === scenario.day && parent.day === day.def.isoDate, 'dataset day mismatch');
   const sha = day.datasetRequestSha256;
   requireThat(sha && /^[a-f0-9]{64}$/.test(sha), 'immutable dataset identity required');
@@ -77,10 +79,10 @@ export function prepareManualInput(parent: Plan, scenario: Scenario, context: Ma
   assertManualLayout(layout);
   const requirements: ManualEvaluationInput['requirements'] = new Map();
   for (const order of full.requests) {
-    const task = tasks.get(order.delivery_task_id)!, info = day.enrichment.get(task.ref);
+    const task = tasks.get(order.delivery_task_id)!, info = day.deliveryEnrichment?.get(order.id)??day.enrichment.get(task.ref);
     // Shared label metadata is usable only with the loader's independent
     // agreement proof; each delivery still needs its stable request identity.
-    requireThat(info && (refs.get(task.ref)?.length === 1||day.verifiedSharedAccessRefs?.has(task.ref)), 'unambiguous access evidence required');
+    requireThat(info && (day.deliveryEnrichment?.has(order.id)||refs.get(task.ref)?.length === 1||day.verifiedSharedAccessRefs?.has(task.ref)), 'unambiguous access evidence required');
     requirements.set(order.id, { maxTonnage: info!.maxTonnage, requiresTailLift: info!.requiresTailLift });
   }
   const fleet: ManualEvaluationInput['fleet'] = new Map();
@@ -141,7 +143,7 @@ export function materializeManualPlan(parent: Plan, scenario: Scenario, input: M
   const reqs = new Map(input.request.requests.map(order => [order.id, order]));
   const tasks = new Map(input.request.tasks.map(task => [task.id, task]));
   const taskFor = (requestId: number) => tasks.get(reqs.get(requestId)!.delivery_task_id)!;
-  const rowFor = (requestId: number) => context.day.enrichment.get(taskFor(requestId).ref)!;
+  const rowFor = (requestId: number) => context.day.deliveryEnrichment?.get(requestId)??context.day.enrichment.get(taskFor(requestId).ref)!;
   const vehicles = evaluation.vehicles.map(v => {
     const source = input.request.vehicles.find(vehicle => vehicle.id === v.vehicleId)!, info = input.fleet.get(v.vehicleId)!;
     const trips = v.trips.map((trip, index) => ({ index, manualTripId: trip.tripId, startSec: trip.startSec, endSec: trip.endSec,

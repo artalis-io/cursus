@@ -1,5 +1,5 @@
 import { useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { WorkspaceTenantContext } from '@/workspace';
+import { WorkspaceTenantContext,WorkspaceFeaturesContext } from '@/workspace';
 import { selectedUnassigned } from '@/lib/unassigned-selection';
 import { ChevronLeft, ChevronRight, ChevronUp, ChevronDown, RotateCcw } from 'lucide-react';
 import { TooltipProvider } from '@/components/ui/tooltip';
@@ -24,6 +24,7 @@ import { IssuesDialog } from '@/components/IssuesDialog';
 import { ScenariosDialog } from '@/components/ScenariosDialog';
 import { HelpOverlay } from '@/components/HelpOverlay';
 import { CandidatePanel } from '@/components/CandidatePanel';
+import {ProfilesDialog} from '@/components/ProfilesDialog';
 import { deliveryReference,deliveryToken } from '@/lib/dnd';
 import { api, ApiError, pollJob } from '@/lib/api';
 import { useT, describeApiError } from '@/i18n';
@@ -134,6 +135,8 @@ function sameSel(a: Selection, b: Selection): boolean {
 }
 
 export default function App() {
+  const features=useContext(WorkspaceFeaturesContext);
+  const [profilesOpen,setProfilesOpen]=useState(false);
   const tenant=useContext(WorkspaceTenantContext);
   const manualStorageKey=`cursus.manual-workspace.v1:${tenant??'local'}`;
   const [freshnessError, setFreshnessError] = useState<string | null>(null);
@@ -671,6 +674,7 @@ export default function App() {
     <StaleWorkspaceContext.Provider value={!!candidate || !!freshnessError || workspaceLoading || !!(plan.manual||plan.assignments)&&!manualContext?.enabled}><TooltipProvider delayDuration={200}>
       <div className="flex h-full flex-col overflow-hidden">
         <TopBar
+          onOpenProfiles={features.planningProfiles?()=>setProfilesOpen(true):undefined}
           days={days} dayId={dayId} onDayChange={(id) => { if (!okToSwitch()) return; const d = days.find((x) => x.id === id); if (d) void loadDay(d); }}
           scenario={scenario} plan={plan} job={job} solving={!!solving} exportPending={workspaceLoading}
           objective={objective} onObjectiveChange={setObjective}
@@ -811,6 +815,7 @@ export default function App() {
       <IssuesDialog open={issuesOpen} onOpenChange={setIssuesOpen} plan={plan} onSelect={navigate} />
       <ScenariosDialog open={scenariosOpen} onOpenChange={setScenariosOpen} dayId={dayId} currentScenarioId={scenario.id} onOpen={(id) => { if (okToSwitch()) void reopenPlan(id); }} onImport={(s) => void onImportScenario(s)} />
       <HelpOverlay open={helpOpen} onClose={closeHelp} />
+      {features.planningProfiles&&<ProfilesDialog open={profilesOpen} onOpenChange={setProfilesOpen} plan={plan} scenario={scenario} onBound={s=>void onImportScenario(s)}/>}
       {toast && (
         <div role="status" className="pointer-events-none fixed bottom-16 left-1/2 z-40 -translate-x-1/2 rounded-md bg-graphite px-3.5 py-2 text-xs font-medium text-graphite-foreground shadow-lg">
           {toast}

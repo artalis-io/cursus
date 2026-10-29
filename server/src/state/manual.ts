@@ -140,6 +140,9 @@ export class ManualPlanPublisher {
         unavailableVehicleIds:[...(context.unavailableVehicleIds??[])],
         requestIds: [...input.layout.requestIds],
         origins: structuredClone(input.layout.origins), history: structuredClone(input.layout.history) } };
+    if(updated.id!==scenarioId){delete updated.selectedPlanId;delete updated.selectionVersion;}
+    updated.selectedPlanId=updated.manualPlanId;
+    updated.selectionVersion=updated.id===scenarioId?(scenario.selectionVersion??0)+1:1;
     const plan = materializeManualPlan(parent, updated, input, evaluation, context, updated.manualPlanId!, at);
     plan.manual!.parentScenario=structuredClone(scenario);
     if (preview) return plan;
@@ -153,6 +156,8 @@ export class ManualPlanPublisher {
       // revision. Do not overwrite a result published while evaluation ran.
       if (current.rows[0]?.body.manualPlanId !== scenario.manualPlanId)
         throw new ManualPublicationError(409, 'Current plan changed during evaluation; reload before planning.');
+      if((current.rows[0]?.body.selectionVersion??0)!==(scenario.selectionVersion??0)||current.rows[0]?.body.selectedPlanId!==scenario.selectedPlanId)
+        throw new ManualPublicationError(409,'Current plan selection changed during evaluation; reload before planning.');
       const base = await client.query<{ body: Plan }>('SELECT body FROM plans WHERE tenant_id=$1 AND id=$2', [this.tenantId, parent.id]);
       if (!base.rows[0] || planDigest(base.rows[0].body) !== parentHash) throw new ManualPublicationError(409, 'Parent plan changed during evaluation.');
       if (updated.id === scenarioId) await client.query('UPDATE scenarios SET revision=$3,body=$4,updated_at=now() WHERE tenant_id=$1 AND id=$2', [this.tenantId, scenarioId, updated.revision, updated]);

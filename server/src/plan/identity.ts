@@ -1,6 +1,6 @@
 type Delivery = {orderNo:string;requestId?:number};
 export interface ComparisonInput {day:string;stats:{servedOrders:number;totalOrders:number};vehicles:{trips:{stops:Delivery[]}[]}[];unassigned:Delivery[];
- cost:{currency:string}|null;provenance:{datasetSha256?:string;tariffSha256?:string;planningPolicy?:unknown}}
+ cost:{currency:string}|null;provenance:{datasetSha256?:string;shipmentSha256?:string;tariffSha256?:string;planningPolicy?:unknown;planningProfiles?:unknown}}
 export const datasetIdentity = (p: ComparisonInput): string | undefined => {
  const policy=p.provenance?.planningPolicy;
  return p.provenance?.datasetSha256??(policy&&typeof policy==='object'&&'datasetRequestSha256' in policy&&typeof policy.datasetRequestSha256==='string'?policy.datasetRequestSha256:undefined);
@@ -34,9 +34,11 @@ export function comparisonEvidence(base: ComparisonInput, revised: ComparisonInp
   const identity = deliveryComparison(base, revised);
   const tariff = base.provenance?.tariffSha256, other = revised.provenance?.tariffSha256;
   const sameTariff = Boolean(tariff && other && tariff === other && base.cost?.currency === revised.cost?.currency);
-  const samePolicy = canonical(base.provenance?.planningPolicy ?? null) === canonical(revised.provenance?.planningPolicy ?? null);
+  const samePolicy = canonical([base.provenance?.planningPolicy??null,base.provenance?.planningProfiles??[]]) ===
+    canonical([revised.provenance?.planningPolicy??null,revised.provenance?.planningProfiles??[]]);
+  const sameMetadata=base.provenance?.shipmentSha256===revised.provenance?.shipmentSha256;
   return { ...identity, sameTariff, samePolicy,
-    improvementEligible: identity.verifiedScope && sameTariff && samePolicy && !identity.lostService };
+    improvementEligible: identity.verifiedScope && sameTariff && samePolicy && sameMetadata && !identity.lostService };
 }
 
 export function tripPermutation(stops:Delivery[],orderNos:string[],requestIds?:unknown):boolean {

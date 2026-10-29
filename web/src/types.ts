@@ -7,6 +7,8 @@
 export type PlanSource = 'saved' | 'live' | 'sample';
 
 export interface PlanProvenance {
+  shipmentSha256?:string;
+  planningProfiles?: import('../../server/src/planning-profile-contract').ProfileRef[];
   tariffSha256?:string;
   datasetSha256?: string;
   planningPolicy?: { id: string; date: string; exceptions: { orderNo: string; reason: string; maxTonnage?: number; requiresTailLift?: boolean }[] };
@@ -136,6 +138,7 @@ export interface PlanCost {
 export type Objective = 'vehicles' | 'distance';
 
 export interface Plan {
+  shipmentMetadata?:import('../../server/src/shipment-contract').ShipmentSnapshot;
   manual?: { parentPlanId:string; layout:ManualLayout };
   assignments?: { parentPlanId:string; layout:ManualLayout };
   id: string;
@@ -190,6 +193,7 @@ export interface VehicleOverride {
 export type VehicleConstraintPatch = Omit<VehicleOverride, 'vehicleId'>;
 
 export interface Scenario {
+  planningProfiles?: import('../../server/src/planning-profile-contract').ProfileRef[];
   deliveryDatasetSha256?:string;
   selectedPlanId?: string;
   selectionVersion?: number;

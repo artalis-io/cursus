@@ -123,6 +123,11 @@ export async function admitDataset(uploadPath: string, mapping: Mapping, label: 
   const requests: SurgeRequestDef[] = tasks.map((t) => ({ id: t.id, delivery_task_id: t.id, unassigned_penalty: 1_000_000 }));
   req.tasks = tasks;
   req.requests = requests;
+  // Persist the actual row-to-request mapping; display references can repeat
+  // across locations and days. This remains generated scratch output only.
+  recs.forEach(row=>{delete row.request_id;});
+  routable.forEach((row,i)=>{row.request_id=requests[i]!.id;});
+  writeFileSync(geoPath,JSON.stringify(geo));
   req.travel = { location_count: locs.length, distances: matrix.distances, durations: matrix.durations };
   writeFileSync(resolve(dir, 'request.json'), JSON.stringify(req));
 
