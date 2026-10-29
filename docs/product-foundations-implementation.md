@@ -1,12 +1,14 @@
 # Product foundations implementation
 
-Status: authorized implementation, in progress. Production activation is separate.
+Status: implemented on `feat/product-planning-foundations`; review and validation evidence are tracked in [PR #42](https://github.com/artalis-io/cursus/pull/42). Production activation is separate.
 
 Progress:
 
 - Candidate-safe Replan and stable identity: committed as `db42035`; 68/68 isolated production-image Playwright tests passed. Later profile/shipment work adds regression protection for subsequent manual selection and portable-file compatibility.
-- Profiles and canonical shipment metadata: implemented on the feature branch; native unit, two-replica HTTP/integration, frontend build and deployment-tool checks pass. Browser testing found and fixed positional stop selection and a reopen/manual-mode navigation race. Full corrected production-image acceptance remains the final gate.
-- Revision-bound acknowledged handoff: implemented with immutable intents, bounded leased delivery, receipt-only ambiguous recovery, amendment/cancellation, Admin permissions, and an opt-in receiver contract. Real local HTTP crash/takeover tests pass. No production destination is configured or contacted.
+- Profiles and canonical shipment metadata: implemented; native unit, two-replica HTTP/integration, frontend build and deployment-tool checks pass. Browser testing found and fixed positional stop selection and a reopen/manual-mode navigation race. The complete corrected 74-test production-image suite passes on AMD64 in CI; ARM64 verification is recorded separately in the PR.
+- Revision-bound acknowledged handoff: implemented with immutable intents, bounded leased delivery, receipt-only ambiguous recovery, amendment/cancellation, Admin permissions, complete delivery-identity checks and an opt-in receiver contract. Real local HTTP crash/takeover tests and the production-image browser workflow pass. No production destination is configured or contacted.
+
+Implementation validation at `35a3543`: 198 server checks with native Surge enabled; 39 integration tests passed and two optional private-data tests skipped; 101 deployment/HA Python tests passed. Frontend build and browser TypeScript compile pass; lint has zero errors and five existing hook warnings. GitHub's six release checks are green, including 74/74 AMD64 production-image browser tests without retries or skips. CI's merge tree exactly matches this implementation commit. Private customer/geographic acceptance and production rollout were not performed.
 
 Implement in this order:
 
