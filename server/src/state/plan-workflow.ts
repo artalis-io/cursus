@@ -50,8 +50,10 @@ export function approvalBlockers(plan: Plan, revision: number, scenario?: Scenar
       }
     }
     for (const lock of scenario?.sequences.filter(s => s.locked) ?? []) {
-      const actual = plan.vehicles.find(v => v.id === lock.vehicleId)?.trips.flatMap(t => t.stops.map(s => s.orderNo)) ?? [];
-      if (actual.length !== lock.orderNos.length || actual.some((value, index) => value !== lock.orderNos[index])) issues.push('Locked route differs from the scenario.');
+      const actual = plan.vehicles.find(v => v.id === lock.vehicleId)?.trips.flatMap(t => t.stops) ?? [];
+      if (actual.length !== lock.orderNos.length || actual.some((value, index) => value.orderNo !== lock.orderNos[index] ||
+        lock.requestIds !== undefined && value.requestId !== lock.requestIds[index]) ||
+        !lock.requestIds && new Set(actual.map(s => s.orderNo)).size !== actual.length) issues.push('Locked route differs from the scenario.');
     }
   } catch { issues.push('Plan constraint evidence is incomplete.'); }
   return [...new Set(issues)];

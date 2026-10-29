@@ -8,9 +8,9 @@ import { NarrationPanel } from '@/components/NarrationPanel';
 import { useT, describeApiError } from '@/i18n';
 import type { Comparison } from '@/types';
 
-function DeltaCell({ value, goodWhenNegative, unit = '' }: { value: number; goodWhenNegative?: boolean; unit?: string }) {
+function DeltaCell({ value, goodWhenNegative, unit = '',eligible=true }: { value: number; goodWhenNegative?: boolean; unit?: string;eligible?:boolean }) {
   if (value === 0) return <span className="tnum text-muted-foreground">±0{unit}</span>;
-  const good = goodWhenNegative ? value < 0 : value > 0;
+  const good = eligible&&(goodWhenNegative ? value < 0 : value > 0);
   return <span className={`tnum font-medium ${good ? 'text-primary' : 'text-warning'}`}>{value > 0 ? '+' : ''}{value}{unit}</span>;
 }
 
@@ -53,6 +53,7 @@ export function CompareDialog({ open, onOpenChange, basePlanId, revisedPlanId, s
 
   const b = cmp?.base.stats, r = cmp?.revised.stats;
   const servedDrop = cmp ? cmp.deltas.servedOrders < 0 || cmp.newlyUnassigned.length > 0 : false;
+  const noImprovement=cmp?.improvementEligible!==true;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -62,6 +63,9 @@ export function CompareDialog({ open, onOpenChange, basePlanId, revisedPlanId, s
         </DialogHeader>
         {err ? <p className="py-8 text-center text-sm text-destructive">{err}</p> : !cmp ? <p className="py-8 text-center text-sm text-muted-foreground">{t('compare.comparing')}</p> : (
           <div className="space-y-4">
+            {cmp.identityAmbiguous&&<p role="status" className="text-sm text-warning">{t('compare.identityUnknown')}</p>}
+            {!cmp.sameScope&&<p className="text-sm text-warning">{t('readiness.differentScope')}</p>}
+            {cmp.samePolicy===false&&<p className="text-sm text-warning">{t('compare.policyChanged')}</p>}
             {servedDrop && (
               <div className="flex items-start gap-2 rounded-md border border-warning/40 bg-warning/10 p-2.5 text-sm text-warning">
                 <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0" />
@@ -77,15 +81,15 @@ export function CompareDialog({ open, onOpenChange, basePlanId, revisedPlanId, s
               </div>
               <Row label={t('compare.servedOrders')} base={`${b!.servedOrders}/${b!.totalOrders}`} revised={`${r!.servedOrders}/${r!.totalOrders}`} delta={<DeltaCell value={cmp.deltas.servedOrders} />} />
               <Row label={t('compare.unassigned')} base={`${b!.totalOrders - b!.servedOrders}`} revised={`${r!.totalOrders - r!.servedOrders}`} delta={<DeltaCell value={cmp.deltas.unassigned} goodWhenNegative />} />
-              <Row label={t('compare.vehiclesUsed')} base={`${b!.vehiclesUsed}`} revised={`${r!.vehiclesUsed}`} delta={<DeltaCell value={cmp.deltas.vehiclesUsed} goodWhenNegative />} />
-              <Row label={t('compare.trips')} base={`${b!.trips}`} revised={`${r!.trips}`} delta={<DeltaCell value={cmp.deltas.trips} goodWhenNegative />} />
-              <Row label={t('compare.totalDistance')} base={km(b!.totalDistanceKm)} revised={km(r!.totalDistanceKm)} delta={<DeltaCell value={cmp.deltas.totalDistanceKm} goodWhenNegative unit=" km" />} />
+              <Row label={t('compare.vehiclesUsed')} base={`${b!.vehiclesUsed}`} revised={`${r!.vehiclesUsed}`} delta={<DeltaCell value={cmp.deltas.vehiclesUsed} goodWhenNegative eligible={!noImprovement}/>} />
+              <Row label={t('compare.trips')} base={`${b!.trips}`} revised={`${r!.trips}`} delta={<DeltaCell value={cmp.deltas.trips} goodWhenNegative eligible={!noImprovement}/>} />
+              <Row label={t('compare.totalDistance')} base={km(b!.totalDistanceKm)} revised={km(r!.totalDistanceKm)} delta={<DeltaCell value={cmp.deltas.totalDistanceKm} goodWhenNegative eligible={!noImprovement} unit=" km" />} />
               {cmp.base.cost && cmp.revised.cost && (
                 <Row label={t('compare.cost')}
                   base={money(cmp.base.cost.total, cmp.base.cost.currency, true)}
                   revised={money(cmp.revised.cost.total, cmp.revised.cost.currency, true)}
                   delta={cmp.costComparison === 'comparable' && cmp.deltas.costTotal != null
-                    ? <CostDelta delta={cmp.deltas.costTotal} baseTotal={cmp.base.cost.total} currency={cmp.revised.cost.currency} lostService={servedDrop} savedLabel={(p) => t('compare.saved', { p })} />
+                    ? <CostDelta delta={cmp.deltas.costTotal} baseTotal={cmp.base.cost.total} currency={cmp.revised.cost.currency} lostService={servedDrop||noImprovement} savedLabel={(p) => t('compare.saved', { p })} />
                     : <span className="text-xs font-medium text-warning" title={t('compare.notComparableDetail')}>{t('compare.notComparable')}</span>} />
               )}
             </div>
@@ -95,19 +99,19 @@ export function CompareDialog({ open, onOpenChange, basePlanId, revisedPlanId, s
                 {cmp.newlyUnassigned.length > 0 && (
                   <Section title={t('compare.newlyUnassigned', { n: cmp.newlyUnassigned.length })} tone="warn">
                     {cmp.newlyUnassigned.map((o) => (
-                      <li key={o.orderNo} className="tnum flex justify-between py-0.5"><span>{o.customer ?? o.orderNo}</span><span className="text-muted-foreground">{t('compare.wasVeh', { ref: o.fromVehicleRef })}</span></li>
+                      <li key={`${o.orderNo}:${o.requestId??''}`} className="tnum flex justify-between py-0.5"><span>{o.customer ?? o.orderNo}</span><span className="text-muted-foreground">{t('compare.wasVeh', { ref: o.fromVehicleRef })}</span></li>
                     ))}
                   </Section>
                 )}
                 {cmp.nowServed.length > 0 && (
                   <Section title={t('compare.nowServed', { n: cmp.nowServed.length })}>
-                    {cmp.nowServed.map((o) => <li key={o.orderNo} className="tnum flex justify-between py-0.5"><span>{o.customer ?? o.orderNo}</span><span className="text-muted-foreground">→ {o.toVehicleRef}</span></li>)}
+                    {cmp.nowServed.map((o) => <li key={`${o.orderNo}:${o.requestId??''}`} className="tnum flex justify-between py-0.5"><span>{o.customer ?? o.orderNo}</span><span className="text-muted-foreground">→ {o.toVehicleRef}</span></li>)}
                   </Section>
                 )}
                 {cmp.movedOrders.length > 0 && (
                   <Section title={t('compare.reassigned', { n: cmp.movedOrders.length })}>
                     {cmp.movedOrders.map((o) => (
-                      <li key={o.orderNo} className="flex items-center justify-between py-0.5">
+                      <li key={`${o.orderNo}:${o.requestId??''}`} className="flex items-center justify-between py-0.5">
                         <span>{o.customer ?? o.orderNo}</span>
                         <span className="tnum inline-flex items-center gap-1 text-muted-foreground">{o.fromVehicleRef} <ArrowRight className="h-3 w-3" /> {o.toVehicleRef}</span>
                       </li>

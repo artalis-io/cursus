@@ -43,6 +43,7 @@ export type Objective = 'vehicles' | 'distance';
  * single cost objective (fixed + distance), i.e. the least-distance plan. */
 export function buildRequest(scenario: Scenario, budgetSec: number, objective: Objective = 'vehicles', fullBudget = false): BuiltRequest {
   const day = withPlanningPolicy(loadDay(scenario.day), scenario.planningPolicy);
+  if(scenario.deliveryDatasetSha256&&scenario.deliveryDatasetSha256!==day.datasetRequestSha256)throw new Error('Scenario delivery identities belong to another dataset');
   // A12: deep-clone everything we mutate, but SHARE the N^2 travel matrix by
   // reference (it is never mutated here). structuredClone of the whole request
   // would deep-copy ~2.25M distance+duration entries on the event loop per solve.
@@ -87,17 +88,20 @@ export function applyOverrides(request: SurgeRequest, scenario: Scenario, availa
   if (!scenario.pins.length && !scenario.forbids.length) return;
   const avail = available ?? new Set(request.vehicles.map((v) => v.id));
   const taskRefById = new Map(request.tasks.map((t) => [t.id, t.ref]));
-  const reqByOrderNo = new Map<string, SurgeRequest['requests'][number]>();
+  const reqByOrderNo = new Map<string, SurgeRequest['requests']>();
   for (const r of request.requests) {
     const ref = taskRefById.get(r.delivery_task_id);
-    if (ref != null) reqByOrderNo.set(String(ref), r);
+    if (ref != null) reqByOrderNo.set(String(ref), [...(reqByOrderNo.get(String(ref))??[]),r]);
   }
+  const resolve=(p:{orderNo:string;requestId?:number})=>{const matches=reqByOrderNo.get(p.orderNo)??[];
+    if(p.requestId!==undefined){const r=matches.find(r=>r.id===p.requestId);if(!r)throw new Error('Delivery identity does not match this dataset');return r;}
+    if(matches.length>1)throw new Error('Ambiguous delivery reference; use a stable requestId');return matches[0];};
   for (const p of scenario.pins) {
-    const r = reqByOrderNo.get(p.orderNo);
+    const r = resolve(p);
     if (r && avail.has(p.vehicleId)) r.allowed_vehicles = [p.vehicleId];
   }
   for (const f of scenario.forbids) {
-    const r = reqByOrderNo.get(f.orderNo);
+    const r = resolve(f);
     if (!r || !avail.has(f.vehicleId)) continue;
     if (r.allowed_vehicles) continue; // a pin on this order supersedes forbids
     r.forbidden_vehicles = [...(r.forbidden_vehicles ?? []), f.vehicleId];
@@ -130,18 +134,20 @@ export function applyVehicleOverrides(request: SurgeRequest, scenario: Scenario)
 export function applySequences(request: SurgeRequest, scenario: Scenario, available?: Set<number>): void {
   if (!scenario.sequences?.length) return;
   const avail = available ?? new Set(request.vehicles.map((v) => v.id));
-  const reqIdByOrderNo = new Map<string, number>();
+  const reqIdByOrderNo = new Map<string, number[]>();
   const taskRefById = new Map(request.tasks.map((t) => [t.id, t.ref]));
   for (const r of request.requests) {
     const ref = taskRefById.get(r.delivery_task_id);
-    if (ref != null) reqIdByOrderNo.set(String(ref), r.id);
+    if (ref != null) reqIdByOrderNo.set(String(ref), [...(reqIdByOrderNo.get(String(ref))??[]),r.id]);
   }
   const reqById = new Map(request.requests.map((r) => [r.id, r]));
   const prec = request.precedences ?? [];
   for (const seq of scenario.sequences) {
     if (!avail.has(seq.vehicleId)) continue; // vehicle removed/out of scope
     // resolve to in-scope request ids, preserving the dispatcher's order
-    const ids = seq.orderNos.map((o) => reqIdByOrderNo.get(o)).filter((x): x is number => x != null);
+    const ids = seq.orderNos.map((o,i) => {const matches=reqIdByOrderNo.get(o)??[],id=seq.requestIds?.[i];
+      if(id!==undefined){if(!matches.includes(id))throw new Error('Sequence delivery identity mismatch');return id;}
+      if(matches.length>1)throw new Error('Ambiguous sequence delivery reference');return matches[0];}).filter((x): x is number => x != null);
     if (ids.length < (seq.locked ? 1 : 2)) continue;
     for (const id of ids) { const r = reqById.get(id); if (r) r.allowed_vehicles = [seq.vehicleId]; } // keep on the vehicle
     for (let i = 0; i + 1 < ids.length; i++) prec.push({ before: ids[i]!, after: ids[i + 1]! });

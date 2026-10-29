@@ -161,13 +161,13 @@ test('both sync and async runtimes deny all Reviewer mutation methods before han
 });
 
 test('stateful Reviewer API rejects edits, uploads, compute and future writes without touching repositories', async () => {
-  const store = { ensureTenant: async () => {}, listScenarios: async () => [] } as unknown as StatefulStore;
+  const store = { ensureTenant: async () => {}, listScenarios: async () => [],listPlans:async()=>[] } as unknown as StatefulStore;
   const auth = { initialize: async () => {}, authenticate: async () => ({ userId: 'u', tenantId: 't', email: 'reader@example.test', role: 'reviewer' }) } as unknown as StatefulAuthService;
   const app = await createStatefulApi({ store, auth, tenantId: 't', tenantName: 'Tenant', publicOrigin: 'https://cursus.example.test' });
   try {
     assert.equal((await app.inject('/api/scenarios')).statusCode, 200);
     for (const url of ['/api/scenarios', '/api/scenarios/import', '/api/scenarios/id/edit', '/api/scenarios/id/edits',
-      '/api/scenarios/id/rename', '/api/scenarios/id/solve', '/api/plans/id/evaluate', '/api/plans/id/narrate', '/api/compare/narrate',
+      '/api/scenarios/id/rename', '/api/scenarios/id/solve','/api/scenarios/id/select-plan', '/api/plans/id/evaluate', '/api/plans/id/narrate', '/api/compare/narrate',
       '/api/import/upload', '/api/import/preview', '/api/import/geocode', '/api/import/admit',
       '/api/import/datasets/id/validate', '/api/import/datasets/id/admit', '/api/import/datasets/id/convert', '/api/future-mutation'])
       assert.equal((await app.inject({ method: 'POST', url, headers: { origin: 'https://cursus.example.test' } })).statusCode, 403, url);

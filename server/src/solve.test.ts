@@ -4,6 +4,20 @@ import assert from 'node:assert/strict';
 import { applyOverrides, applyVehicleOverrides, applySequences } from './solve.js';
 import type { SurgeRequest } from './types.js';
 import type { Scenario } from './store.js';
+import {applyScenarioEdits,validateScenarioEdit,exportScenario,parseScenarioImport} from './store.js';
+
+test('stable delivery overrides distinguish duplicate references and survive scenario export/import',()=>{
+ const request=mkRequest();request.tasks[1]!.ref='O1';
+ const scenario:Scenario={id:'id',day:'day',kind:'copy',parentId:null,revision:1,label:'public',createdAt:'',removedVehicleIds:[],pins:[],forbids:[],sequences:[],vehicleOverrides:[]};
+ const edit={op:'pin' as const,orderNo:'O1',requestId:101,vehicleId:2,datasetSha256:'a'.repeat(64)};
+ assert.equal(validateScenarioEdit(edit),null);assert.ok(validateScenarioEdit({...edit,datasetSha256:undefined}));
+ const updated=applyScenarioEdits(scenario,[edit]);applyOverrides(request,updated);
+ assert.equal(request.requests[0]!.allowed_vehicles,undefined);assert.deepEqual(request.requests[1]!.allowed_vehicles,[2]);
+ const imported=parseScenarioImport(exportScenario(updated));assert.ok(!('error' in imported));
+ if(!('error' in imported))assert.equal(imported.edits.pins[0]?.requestId,101);
+ const ambiguous={...scenario,pins:[{orderNo:'O1',vehicleId:2}]};assert.throws(()=>applyOverrides(mkDuplicate(),ambiguous),/Ambiguous/);
+ function mkDuplicate(){const r=mkRequest();r.tasks[1]!.ref='O1';return r;}
+});
 
 /* Minimal request: two orders (O1->task 10->req 100, O2->task 11->req 101),
  * three vehicles (1,2,3). Only the override-relevant fields are populated. */

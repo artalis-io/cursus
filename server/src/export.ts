@@ -1,5 +1,6 @@
 import type { Plan, PlanStop, PlanVehicle } from './types.js';
 import type { HandoffMetadata } from './handoff.js';
+import {datasetIdentity} from './plan/identity.js';
 
 function csvHandoff(rows: string[], metadata?: HandoffMetadata): string {
   if (!metadata) return rows.join('\n') + '\n';
@@ -42,7 +43,7 @@ function esc(s: string | null | undefined): string {
 const CSV_HEADER = [
   'status', 'vehicle_ref', 'vehicle_class', 'trip', 'seq', 'order_no', 'customer', 'city',
   'lon', 'lat', 'arrival', 'service_start', 'departure', 'tw_start', 'tw_end',
-  'pallets', 'weight_kg', 'late_min',
+  'pallets', 'weight_kg', 'late_min','request_id','dataset_sha256',
 ];
 
 export function planToCsv(plan: Plan, metadata?: HandoffMetadata): string {
@@ -54,7 +55,7 @@ export function planToCsv(plan: Plan, metadata?: HandoffMetadata): string {
           'assigned', v.ref, v.vehicleClass ?? '', trip.index + 1, s.seq, s.orderNo, s.customer ?? '', s.city ?? '',
           s.lon.toFixed(6), s.lat.toFixed(6), hhmm(s.arrivalSec), hhmm(s.serviceStartSec), hhmm(s.departureSec),
           hhmm(s.twStartSec), hhmm(s.twEndSec), round1(s.pallets), Math.round(s.weightKg),
-          s.lateBySec > 0 ? Math.round(s.lateBySec / 60) : 0,
+          s.lateBySec > 0 ? Math.round(s.lateBySec / 60) : 0,s.requestId,datasetIdentity(plan),
         ].map(csvCell).join(','));
       }
     }
@@ -63,7 +64,7 @@ export function planToCsv(plan: Plan, metadata?: HandoffMetadata): string {
     rows.push([
       'unassigned', '', '', '', '', u.orderNo, u.customer ?? '', u.city ?? '',
       u.lon != null ? u.lon.toFixed(6) : '', u.lat != null ? u.lat.toFixed(6) : '',
-      '', '', '', '', '', '', '', '',
+      '', '', '', '', '', '', '', '',u.requestId,datasetIdentity(plan),
     ].map(csvCell).join(','));
   }
   return csvHandoff(rows, metadata);
@@ -79,7 +80,7 @@ function lateMin(sec: number): number { return sec > 0 ? Math.round(sec / 60) : 
  * the 1-based visit order on the vehicle across all its trips. */
 const ROUTES_HEADER = [
   'order_no', 'vehicle', 'sequence', 'date', 'vehicle_class', 'trip',
-  'planned_arrival', 'planned_departure', 'service_min', 'late_min', 'status',
+  'planned_arrival', 'planned_departure', 'service_min', 'late_min', 'status','request_id','dataset_sha256',
 ];
 export function planToRoutesCsv(plan: Plan, isoDate: string, metadata?: HandoffMetadata): string {
   const rows: string[] = [ROUTES_HEADER.join(',')];
@@ -90,13 +91,13 @@ export function planToRoutesCsv(plan: Plan, isoDate: string, metadata?: HandoffM
         seq++;
         rows.push([
           s.orderNo, v.ref, seq, isoDate, v.vehicleClass ?? '', trip.index + 1,
-          hhmm(s.arrivalSec), hhmm(s.departureSec), s.serviceMin, lateMin(s.lateBySec), 'assigned',
+          hhmm(s.arrivalSec), hhmm(s.departureSec), s.serviceMin, lateMin(s.lateBySec), 'assigned',s.requestId,datasetIdentity(plan),
         ].map(csvCell).join(','));
       }
     }
   }
   for (const u of plan.unassigned) {
-    rows.push([u.orderNo, '', '', isoDate, '', '', '', '', '', '', 'unassigned'].map(csvCell).join(','));
+    rows.push([u.orderNo, '', '', isoDate, '', '', '', '', '', '', 'unassigned',u.requestId,datasetIdentity(plan)].map(csvCell).join(','));
   }
   return csvHandoff(rows, metadata);
 }
@@ -104,18 +105,20 @@ export function planToRoutesCsv(plan: Plan, isoDate: string, metadata?: HandoffM
 /* A clean, documented dispatch-plan document for programmatic handoff (not the
  * raw internal Plan, which carries geometry + provenance). */
 export interface HandoffPlan {
+  datasetSha256?:string;
   assignments?: {datasetSha256:string;decisions:import('./plan/manual.js').ManualLayout['decisions'];origins:Record<string,string>;history:import('./plan/manual.js').AssignmentEvent[]};
   handoff?: HandoffMetadata;
   otto_dispatch_plan: 1;
   day: string; date: string; generatedAt: string; objective: string;
   summary: { vehiclesUsed: number; servedOrders: number; totalOrders: number; totalDistanceKm: number; cost: { currency: string; total: number; source: string } | null };
   routes: { vehicle: string; vehicleClass: string | null; isSubcontractor: boolean; distanceKm: number; finishTime: string;
-    stops: { sequence: number; trip: number; orderNo: string; customer: string | null; city: string | null; plannedArrival: string; plannedDeparture: string; serviceMin: number; lateMin: number; weightKg: number; pallets: number }[] }[];
-  unassigned: { orderNo: string; customer: string | null; city: string | null; reason: string | null }[];
+    stops: { requestId?:number;sequence: number; trip: number; orderNo: string; customer: string | null; city: string | null; plannedArrival: string; plannedDeparture: string; serviceMin: number; lateMin: number; weightKg: number; pallets: number }[] }[];
+  unassigned: { requestId?:number;orderNo: string; customer: string | null; city: string | null; reason: string | null }[];
 }
 export function planToHandoffJson(plan: Plan, isoDate: string, metadata?: HandoffMetadata): HandoffPlan {
   const assignmentLayout=(plan.manual??plan.assignments)?.layout;
   return {
+    ...(datasetIdentity(plan)?{datasetSha256:datasetIdentity(plan)}:{}),
     ...(assignmentLayout?{assignments:{datasetSha256:assignmentLayout.datasetSha256,decisions:assignmentLayout.decisions,origins:assignmentLayout.origins,history:assignmentLayout.history}}:{}),
     ...(metadata ? { handoff: metadata } : {}),
     otto_dispatch_plan: 1,
@@ -132,13 +135,13 @@ export function planToHandoffJson(plan: Plan, isoDate: string, metadata?: Handof
         vehicle: v.ref, vehicleClass: v.vehicleClass, isSubcontractor: v.isSubcontractor,
         distanceKm: round1(v.distanceKm), finishTime: hhmm(v.finishTimeSec),
         stops: v.trips.flatMap((tr) => tr.stops.map((s) => ({
-          sequence: ++seq, trip: tr.index + 1, orderNo: s.orderNo, customer: s.customer, city: s.city,
+          ...(s.requestId===undefined?{}:{requestId:s.requestId}),sequence: ++seq, trip: tr.index + 1, orderNo: s.orderNo, customer: s.customer, city: s.city,
           plannedArrival: hhmm(s.arrivalSec), plannedDeparture: hhmm(s.departureSec),
           serviceMin: s.serviceMin, lateMin: lateMin(s.lateBySec), weightKg: Math.round(s.weightKg), pallets: round1(s.pallets),
         }))),
       };
     }),
-    unassigned: plan.unassigned.map((u) => ({ orderNo: u.orderNo, customer: u.customer, city: u.city, reason: u.reasonCode })),
+    unassigned: plan.unassigned.map((u) => ({ ...(u.requestId===undefined?{}:{requestId:u.requestId}),orderNo: u.orderNo, customer: u.customer, city: u.city, reason: u.reasonCode })),
   };
 }
 

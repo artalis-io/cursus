@@ -3,6 +3,17 @@ import { manualAssignmentCommands } from '../src/lib/manual-assignment';
 import { applyManualBatch, type ManualLayout } from '../../server/src/plan/manual';
 import { selectedUnassigned } from '../src/lib/unassigned-selection';
 import type { Plan } from '../src/types';
+import { deliveryToken, deliveryReference } from '../src/lib/dnd';
+
+test('delivery drag tokens round-trip duplicate and reserved references without losing identity',()=>{
+  for(const orderNo of ['REPEATED','@delivery:12:other','@ref:encoded','Árvíz / % : "']){
+    expect(deliveryReference(deliveryToken(orderNo))).toEqual({orderNo});
+    for(const requestId of [0,91,92])expect(deliveryReference(deliveryToken(orderNo,requestId))).toEqual({orderNo,requestId});
+  }
+  expect(deliveryToken('REPEATED',91)).not.toBe(deliveryToken('REPEATED',92));
+  expect(()=>deliveryReference('@delivery:9007199254740992:x')).toThrow();
+  expect(()=>deliveryReference('@delivery:-1:x')).toThrow();
+});
 
 test('unassigned selections retain request identity when historical display references repeat',()=>{
   const orders:Plan['unassigned']=[1,2].map(requestId=>({requestId,orderNo:'REPEATED',orderId:null,customer:null,city:null,lon:null,lat:null,reason:null,reasonCode:null}));

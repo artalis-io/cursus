@@ -113,10 +113,16 @@ export function evaluateManualInput(input: ManualEvaluationInput, parent: Manual
   const taskRef = new Map(input.request.tasks.map(task => [task.id, task.ref]));
   const idRef = new Map(input.request.requests.map(order => [order.id, taskRef.get(order.delivery_task_id)]));
   for (const sequence of scenario.sequences) {
-    const actual = input.layout.routes.filter(route => route.vehicleId === sequence.vehicleId).flatMap(route => route.requestIds.map(id => idRef.get(id)));
-    const filtered = actual.filter(ref => sequence.orderNos.includes(ref ?? ''));
-    requireThat(JSON.stringify(filtered) === JSON.stringify(sequence.orderNos), 'scenario sequence changed; clear it explicitly first');
-    if (sequence.locked) requireThat(JSON.stringify(actual) === JSON.stringify(sequence.orderNos), 'scenario locked route changed');
+    const ids = input.layout.routes.filter(route => route.vehicleId === sequence.vehicleId).flatMap(route => route.requestIds);
+    const actual = sequence.requestIds ? ids : ids.map(id => idRef.get(id));
+    const expected = sequence.requestIds ?? sequence.orderNos;
+    if (!sequence.requestIds) {
+      for (const ref of expected) requireThat([...idRef.values()].filter(value => value === ref).length === 1,
+        'ambiguous legacy sequence; use delivery identities');
+    }
+    const filtered = actual.filter(value => (expected as (string | number | undefined)[]).includes(value));
+    requireThat(JSON.stringify(filtered) === JSON.stringify(expected), 'scenario sequence changed; clear it explicitly first');
+    if (sequence.locked) requireThat(JSON.stringify(actual) === JSON.stringify(expected), 'scenario locked route changed');
   }
   for (const edge of input.request.precedences ?? []) {
     requireThat(input.layout.requestIds.includes(edge.before) && input.layout.requestIds.includes(edge.after), 'precedence references an out-of-scope request');

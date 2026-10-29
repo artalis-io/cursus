@@ -23,6 +23,7 @@ export class ScenarioRepository {
   async copy(parent: Scenario, label?: string): Promise<Scenario> {
     const scenario: Scenario = { ...structuredClone(parent), id: `scn_${randomUUID().slice(0, 8)}`, kind: 'copy',
       parentId: parent.id, revision: 1, label: label ?? `${parent.label} (edited)`, createdAt: new Date().toISOString() };
+    delete scenario.selectedPlanId;delete scenario.selectionVersion;
     await this.store.createScenario(this.tenantId, scenario.id, scenario);
     return scenario;
   }
@@ -54,6 +55,7 @@ export class ScenarioRepository {
     if (edits.planningPolicyId && edits.planningPolicyId !== base.planningPolicy?.id) throw new Error('planning policy reference is not approved in this workspace');
     const copy = await this.copy(base, label);
     const updated = { ...copy, removedVehicleIds: [...edits.removedVehicleIds], pins: structuredClone(edits.pins),
+      ...(edits.deliveryDatasetSha256?{deliveryDatasetSha256:edits.deliveryDatasetSha256}:{}),
       forbids: structuredClone(edits.forbids), vehicleOverrides: structuredClone(edits.vehicleOverrides), sequences: structuredClone(edits.sequences), revision: copy.revision + 1 };
     await this.store.updateScenario(this.tenantId, copy.id, copy.revision, updated);
     return updated;

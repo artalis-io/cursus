@@ -2,18 +2,19 @@ import { km, money, seconds } from '@/lib/format';
 import { useT } from '@/i18n';
 import type { Plan } from '@/types';
 import type { JobView } from '@/App';
+import { reviewComparison } from '@/lib/readiness';
 
-function Delta({ value, goodWhenNegative, unit = '', suffix }: { value: number; goodWhenNegative?: boolean; unit?: string; suffix?: string }) {
+function Delta({ value, goodWhenNegative, unit = '', suffix,allowImprovement=true }: { value: number; goodWhenNegative?: boolean; unit?: string; suffix?: string;allowImprovement?:boolean }) {
   const t = useT();
   const tail = suffix ?? t('kpi.vsBaseline');
   if (value === 0) return <span className="tnum text-[11px] text-muted-foreground">±0{unit} {tail}</span>;
-  const good = goodWhenNegative ? value < 0 : value > 0;
+  const good = allowImprovement && (goodWhenNegative ? value < 0 : value > 0);
   const sign = value > 0 ? '+' : '';
   // A glyph (not just color) carries the better/worse signal: ▲ = improved,
   // ▼ = worse. Keeps the signal legible for red-green color-deficient users.
   return (
-    <span className={`tnum text-[11px] font-medium ${good ? 'text-primary' : 'text-warning'}`}>
-      <span aria-hidden>{good ? '▲' : '▼'}</span> {sign}{value % 1 === 0 ? value : value.toFixed(0)}{unit} {tail}
+    <span className={`tnum text-[11px] font-medium ${!allowImprovement ? 'text-muted-foreground' : good ? 'text-primary' : 'text-warning'}`}>
+      <span aria-hidden>{allowImprovement ? good ? '▲' : '▼' : ''}</span> {sign}{value % 1 === 0 ? value : value.toFixed(0)}{unit} {tail}
     </span>
   );
 }
@@ -39,6 +40,7 @@ export function KpiStrip({ plan, baseline, compare, job, previewDistanceKm, prev
   const t = useT();
   const s = plan.stats;
   const b = baseline.stats;
+  const evidence=reviewComparison(baseline,plan),allowImprovement=!compare||evidence.improvementEligible;
   const solveT = s.solveElapsedSeconds ?? (job?.status === 'running' ? job.elapsedSec : null);
   const costDelta = compare && plan.cost && baseline.cost ? plan.cost.total - baseline.cost.total : null;
   const distPreview = previewDistanceKm != null && Math.round(previewDistanceKm) !== Math.round(s.totalDistanceKm);
@@ -56,13 +58,13 @@ export function KpiStrip({ plan, baseline, compare, job, previewDistanceKm, prev
         label={t('kpi.vehiclesUsed')}
         value={`${s.vehiclesUsed}`}
         sub={t('kpi.tripsN', { n: s.trips })}
-        delta={compare ? <Delta value={s.vehiclesUsed - b.vehiclesUsed} goodWhenNegative /> : undefined}
+        delta={compare ? <Delta value={s.vehiclesUsed - b.vehiclesUsed} goodWhenNegative allowImprovement={allowImprovement}/> : undefined}
       />
       <Kpi
         label={t('kpi.totalDistance')}
         value={km(distPreview ? previewDistanceKm! : s.totalDistanceKm)}
-        delta={distPreview ? <Delta value={Math.round(previewDistanceKm! - s.totalDistanceKm)} goodWhenNegative unit=" km" suffix={t('kpi.preview')} />
-          : compare ? <Delta value={Math.round(s.totalDistanceKm - b.totalDistanceKm)} goodWhenNegative unit=" km" /> : undefined}
+        delta={distPreview ? <Delta value={Math.round(previewDistanceKm! - s.totalDistanceKm)} goodWhenNegative allowImprovement={false} unit=" km" suffix={t('kpi.preview')} />
+          : compare ? <Delta value={Math.round(s.totalDistanceKm - b.totalDistanceKm)} goodWhenNegative allowImprovement={allowImprovement} unit=" km" /> : undefined}
       />
       {plan.cost && (() => {
         const cost = plan.cost;
@@ -73,11 +75,11 @@ export function KpiStrip({ plan, baseline, compare, job, previewDistanceKm, prev
             value={money(costPreview ? previewCostTotal! : cost.total, cost.currency, true)}
             sub={!costPreview && costDelta == null ? t(cost.source === 'demo' ? 'kpi.demoTariff' : 'kpi.extTariff') : undefined}
             delta={pc != null ? (
-              <span className={`tnum text-[11px] font-medium ${pc <= 0 ? 'text-primary' : 'text-warning'}`}>
+              <span className="tnum text-[11px] font-medium text-muted-foreground">
                 <span aria-hidden>{pc < 0 ? '▲' : pc > 0 ? '▼' : ''}</span> {pc > 0 ? '+' : pc < 0 ? '−' : '±'}{money(Math.abs(pc), cost.currency, true)} {t('kpi.preview')}
               </span>
             ) : costDelta != null ? (
-              <span className={`tnum text-[11px] font-medium ${costDelta <= 0 ? 'text-primary' : 'text-warning'}`}>
+              <span className={`tnum text-[11px] font-medium ${costDelta <= 0 && allowImprovement ? 'text-primary' : 'text-warning'}`}>
                 <span aria-hidden>{costDelta < 0 ? '▲' : costDelta > 0 ? '▼' : ''}</span> {costDelta > 0 ? '+' : costDelta < 0 ? '−' : '±'}{money(Math.abs(costDelta), cost.currency, true)} {t('kpi.vsBaseline')}
               </span>
             ) : undefined}

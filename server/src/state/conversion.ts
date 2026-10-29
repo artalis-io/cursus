@@ -10,6 +10,7 @@ import type { Mapping } from '../data/onboard.js';
 import { applyOverrides, applySequences, applyVehicleOverrides, type Objective } from '../solve.js';
 import { mapSolutionToPlan } from '../plan/mapper.js';
 import { fillPlanGeometry } from '../geometry/velo.js';
+import { warmStart } from '../plan/warm-start.js';
 import type { Plan, SurgeRequest, SurgeSolution } from '../types.js';
 import type { Scenario } from '../store.js';
 import { execFile } from 'node:child_process';
@@ -117,6 +118,7 @@ export async function loadConvertedDay(objects: ObjectStore, tenantId: string, m
   const requestObject = manifest?.artifacts?.request as ImmutableObject | undefined;
   const geoObject = manifest?.artifacts?.geocoded as ImmutableObject | undefined;
   if (!requestObject || !geoObject) throw new Error('admitted dataset artifacts are incomplete');
+  if(scenario.deliveryDatasetSha256&&scenario.deliveryDatasetSha256!==requestObject.sha256)throw new Error('Scenario delivery identities belong to another dataset');
   const prefix = `tenants/${tenantId}/sha256/`;
   if (!requestObject.key.startsWith(prefix) || !geoObject.key.startsWith(prefix)) throw new Error('dataset artifact is outside the tenant namespace');
   const [requestBytes, geoBytes] = await Promise.all([objects.getVerified(requestObject), objects.getVerified(geoObject)]);
@@ -142,9 +144,10 @@ export async function loadConvertedDay(objects: ObjectStore, tenantId: string, m
 
 export async function solveConvertedDataset(objects: ObjectStore, tenantId: string, manifest: ConvertedManifest, scenario: Scenario,
   budgetSec: number, objective: Objective, signal: AbortSignal, fullBudget = false,
-  configuredSettings?:Omit<ManualDatasetContext,'day'>): Promise<Plan> {
+  configuredSettings?:Omit<ManualDatasetContext,'day'>,incumbent?:Plan): Promise<Plan> {
   const day = await loadConvertedDay(objects, tenantId, manifest, scenario);
-  const request = day.request;
+  const {travel,...mutable}=day.request;
+  const request={...structuredClone(mutable),travel};
   const baseline = datasetAllowances(request), datasetVehicles = request.vehicles.map(vehicle => vehicle.id);
   const retained=scenario.manualDecisions;
   if(retained&&(!retained.tariff||!retained.fleetInfo||tariffIdentity(retained.tariff)!==retained.tariffSha256))
@@ -163,6 +166,7 @@ export async function solveConvertedDataset(objects: ObjectStore, tenantId: stri
   applyOverrides(request, scenario, available); applyVehicleOverrides(request, scenario); applySequences(request, scenario, available);
   applyAccessLimits(request, day.enrichment, vehicleInfo);
   applyRetainedDecisions(request, scenario, day.datasetRequestSha256, baseline);
+  const seeded=applied&&policy?warmStart(request,incumbent,scenario,{...policy,day}):false;
   request.config = populationConfig({ ...request.config, max_time_seconds: budgetSec, seed: 42, lexicographic_objective: objective !== 'distance',
     hard_capacity: true, hard_time_windows: true, hard_max_duration: true,
     ...(fullBudget ? { max_iterations: 2_000_000_000 } : {}) });
@@ -181,6 +185,7 @@ export async function solveConvertedDataset(objects: ObjectStore, tenantId: stri
       scenarioRevision: scenario.revision, planId: `pln_${randomUUID().slice(0, 8)}`, source: 'live', createdAt: new Date().toISOString() });
     const plan = withRetainedProvenance(mapped, scenario, datasetVehicles);
     if(applied)plan.provenance.tariffSha256=tariffIdentity(policy!.tariff);
+    if(incumbent)plan.provenance.warmStart={planId:incumbent.id,used:seeded};
     if (scenario.planningPolicy) plan.provenance.planningPolicy = structuredClone(scenario.planningPolicy);
     plan.stats.solveElapsedSeconds = Math.round((Date.now() - startedAt) / 100) / 10;
     if (plan.provenance.validation.violations.some(v => ['VEHICLE_SIZE', 'TAIL_LIFT'].includes((v as {type?: string}).type ?? '')))

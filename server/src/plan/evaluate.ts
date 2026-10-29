@@ -26,6 +26,7 @@ export interface EvaluateTripInput {
   tripCountOnVehicle: number; // for per-vehicle fixed-cost amortization
   reloadSecAfter: number;    // carried through unchanged (depends on neighbor trips)
   orderNos: string[];        // the proposed visiting order
+  requestIds?:number[];
   vehicleInfo: Map<string, VehicleInfo>;
   tariff?: Tariff;
 }
@@ -36,7 +37,9 @@ export function evaluateTrip(inp: EvaluateTripInput): PlanTrip {
   const depotLoc = 0;
   const tariff = inp.tariff ?? loadTariff();
 
-  const taskByRef = new Map(request.tasks.map((t) => [t.ref, t]));
+  const taskByRef = new Map<string,typeof request.tasks>();
+  for(const t of request.tasks)taskByRef.set(t.ref,[...(taskByRef.get(t.ref)??[]),t]);
+  const taskById=new Map(request.tasks.map(t=>[t.id,t])),requests=new Map(request.requests.map(r=>[r.id,r]));
   const veh = request.vehicles.find((v) => v.id === inp.vehicleId);
   const vinfo = vehicleInfoFor(veh?.ref ?? '', inp.vehicleInfo);
 
@@ -44,7 +47,10 @@ export function evaluateTrip(inp: EvaluateTripInput): PlanTrip {
   let t = inp.startSec;
   let meters = 0, loadKg = 0, loadPallets = 0;
   const stops: PlanStop[] = inp.orderNos.map((orderNo, i) => {
-    const task = taskByRef.get(orderNo);
+    const requestId=inp.requestIds?.[i],options=taskByRef.get(orderNo)??[];
+    if(requestId===undefined&&options.length>1)throw new Error('Ambiguous delivery reference in preview');
+    const task=requestId===undefined?options[0]:taskById.get(requests.get(requestId)?.delivery_task_id??-1);
+    if(requestId!==undefined&&(!task||task.ref!==orderNo))throw new Error('Preview delivery identity mismatch');
     const loc = task ? request.locations[task.location_id] : undefined;
     const info = day.enrichment.get(orderNo) ?? null;
     const weightKg = task?.demand[0] ?? 0;
@@ -60,6 +66,7 @@ export function evaluateTrip(inp: EvaluateTripInput): PlanTrip {
     const departure = serviceStart + serviceSec;
     if (task) { prevLoc = task.location_id; t = departure; }
     return {
+      ...(requestId===undefined?{}:{requestId}),
       orderId: info?.id ?? null,
       orderNo,
       customer: info?.customer ?? null,

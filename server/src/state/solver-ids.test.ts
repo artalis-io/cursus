@@ -53,6 +53,14 @@ test('forbidden sequence seeds are removed entirely, never serialized as empty n
   assert.deepEqual((native.request as unknown as Record<string, unknown>).initial_routes, []);
 });
 
+test('duplicate display references seed distinct deliveries only with explicit IDs',()=>{
+  const request={vehicles:[{id:7}],tasks:[{id:4,ref:'REPEAT'},{id:8,ref:'REPEAT'}],
+    requests:[{id:12,delivery_task_id:4},{id:40,delivery_task_id:8}]} as unknown as SurgeRequest;
+  assert.throws(()=>nativeSolveRequest(request,[{vehicleId:7,orderNos:['REPEAT','REPEAT']}]),/Ambiguous/);
+  const native=nativeSolveRequest(request,[{vehicleId:7,orderNos:['REPEAT','REPEAT'],requestIds:[40,12]}]);
+  assert.deepEqual((native.request as unknown as Record<string,unknown>).initial_routes,[{vehicle_id:0,request_ids:[1,0]}]);
+});
+
 test('native Surge solves a filtered day with an excluded vehicle and locked reorder',
   { skip: !process.env.CURSUS_TEST_SURGE_BIN }, async () => {
     const request: SurgeRequest = {

@@ -532,7 +532,7 @@ async function shortBudget(page: Page) {
   await page.getByRole('menu').locator('input[type=range]').fill('15');
   await page.keyboard.press('Escape');
 }
-async function finishSolve(page: Page, start: () => Promise<unknown>): Promise<Plan> {
+async function finishSolve(page: Page, start: () => Promise<unknown>, options:{keep?:boolean;reload?:boolean}={}): Promise<Plan> {
   const submitted = page.waitForResponse(response => response.request().method() === 'POST' && /\/api\/scenarios\/[^/]+\/solve$/.test(new URL(response.url()).pathname));
   await start();
   const submission = await submitted;
@@ -553,6 +553,16 @@ async function finishSolve(page: Page, start: () => Promise<unknown>): Promise<P
   await expect(page.getByRole('dialog').getByText(/Plan comparison/)).toBeVisible();
   await expect(page.getByRole('dialog').getByText('Comparing…')).toHaveCount(0);
   await expect(page.getByRole('alert')).toHaveCount(0);
+  await page.keyboard.press('Escape');
+  const candidate = page.getByRole('region', { name: 'Plan candidate' });
+  await expect(candidate).toBeVisible();
+  if(options.reload){await page.reload();await expect(candidate).toBeVisible();}
+  if (plan.unassigned.length) await candidate.getByRole('checkbox').check();
+  await candidate.getByRole('button', { name: options.keep?'Keep previous':'Use candidate', exact: true }).click();
+  await expect(candidate).toHaveCount(0);
+  if(!options.keep){
+    expect((await get<Scenario>(page.request,`${peer}/api/scenarios/${scenarioId}`)).selectedPlanId).toBe(plan.id);
+  }
   const handoff = await get<{ summary: { servedOrders: number; totalOrders: number; cost: { total: number } }; routes: { stops: { orderNo: string }[] }[] }>(page.request, `${peer}/api/plans/${plan.id}/handoff.json`);
   expect(handoff.summary.servedOrders).toBe(plan.stats.servedOrders);
   expect(handoff.summary.totalOrders).toBe(plan.stats.totalOrders);
@@ -564,6 +574,17 @@ async function finishSolve(page: Page, start: () => Promise<unknown>): Promise<P
   expect(Number.isFinite(comparison.deltas.costTotal)).toBe(true);
   return plan;
 }
+
+test('pending native candidates survive reload and keeping the previous plan preserves both results',async({page})=>{
+  await login(page);await shortBudget(page);
+  const base=await baseline(page),vehicle=base.vehicles[0]!;
+  await page.locator('aside').first().getByText(vehicle.ref,{exact:true}).click();
+  await page.getByRole('button',{name:`Mark ${vehicle.ref} unavailable`}).click();
+  const candidate=await finishSolve(page,()=>page.getByRole('button',{name:'Replan',exact:true}).click(),{keep:true,reload:true});
+  expect((await get<Scenario>(page.request,`${peer}/api/scenarios/${candidate.scenarioId}`)).selectedPlanId).toBeUndefined();
+  expect((await get<Plan>(page.request,`${peer}/api/plans/${base.id}`)).stats).toEqual(base.stats);
+  expect((await get<Plan>(page.request,`${peer}/api/plans/${candidate.id}`)).id).toBe(candidate.id);
+});
 
 test.beforeEach(async ({ page }) => {
   const errors: string[] = [];

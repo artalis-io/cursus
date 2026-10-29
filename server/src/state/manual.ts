@@ -81,7 +81,12 @@ export class ManualPlanPublisher {
     const tasks = new Map(context.day.request.tasks.map(task => [task.id, task.ref]));
     const refs = new Map(context.day.request.requests.map(order => [order.id, tasks.get(order.delivery_task_id)]));
     const editedRefs = new Set(intent.batch.commands.map(command => refs.get(command.requestId)));
-    let effectiveScenario: Scenario = { ...scenario, pins: scenario.pins.filter(pin => !editedRefs.has(pin.orderNo)) };
+    const editedIds = new Set(intent.batch.commands.map(command => command.requestId));
+    if(scenario.pins.some(pin=>pin.requestId===undefined&&editedRefs.has(pin.orderNo)&&
+      [...refs.values()].filter(ref=>ref===pin.orderNo).length>1))
+      throw new ManualPublicationError(409,'Clear the ambiguous legacy pin explicitly before editing this delivery.');
+    let effectiveScenario: Scenario = { ...scenario, pins: scenario.pins.filter(pin =>
+      pin.requestId === undefined ? !editedRefs.has(pin.orderNo) : !editedIds.has(pin.requestId)) };
     if (intent.vehicle) {
       if (!context.day.request.vehicles.some(vehicle => vehicle.id === intent.vehicle!.id)) throw new ManualPublicationError(400,'Unknown vehicle.');
       if(context.unavailableVehicleIds?.includes(intent.vehicle.id)&&!intent.vehicle.excluded)

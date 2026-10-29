@@ -6,6 +6,7 @@ import { writeJsonAtomic } from './util/jsonfile.js';
 import type { Plan } from './types.js';
 import { withNormalizedPlanStats } from './plan/stats.js';
 import type { PlanningPolicy } from './plan/policy.js';
+import { approvalBlockers } from './state/plan-workflow.js';
 
 /* Minimal durable store for scenarios, plans and jobs. JSON files under the
  * local data dir (not SQLite) - fastest reliable for a single-node demo, and
@@ -16,8 +17,8 @@ import type { PlanningPolicy } from './plan/policy.js';
  * a pin forces an order onto one vehicle (allowed_vehicles = [vehicleId]);
  * a forbid excludes a vehicle for an order (forbidden_vehicles). Pins win over
  * forbids for the same order. Orders are keyed by order_no (stable across days). */
-export interface Pin { orderNo: string; vehicleId: number }
-export interface Forbid { orderNo: string; vehicleId: number }
+export interface Pin { orderNo: string; requestId?:number; vehicleId: number }
+export interface Forbid { orderNo: string; requestId?:number; vehicleId: number }
 
 /* A per-vehicle constraint override for the next replan. Unset fields keep the
  * vehicle's dataset defaults. */
@@ -37,10 +38,13 @@ export type VehicleConstraintPatch = Omit<VehicleOverride, 'vehicleId'>;
  * vehicle and solved in this sequence (via allowed_vehicles + precedence).
  * `locked` additionally forbids every other order from the vehicle, freezing
  * its route exactly (lock-and-resolve); the rest re-solves around it. */
-export interface VehicleSequence { vehicleId: number; orderNos: string[]; locked?: boolean }
+export interface VehicleSequence { vehicleId: number; orderNos: string[]; requestIds?:number[]; locked?: boolean }
 export const MAX_SEQUENCE_LEN = 500;
 
 export interface Scenario {
+  deliveryDatasetSha256?:string;
+  selectedPlanId?: string;
+  selectionVersion?: number;
   manualPlanId?: string;
   manualDecisions?: { datasetSha256: string; decisions: Record<string, import('./plan/manual.js').ManualDecision>;
     requestIds?: number[];
@@ -65,18 +69,18 @@ export interface Scenario {
 
 /* A single dispatcher edit applied to an editable (copy) scenario. All edits
  * stack on the scenario and take effect together on the next Replan. */
-export type ScenarioEdit =
+export type ScenarioEdit = (
   | { op: 'removeVehicle'; vehicleId: number }
   | { op: 'restoreVehicle'; vehicleId: number }
-  | { op: 'pin'; orderNo: string; vehicleId: number }
-  | { op: 'unpin'; orderNo: string }
-  | { op: 'forbid'; orderNo: string; vehicleId: number }
-  | { op: 'unforbid'; orderNo: string; vehicleId: number }
+  | { op: 'pin'; orderNo: string; requestId?:number; vehicleId: number }
+  | { op: 'unpin'; orderNo: string; requestId?:number }
+  | { op: 'forbid'; orderNo: string; requestId?:number; vehicleId: number }
+  | { op: 'unforbid'; orderNo: string; requestId?:number; vehicleId: number }
   | { op: 'setVehicleConstraint'; vehicleId: number; patch: VehicleConstraintPatch }
   | { op: 'clearVehicleConstraint'; vehicleId: number }
-  | { op: 'setSequence'; vehicleId: number; orderNos: string[]; locked?: boolean }
+  | { op: 'setSequence'; vehicleId: number; orderNos: string[]; requestIds?:number[]; locked?: boolean }
   | { op: 'clearSequence'; vehicleId: number }
-  | { op: 'clearOverrides' };
+  | { op: 'clearOverrides' }) & {datasetSha256?:string};
 
 /* Validate + bounds-check an untrusted edit from the API. Returns an error
  * message, or null if the edit is well-formed and in range. */
@@ -90,6 +94,8 @@ export function validateScenarioEdit(edit: unknown): string | null {
   const e = edit as Record<string, unknown>;
   const isVid = (v: unknown): v is number => typeof v === 'number' && Number.isInteger(v) && v >= 0 && v < 1e9;
   const isOrder = (v: unknown): v is string => typeof v === 'string' && v.length > 0 && v.length <= 64;
+  if(e.requestId!==undefined&&!isVid(e.requestId))return 'valid requestId required';
+  if((e.requestId!==undefined||e.requestIds!==undefined)&&!(/^[a-f0-9]{64}$/.test(String(e.datasetSha256??''))))return 'Dataset checksum required for stable delivery identities';
   switch (e.op) {
     case 'removeVehicle': case 'restoreVehicle': case 'clearVehicleConstraint': case 'clearSequence':
       return isVid(e.vehicleId) ? null : 'valid vehicleId required';
@@ -98,7 +104,8 @@ export function validateScenarioEdit(edit: unknown): string | null {
       if (!Array.isArray(e.orderNos)) return 'orderNos array required';
       if (e.orderNos.length > MAX_SEQUENCE_LEN) return `too many orders (> ${MAX_SEQUENCE_LEN})`;
       if (!e.orderNos.every(isOrder)) return 'orderNos must be valid order numbers';
-      if (new Set(e.orderNos).size !== e.orderNos.length) return 'orderNos must be unique';
+      if(e.requestIds!==undefined&&(!Array.isArray(e.requestIds)||e.requestIds.length!==e.orderNos.length||!e.requestIds.every(isVid)||new Set(e.requestIds).size!==e.requestIds.length))return 'requestIds must uniquely identify each order';
+      if (e.requestIds===undefined&&new Set(e.orderNos).size !== e.orderNos.length) return 'orderNos must be unique';
       if (e.locked != null && typeof e.locked !== 'boolean') return 'locked must be a boolean';
       return null;
     }
@@ -129,9 +136,14 @@ export function validateScenarioEdit(edit: unknown): string | null {
  * adapters use this common domain operation so legacy and PostgreSQL modes do
  * not drift in dispatcher semantics. */
 export function applyScenarioEdits(scenario: Scenario, edits: ScenarioEdit[]): Scenario {
+  const same=(a:{orderNo:string;requestId?:number},b:{orderNo:string;requestId?:number})=>a.orderNo===b.orderNo&&a.requestId===b.requestId;
   const s = structuredClone(scenario);
   if (s.kind === 'base') throw new Error('base scenario is immutable; fork a copy first');
   for (const edit of edits) {
+    if(edit.datasetSha256){
+      if(s.deliveryDatasetSha256&&s.deliveryDatasetSha256!==edit.datasetSha256)throw new Error('Delivery dataset changed');
+      s.deliveryDatasetSha256=edit.datasetSha256;
+    }
     switch (edit.op) {
       case 'removeVehicle':
         if (!s.removedVehicleIds.includes(edit.vehicleId)) s.removedVehicleIds.push(edit.vehicleId);
@@ -150,13 +162,13 @@ export function applyScenarioEdits(scenario: Scenario, edits: ScenarioEdit[]): S
       case 'setSequence': {
         const rest = s.sequences.filter((q) => q.vehicleId !== edit.vehicleId);
         const keep = edit.orderNos.length >= 2 || Boolean(edit.locked && edit.orderNos.length);
-        s.sequences = keep ? [...rest, { vehicleId: edit.vehicleId, orderNos: [...edit.orderNos], ...(edit.locked ? { locked: true } : {}) }] : rest; break;
+        s.sequences = keep ? [...rest, { vehicleId: edit.vehicleId, orderNos: [...edit.orderNos],...(edit.requestIds?{requestIds:[...edit.requestIds]}:{}), ...(edit.locked ? { locked: true } : {}) }] : rest; break;
       }
       case 'clearSequence': s.sequences = s.sequences.filter((q) => q.vehicleId !== edit.vehicleId); break;
-      case 'pin': s.pins = [...s.pins.filter((p) => p.orderNo !== edit.orderNo), { orderNo: edit.orderNo, vehicleId: edit.vehicleId }]; s.forbids = s.forbids.filter((f) => f.orderNo !== edit.orderNo); break;
-      case 'unpin': s.pins = s.pins.filter((p) => p.orderNo !== edit.orderNo); break;
-      case 'forbid': if (!s.forbids.some((f) => f.orderNo === edit.orderNo && f.vehicleId === edit.vehicleId)) s.forbids.push({ orderNo: edit.orderNo, vehicleId: edit.vehicleId }); s.pins = s.pins.filter((p) => !(p.orderNo === edit.orderNo && p.vehicleId === edit.vehicleId)); break;
-      case 'unforbid': s.forbids = s.forbids.filter((f) => !(f.orderNo === edit.orderNo && f.vehicleId === edit.vehicleId)); break;
+      case 'pin': s.pins = [...s.pins.filter(p=>!same(p,edit)), { orderNo: edit.orderNo,...(edit.requestId===undefined?{}:{requestId:edit.requestId}), vehicleId: edit.vehicleId }]; s.forbids = s.forbids.filter(f=>!same(f,edit)); break;
+      case 'unpin': s.pins = s.pins.filter(p=>!same(p,edit)); break;
+      case 'forbid': if (!s.forbids.some(f=>same(f,edit)&&f.vehicleId===edit.vehicleId)) s.forbids.push({orderNo:edit.orderNo,...(edit.requestId===undefined?{}:{requestId:edit.requestId}),vehicleId:edit.vehicleId}); s.pins = s.pins.filter(p=>!(same(p,edit)&&p.vehicleId===edit.vehicleId)); break;
+      case 'unforbid': s.forbids = s.forbids.filter(f=>!(same(f,edit)&&f.vehicleId===edit.vehicleId)); break;
       case 'clearOverrides': s.pins = []; s.forbids = []; s.sequences = []; break;
     }
   }
@@ -167,6 +179,7 @@ export function applyScenarioEdits(scenario: Scenario, edits: ScenarioEdit[]): S
 /* A portable scenario: its edits + day + label, shareable as JSON so a colleague
  * can import it to recreate the same what-if (there is no multi-user store). */
 export interface ScenarioEditsBundle {
+  deliveryDatasetSha256?:string;
   planningPolicyId?: string; // reference only; never grants new approval
   removedVehicleIds: number[];
   pins: Pin[];
@@ -180,12 +193,13 @@ export function exportScenario(s: Scenario): ScenarioExport {
   return {
     otto_scenario: 1, day: s.day, label: s.label,
     edits: {
+      ...(s.deliveryDatasetSha256?{deliveryDatasetSha256:s.deliveryDatasetSha256}:{}),
       ...(s.planningPolicy ? { planningPolicyId: s.planningPolicy.id } : {}),
       removedVehicleIds: [...s.removedVehicleIds],
       pins: s.pins.map((p) => ({ ...p })),
       forbids: s.forbids.map((f) => ({ ...f })),
       vehicleOverrides: s.vehicleOverrides.map((o) => ({ ...o })),
-      sequences: s.sequences.map((q) => ({ vehicleId: q.vehicleId, orderNos: [...q.orderNos], ...(q.locked ? { locked: true } : {}) })),
+      sequences: s.sequences.map((q) => ({ vehicleId: q.vehicleId, orderNos: [...q.orderNos],...(q.requestIds?{requestIds:[...q.requestIds]}:{}), ...(q.locked ? { locked: true } : {}) })),
     },
   };
 }
@@ -204,8 +218,10 @@ export function parseScenarioImport(body: unknown): { error: string } | { day: s
   const isOrder = (v: unknown): v is string => typeof v === 'string' && v.length > 0 && v.length <= 64;
   const arr = (v: unknown): unknown[] => (Array.isArray(v) ? v : []);
   const removedVehicleIds = arr(e.removedVehicleIds).filter(isVid);
-  const pins: Pin[] = arr(e.pins).filter((p): p is Pin => !!p && isOrder((p as Pin).orderNo) && isVid((p as Pin).vehicleId)).map((p) => ({ orderNo: p.orderNo, vehicleId: p.vehicleId }));
-  const forbids: Forbid[] = arr(e.forbids).filter((f): f is Forbid => !!f && isOrder((f as Forbid).orderNo) && isVid((f as Forbid).vehicleId)).map((f) => ({ orderNo: f.orderNo, vehicleId: f.vehicleId }));
+  if([...arr(e.pins),...arr(e.forbids)].some(p=>p&&typeof p==='object'&&'requestId' in p&&p.requestId!==undefined&&!isVid(p.requestId)))return {error:'Invalid imported delivery identity'};
+  const stableRef=(p:Pin|Forbid)=>p.requestId===undefined?{}:{requestId:p.requestId};
+  const pins: Pin[] = arr(e.pins).filter((p): p is Pin => !!p && isOrder((p as Pin).orderNo) && isVid((p as Pin).vehicleId)).map(p=>({orderNo:p.orderNo,vehicleId:p.vehicleId,...stableRef(p)}));
+  const forbids: Forbid[] = arr(e.forbids).filter((f): f is Forbid => !!f && isOrder((f as Forbid).orderNo) && isVid((f as Forbid).vehicleId)).map(f=>({orderNo:f.orderNo,vehicleId:f.vehicleId,...stableRef(f)}));
   const vehicleOverrides: VehicleOverride[] = [];
   for (const o of arr(e.vehicleOverrides)) {
     const ov = o as VehicleOverride;
@@ -222,12 +238,15 @@ export function parseScenarioImport(body: unknown): { error: string } | { day: s
     const sq = q as VehicleSequence;
     if (!sq || !isVid(sq.vehicleId) || !Array.isArray(sq.orderNos)) continue;
     const orderNos = sq.orderNos.filter(isOrder).slice(0, MAX_SEQUENCE_LEN);
-    if (new Set(orderNos).size !== orderNos.length) continue;
-    if (orderNos.length >= 2 || (sq.locked && orderNos.length >= 1)) sequences.push({ vehicleId: sq.vehicleId, orderNos, ...(sq.locked ? { locked: true } : {}) });
+    if(sq.requestIds!==undefined&&(!Array.isArray(sq.requestIds)||sq.requestIds.length!==orderNos.length||!sq.requestIds.every(isVid)||new Set(sq.requestIds).size!==sq.requestIds.length))return {error:'Invalid sequence identities'};
+    if (!sq.requestIds&&new Set(orderNos).size !== orderNos.length) continue;
+    if (orderNos.length >= 2 || (sq.locked && orderNos.length >= 1)) sequences.push({ vehicleId: sq.vehicleId, orderNos,...(sq.requestIds?{requestIds:[...sq.requestIds]}:{}), ...(sq.locked ? { locked: true } : {}) });
   }
   if (e.planningPolicyId !== undefined && (typeof e.planningPolicyId !== 'string' || !/^[a-zA-Z0-9_-]{1,128}$/.test(e.planningPolicyId)))
     return { error: 'invalid planning policy reference' };
-  return { day, label, edits: { removedVehicleIds, pins, forbids, vehicleOverrides, sequences,
+  if(e.deliveryDatasetSha256!==undefined&&!/^[a-f0-9]{64}$/.test(String(e.deliveryDatasetSha256)))return {error:'Invalid delivery dataset checksum'};
+  if((pins.some(p=>p.requestId!==undefined)||forbids.some(p=>p.requestId!==undefined)||sequences.some(s=>s.requestIds))&&!e.deliveryDatasetSha256)return {error:'Dataset checksum required for delivery identities'};
+  return { day, label, edits: { removedVehicleIds, pins, forbids, vehicleOverrides, sequences,...(typeof e.deliveryDatasetSha256==='string'?{deliveryDatasetSha256:e.deliveryDatasetSha256}:{}),
     ...(typeof e.planningPolicyId === 'string' ? { planningPolicyId: e.planningPolicyId } : {}) } };
 }
 
@@ -330,7 +349,8 @@ export class Store {
   }
 
   gcPlans(): void {
-    for (const f of this.pruneDir('plans', Math.max(1, config.retainPlans), () => true)) {
+    const selected = new Set([...this.scenarios.values()].map(s => s.selectedPlanId).filter(Boolean));
+    for (const f of this.pruneDir('plans', Math.max(1, config.retainPlans), f => !selected.has(f.replace(/\.json$/, '')))) {
       this.plans.delete(f.replace(/\.json$/, ''));
     }
   }
@@ -354,6 +374,16 @@ export class Store {
   }
 
   newId(prefix: string): string { return `${prefix}_${randomUUID().slice(0, 8)}`; }
+  selectPlan(scenarioId:string,revision:number,planId:string,version:number,acknowledgeIncomplete:boolean):Scenario {
+    const s=this.scenarios.get(scenarioId),p=this.plans.get(planId);
+    if(!s||!p)throw new Error('Plan or scenario not found');
+    if(s.revision!==revision||(s.selectionVersion??0)!==version||p.scenarioId!==s.id||p.scenarioRevision!==revision)throw new Error('Scenario or plan selection changed');
+    if(p.stats.servedOrders+p.unassigned.length!==p.stats.totalOrders)throw new Error('Candidate coverage is inconsistent');
+    const issues=approvalBlockers(p,revision,s),coverage='Approval requires complete, consistent order coverage.';
+    if(issues.some(x=>x!==coverage)||issues.includes(coverage)&&!acknowledgeIncomplete)throw new Error(issues.join(' '));
+    const updated={...s,selectedPlanId:planId,selectionVersion:version+1};
+    writeJson(join(dir('scenarios'),`${s.id}.json`),updated);this.scenarios.set(s.id,updated);return updated;
+  }
 
   /* Idempotent base scenario per day (immutable, revision 0). */
   ensureBaseScenario(day: string, label: string): Scenario {
@@ -371,6 +401,7 @@ export class Store {
     const removed = [...parent.removedVehicleIds];
     if (edits.removeVehicleId != null && !removed.includes(edits.removeVehicleId)) removed.push(edits.removeVehicleId);
     const s: Scenario = {
+      ...(parent.deliveryDatasetSha256?{deliveryDatasetSha256:parent.deliveryDatasetSha256}:{}),
       ...(parent.planningPolicy ? { planningPolicy: structuredClone(parent.planningPolicy) } : {}),
       id: this.newId('scn'),
       day: parent.day,
@@ -382,7 +413,7 @@ export class Store {
       pins: parent.pins.map((p) => ({ ...p })),
       forbids: parent.forbids.map((f) => ({ ...f })),
       vehicleOverrides: parent.vehicleOverrides.map((o) => ({ ...o })),
-      sequences: parent.sequences.map((q) => ({ vehicleId: q.vehicleId, orderNos: [...q.orderNos] })),
+      sequences: parent.sequences.map(q=>structuredClone(q)),
       createdAt: new Date().toISOString(),
     };
     this.scenarios.set(s.id, s);
@@ -519,8 +550,9 @@ export class Store {
     s.removedVehicleIds = [...edits.removedVehicleIds];
     s.pins = edits.pins.map((p) => ({ ...p }));
     s.forbids = edits.forbids.map((f) => ({ ...f }));
+    if(edits.deliveryDatasetSha256)s.deliveryDatasetSha256=edits.deliveryDatasetSha256;
     s.vehicleOverrides = edits.vehicleOverrides.map((o) => ({ ...o }));
-    s.sequences = edits.sequences.map((q) => ({ vehicleId: q.vehicleId, orderNos: [...q.orderNos], ...(q.locked ? { locked: true } : {}) }));
+    s.sequences = edits.sequences.map(q=>structuredClone(q));
     s.revision += 1;
     this.scenarios.set(s.id, s);
     writeJson(join(dir('scenarios'), `${s.id}.json`), s);

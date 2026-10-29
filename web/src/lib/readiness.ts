@@ -1,4 +1,5 @@
 import type { Plan, Scenario } from '../types';
+import { comparisonEvidence } from '../../../server/src/plan/identity';
 
 export type CheckState = 'passed' | 'failed' | 'unknown' | 'notApplicable';
 export interface ReadinessCheck { key: 'gvw' | 'tailLift' | 'capacity' | 'timeWindows' | 'lockedRoutes'; state: CheckState; failures: number; checked: number }
@@ -51,8 +52,10 @@ export function reviewReadiness(plan: Plan, scenario: Scenario, pending = false)
   const locks = scenario.sequences.filter(s => s.locked);
   let lockFailures = 0;
   for (const lock of locks) {
-    const actual = plan.vehicles.find(v => v.id === lock.vehicleId)?.trips.flatMap(trip => trip.stops.map(stop => stop.orderNo)) ?? [];
-    if (actual.length !== lock.orderNos.length || actual.some((order, i) => order !== lock.orderNos[i])) lockFailures++;
+    const actual = plan.vehicles.find(v => v.id === lock.vehicleId)?.trips.flatMap(trip => trip.stops) ?? [];
+    if (actual.length !== lock.orderNos.length || actual.some((stop, i) => stop.orderNo !== lock.orderNos[i] ||
+      lock.requestIds !== undefined && stop.requestId !== lock.requestIds[i]) ||
+      !lock.requestIds && new Set(actual.map(s => s.orderNo)).size !== actual.length) lockFailures++;
   }
   checks.push({ key: 'lockedRoutes', failures: fresh ? lockFailures : 0, checked: locks.length,
     state: !locks.length ? 'notApplicable' : !fresh ? 'unknown' : lockFailures ? 'failed' : 'passed' });
@@ -70,17 +73,11 @@ export function reviewReadiness(plan: Plan, scenario: Scenario, pending = false)
 }
 
 export function reviewComparison(base: Plan, revised: Plan) {
-  const scope = (p: Plan) => new Set([...p.vehicles.flatMap(v => v.trips.flatMap(t => t.stops.map(s => s.orderNo))), ...p.unassigned.map(o => o.orderNo)]);
-  const baseScope = scope(base), revisedScope = scope(revised);
-  const sameScope = base.day === revised.day && base.stats.totalOrders === revised.stats.totalOrders
-    && baseScope.size > 0 && baseScope.size === revisedScope.size && [...baseScope].every(order => revisedScope.has(order))
-    && !!base.provenance?.inputSha256 && !!revised.provenance?.inputSha256;
+  const evidence=comparisonEvidence(base,revised),sameScope=evidence.sameScope;
   const comparableCost = sameScope && base.cost != null && revised.cost != null
     && base.cost.source === revised.cost.source && base.cost.currency === revised.cost.currency
-    && finite(base.cost.total) && finite(revised.cost.total);
+    && finite(base.cost.total) && finite(revised.cost.total)
+    && (!base.provenance.tariffSha256||!revised.provenance.tariffSha256||evidence.sameTariff);
   // Equal served counts can hide dropped orders replaced by other orders.
-  const served = (p: Plan) => new Set(p.vehicles.flatMap(v => v.trips.flatMap(t => t.stops.map(s => s.orderNo))));
-  const before = served(base), after = served(revised);
-  const lostService = revised.stats.servedOrders < base.stats.servedOrders || [...before].some(order => !after.has(order));
-  return { sameScope, comparableCost, lostService };
+  return { ...evidence,sameScope, comparableCost };
 }

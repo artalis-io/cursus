@@ -175,6 +175,7 @@ export interface PlanUnassigned {
 }
 
 export interface PlanProvenance {
+  warmStart?:{planId:string;used:boolean};
   tariffSha256?:string;
   datasetSha256?: string;
   planningPolicy?: import('./plan/policy.js').PlanningPolicy;
