@@ -61,6 +61,7 @@ export class ScenarioRepository {
     const checksums=new Set(profiles.map(p=>p.content.datasetSha256));
     if(checksums.size>1||[...checksums].some(sha=>edits.deliveryDatasetSha256&&sha!==edits.deliveryDatasetSha256||base.planningPolicy&&sha!==base.planningPolicy.datasetRequestSha256))
       throw new Error('Imported profiles do not match the scenario dataset.');
+    if(checksums.size===1)await new ProfileRepository(this.store,this.tenantId).assertDaySource(base.day,[...checksums][0]!);
     if (edits.planningPolicyId && edits.planningPolicyId !== base.planningPolicy?.id) throw new Error('planning policy reference is not approved in this workspace');
     const copy = await this.copy(base, label);
     const updated = { ...copy, removedVehicleIds: [...edits.removedVehicleIds], pins: structuredClone(edits.pins),

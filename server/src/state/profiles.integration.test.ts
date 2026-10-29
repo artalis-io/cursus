@@ -40,12 +40,17 @@ test('profile governance across two APIs is tenant-isolated, revision-fenced and
   await a.pool.query("UPDATE memberships SET role='admin' WHERE tenant_id=$1 AND user_id=$2",[tenant,userId]);
   const actor={userId,tenantId:tenant,email:'public@example.test',role:'admin' as const};
   await assert.rejects(()=>repo.activate(initial.id,1,2,actor),/not admitted/);
-  await a.pool.query("INSERT INTO datasets(tenant_id,id,status,manifest) VALUES($1,'profile-input','admitted',$2)",[tenant,{artifacts:{request:{sha256:value.datasetSha256}}}]);
+  await a.pool.query("INSERT INTO datasets(tenant_id,id,status,manifest) VALUES($1,'profile-input','admitted',$2)",[tenant,{artifacts:{request:{sha256:value.datasetSha256}},days:[{dayId:f.scenario.day}]}]);
   const active=await repo.activate(initial.id,1,2,actor);assert.equal(active.version,3);
   assert.equal((await repo.activate(initial.id,1,3,actor)).version,3,'matching activation is a no-op');
   assert.equal((await repo.resolve([ref]))[0]!.content.reason,value.reason);
   const bindings=await Promise.all(stores.map(store=>new ProfileRepository(store,tenant).bind(f.scenario.id,1,[ref],actor)) .map(p=>p.then(v=>({ok:true,value:v}),()=>({ok:false}))));
   assert.equal(bindings.filter(r=>r.ok).length,1);
+  assert.equal((await a.getScenario(tenant,f.scenario.id))!.revision,2);
+  const other={...value,datasetSha256:'b'.repeat(64),label:'Other admitted day'};
+  await a.pool.query("INSERT INTO datasets(tenant_id,id,status,manifest) VALUES($1,'other-input','admitted',$2)",[tenant,{artifacts:{request:{sha256:other.datasetSha256}},days:[{dayId:'other-day'}]}]);
+  const otherVersion=await repo.propose(other,0,undefined,actor);await repo.activate(otherVersion.id,1,1,actor);
+  await assert.rejects(()=>repo.bind(f.scenario.id,2,[{id:otherVersion.id,kind:'locations',revision:1,sha256:otherVersion.sha256}],actor),/unambiguous admitted source/);
   assert.equal((await a.getScenario(tenant,f.scenario.id))!.revision,2);
   await assert.rejects(()=>a.pool.query('UPDATE planning_profile_revisions SET body=$3 WHERE tenant_id=$1 AND profile_id=$2',[tenant,initial.id,{}]),/immutable/);
   await assert.rejects(()=>a.pool.query('DELETE FROM planning_profile_revisions WHERE tenant_id=$1 AND profile_id=$2',[tenant,initial.id]),/immutable/);

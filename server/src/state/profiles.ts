@@ -82,6 +82,14 @@ export class ProfileRepository {
     return result;
   }
 
+  async assertDaySource(day:string,sha:string,client:Pick<PoolClient,'query'>=this.store.pool):Promise<void>{
+    const sources=await client.query<{sha:string}>(`SELECT DISTINCT manifest->'artifacts'->'request'->>'sha256' sha FROM datasets
+      WHERE tenant_id=$1 AND status='admitted' AND EXISTS(
+        SELECT 1 FROM jsonb_array_elements(CASE WHEN jsonb_typeof(manifest->'days')='array' THEN manifest->'days' ELSE '[]'::jsonb END) d
+        WHERE d->>'dayId'=$2)`,[this.tenantId,day]);
+    if(sources.rows.length!==1||sources.rows[0]!.sha!==sha)throw new WorkflowError(409,'Profile does not match the unambiguous admitted source for this planning day.');
+  }
+
   async bind(scenarioId:string,revision:number,refs:ProfileRef[],actor?:Principal):Promise<Scenario>{
     const resolved=await this.resolve(refs);
     const checksums=new Set(resolved.map(p=>p.content.datasetSha256));
@@ -95,6 +103,7 @@ export class ProfileRepository {
       const ordered=(values:ProfileRef[])=>JSON.stringify([...values].sort((a,b)=>a.kind<b.kind?-1:a.kind>b.kind?1:0));
       if(ordered(refs)===ordered(current.body.planningProfiles??[]))return current.body;
       const sha=[...checksums][0];
+      if(sha)await this.assertDaySource(current.body.day,sha,client);
       const bound=current.body.deliveryDatasetSha256??current.body.manualDecisions?.datasetSha256??current.body.planningPolicy?.datasetRequestSha256;
       if(sha&&bound&&sha!==bound)throw new WorkflowError(409,'Profile does not match the scenario dataset.');
       if(current.body.manualDecisions)throw new WorkflowError(409,'Create a clean scenario before changing profiles with retained manual decisions.');
