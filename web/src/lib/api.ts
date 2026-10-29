@@ -80,6 +80,7 @@ export const api = {
     jsend<import('../../../server/src/workflow-contract').Workflow>(`/api/plans/${id}/${action}`, 'POST', { version, revision, acknowledgeExceptions }),
   days: () => jget<DaySummary[]>('/api/days'),
   plan: (id: string) => jget<Plan>(`/api/plans/${id}`),
+  planSnapshot:(id:string)=>jget<Plan>(`/api/plans/${encodeURIComponent(id)}?geometry=stored`),
   /** Recompute one vehicle trip under a proposed stop order (no re-solve). */
   evaluateTrip: (planId: string, body: { vehicleId: number; tripIndex: number; startSec: number; reloadSecAfter: number; orderNos: string[];requestIds?:number[] }) =>
     jsend<{ trip: Trip }>(`/api/plans/${planId}/evaluate`, 'POST', body),

@@ -50,7 +50,7 @@ function statefulPermissions(role: string) {
   return isRole(role) ? rolePermissions[role].filter(p => p !== 'optimization.cancel' && p !== 'analysis.generate' && p !== 'dataset.delete') : [];
 }
 
-export interface StatefulApiOptions { store: StatefulStore; tenantId: string; tenantName: string; auth?: StatefulAuthService; publicOrigin?: string; objects?: ObjectStore; maxUploadBytes?: number; manualPlanning?: ManualDatasetLoader;fleetSettings?:Omit<ManualDatasetContext,'day'>;handoffDestinations?:Destination[] }
+export interface StatefulApiOptions { store: StatefulStore; tenantId: string; tenantName: string; auth?: StatefulAuthService; publicOrigin?: string; objects?: ObjectStore; maxUploadBytes?: number; manualPlanning?: ManualDatasetLoader;fleetSettings?:Omit<ManualDatasetContext,'day'>;handoffDestinations?:Destination[];geometryLoader?:typeof fillPlanGeometry }
 
 /** Stateful HTTP surface used by the runtime integration tests and, after
  * cutover, by the production entry point. Every repository is tenant-bound. */
@@ -246,10 +246,12 @@ export async function createStatefulApi(options: StatefulApiOptions): Promise<Fa
     const job = await options.store.getJob(options.tenantId, req.params.id);
     return job ? statefulJobResponse(job) : reply.code(404).send({ error: 'job not found' });
   });
-  app.get<{ Params: { id: string } }>('/api/plans/:id', async (req, reply) => {
+  app.get<{ Params: { id: string };Querystring:{geometry?:string} }>('/api/plans/:id', async (req, reply) => {
+    if(req.query.geometry!==undefined&&req.query.geometry!=='stored')return reply.code(400).send({error:'geometry must be stored or omitted.'});
     const plan = await options.store.getPlan(options.tenantId, req.params.id);
     if (!plan) return reply.code(404).send({ error: 'plan not found' });
-    await fillPlanGeometry(plan).catch(() => false);
+    reply.header('Cache-Control','private, no-store');
+    if(req.query.geometry!=='stored')await (options.geometryLoader??fillPlanGeometry)(plan).catch(() => false);
     return plan;
   });
   app.post<{ Params: { id: string }; Body: { vehicleId?: number; tripIndex?: number; startSec?: number; reloadSecAfter?: number; orderNos?: unknown;requestIds?:unknown } }>(

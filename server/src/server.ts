@@ -392,10 +392,12 @@ app.get<{ Querystring: { day?: string } }>('/api/plans', async (req) => {
   return out;
 });
 
-app.get<{ Params: { id: string } }>('/api/plans/:id', async (req, reply) => {
+app.get<{ Params: { id: string };Querystring:{geometry?:string} }>('/api/plans/:id', async (req, reply) => {
+  if(req.query.geometry!==undefined&&req.query.geometry!=='stored')return reply.code(400).send({error:'geometry must be stored or omitted.'});
   const plan = store.getPlan(req.params.id);
   if (!plan) return reply.code(404).send({ error: 'plan not found' });
-  try { await fillPlanGeometry(plan); } catch (e) { app.log.warn(`geometry fill: ${(e as Error).message}`); }
+  reply.header('Cache-Control','private, no-store');
+  if(req.query.geometry!=='stored')try { await fillPlanGeometry(plan); } catch (e) { app.log.warn(`geometry fill: ${(e as Error).message}`); }
   return plan;
 });
 

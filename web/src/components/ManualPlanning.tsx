@@ -51,7 +51,8 @@ export function ManualPlanningDialog({plan,scenario,fleet,request,onClose,onAppl
         ?manualAssignmentCommands(request.requestIds,Number(vehicleId),tripId||newTripId,
           trip?.stops.map(stop=>stop.requestId!)??[],position===''?remaining.length:Number(position))
         :request.requestIds.map(requestId=>({op:request.action==='deassign'?'deassign':'release',requestId}))}}),[plan,request,operationId,vehicleId,tripId,newTripId,position,trip,remaining.length,datasetSha256]);
-  useEffect(()=>{generation.current++;setPreview(null);setError(null);},[intent]);
+  const intentKey=JSON.stringify(intent);
+  useEffect(()=>{generation.current++;setPreview(null);setError(null);},[intentKey]);
   const valid=!!request.vehicle||!!request.undo||request.action!=='assign'||!!vehicle&&!vehicle.unavailable&&!scenario.removedVehicleIds.includes(vehicle.id);
   async function calculate(){
     if(inFlight.current||!canEvaluate||!valid)return;
