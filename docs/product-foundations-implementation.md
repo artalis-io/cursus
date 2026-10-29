@@ -5,8 +5,8 @@ Status: authorized implementation, in progress. Production activation is separat
 Progress:
 
 - Candidate-safe Replan and stable identity: committed as `db42035`; 68/68 isolated production-image Playwright tests passed. Later profile/shipment work adds regression protection for subsequent manual selection and portable-file compatibility.
-- Profiles and canonical shipment metadata: implemented on the feature branch; native unit, two-replica HTTP/integration, frontend build and deployment-tool checks pass. Full production-image acceptance is the next gate.
-- Revision-bound acknowledged handoff: next implementation milestone, after the first two groups.
+- Profiles and canonical shipment metadata: implemented on the feature branch; native unit, two-replica HTTP/integration, frontend build and deployment-tool checks pass. Browser testing found and fixed positional stop selection and a reopen/manual-mode navigation race. Full corrected production-image acceptance remains the final gate.
+- Revision-bound acknowledged handoff: implemented with immutable intents, bounded leased delivery, receipt-only ambiguous recovery, amendment/cancellation, Admin permissions, and an opt-in receiver contract. Real local HTTP crash/takeover tests pass. No production destination is configured or contacted.
 
 Implement in this order:
 

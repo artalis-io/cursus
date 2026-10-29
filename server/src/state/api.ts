@@ -1,5 +1,5 @@
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from 'fastify';
-import { JobQueueFullError, RevisionConflictError, type StatefulStore } from './postgres.js';
+import { JobQueueFullError, RevisionConflictError, ScenarioHandoffHistoryError, type StatefulStore } from './postgres.js';
 import { ScenarioRepository } from './scenarios.js';
 import { validateScenarioEdit, type ScenarioEdit } from '../store.js';
 import { cookieValue } from '../auth.js';
@@ -35,6 +35,8 @@ import { PlanWorkflow, WorkflowError } from './plan-workflow.js';
 import { selectPlan } from './plan-selection.js';
 import { tripPermutation } from '../plan/identity.js';
 import { registerProfileApi } from './profiles-api.js';
+import {registerTransferApi} from './transfers-api.js';
+import type {Destination} from './handoff-sender.js';
 import { ProfileRepository } from './profiles.js';
 import { manualSettings } from './manual-settings.js';
 import { exportFilename } from '../handoff.js';
@@ -48,7 +50,7 @@ function statefulPermissions(role: string) {
   return isRole(role) ? rolePermissions[role].filter(p => p !== 'optimization.cancel' && p !== 'analysis.generate' && p !== 'dataset.delete') : [];
 }
 
-export interface StatefulApiOptions { store: StatefulStore; tenantId: string; tenantName: string; auth?: StatefulAuthService; publicOrigin?: string; objects?: ObjectStore; maxUploadBytes?: number; manualPlanning?: ManualDatasetLoader;fleetSettings?:Omit<ManualDatasetContext,'day'> }
+export interface StatefulApiOptions { store: StatefulStore; tenantId: string; tenantName: string; auth?: StatefulAuthService; publicOrigin?: string; objects?: ObjectStore; maxUploadBytes?: number; manualPlanning?: ManualDatasetLoader;fleetSettings?:Omit<ManualDatasetContext,'day'>;handoffDestinations?:Destination[] }
 
 /** Stateful HTTP surface used by the runtime integration tests and, after
  * cutover, by the production entry point. Every repository is tenant-bound. */
@@ -66,6 +68,7 @@ export async function createStatefulApi(options: StatefulApiOptions): Promise<Fa
   registerProfileApi(app,options.store,options.tenantId,options.manualPlanning);
   const policyIssues=options.fleetSettings?(plan:Plan)=>plan.provenance.planningProfiles?.some(p=>p.kind==='fleet')?[]:fleetPolicyBlockers(plan,options.fleetSettings!):undefined;
   const workflow = new PlanWorkflow(options.store, options.tenantId,policyIssues);
+  registerTransferApi(app,options.store,options.tenantId,options.handoffDestinations??[],workflow);
   app.post<{Params:{id:string};Body:{planId?:unknown;selectionVersion?:unknown;acknowledgeIncomplete?:unknown}}>('/api/scenarios/:id/select-plan',async(req,reply)=>{
     const b=req.body,revision=expectedRevision(req.headers);
     if(revision===null||typeof b?.planId!=='string'||!b.planId||b.planId.length>128||!Number.isSafeInteger(b.selectionVersion)||Number(b.selectionVersion)<0||b.acknowledgeIncomplete!==undefined&&typeof b.acknowledgeIncomplete!=='boolean')return reply.code(400).send({error:'Plan identity, selection version and If-Match revision are required.'});
@@ -154,11 +157,11 @@ export async function createStatefulApi(options: StatefulApiOptions): Promise<Fa
   });
   app.get('/api/auth/me', async (req, reply) => {
     reply.header('Cache-Control', 'private, no-store');
-    if (!options.auth) return { email: 'local@cursus', tenantId: options.tenantId, tenantName: options.tenantName, role: 'admin', permissions: statefulPermissions('admin').filter(p => p !== 'role.preview'), build: buildInfo,features:{planningProfiles:true} };
+    if (!options.auth) return { email: 'local@cursus', tenantId: options.tenantId, tenantName: options.tenantName, role: 'admin', permissions: statefulPermissions('admin').filter(p => p !== 'role.preview'), build: buildInfo,features:{planningProfiles:true,acknowledgedHandoff:true} };
     const principal = await options.auth.authenticate(cookieValue(req.headers.cookie, 'cursus_session'));
     if (!principal || principal.tenantId !== options.tenantId) return reply.code(401).send({ error: 'authentication required' });
     const identity = viewIdentity(principal, req.headers.cookie);
-    return { ...identity, permissions: statefulPermissions(identity.effectiveRole), tenantName: await options.store.getTenantName(principal.tenantId), build: buildInfo,features:{planningProfiles:true} };
+    return { ...identity, permissions: statefulPermissions(identity.effectiveRole), tenantName: await options.store.getTenantName(principal.tenantId), build: buildInfo,features:{planningProfiles:true,acknowledgedHandoff:true} };
   });
   app.post('/api/auth/logout', async (req, reply) => {
     if (options.auth && req.headers.origin !== options.publicOrigin) return reply.code(403).send({ error: 'invalid request origin' });
@@ -206,7 +209,7 @@ export async function createStatefulApi(options: StatefulApiOptions): Promise<Fa
     const scenario = await scenarios.get(req.params.id); if (!scenario) return reply.code(404).send({ error: 'scenario not found' });
     if (scenario.kind === 'base') return reply.code(400).send({ error: 'base scenario cannot be deleted' });
     try { return { deleted: await scenarios.delete(req.params.id, expectedRevision(req.headers)!) }; }
-    catch (error) { if (error instanceof RevisionConflictError) return reply.code(409).send({ error: 'Scenario changed; reload before deleting.' }); throw error; }
+    catch (error) { if(error instanceof ScenarioHandoffHistoryError)return reply.code(409).send({error:error.message});if (error instanceof RevisionConflictError) return reply.code(409).send({ error: 'Scenario changed; reload before deleting.' }); throw error; }
   });
   app.get<{ Params: { id: string } }>('/api/scenarios/:id/export', async (req, reply) => {
     const scenario = await scenarios.get(req.params.id); return scenario ? exportScenario(scenario) : reply.code(404).send({ error: 'scenario not found' });

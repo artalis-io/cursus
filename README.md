@@ -1,5 +1,9 @@
 # Cursus
 
+Product planning foundations: [safe replanning](docs/safe-replan-and-delivery-identity.md),
+[profiles and shipments](docs/profiles-and-shipments.md), and
+[acknowledged integration handoff](docs/acknowledged-handoff.md).
+
 ## Access roles
 
 Admins can select **View as Planner** or **View as Reviewer** in the account bar

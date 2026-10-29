@@ -185,7 +185,7 @@ integration('schema-2 upgrade preserves memberships and sessions under concurren
   await Promise.all([a.migrate(), b.migrate()]);
   assert.deepEqual((await a.pool.query('SELECT * FROM memberships ORDER BY tenant_id,user_id')).rows, members);
   assert.deepEqual((await b.pool.query('SELECT * FROM sessions ORDER BY token_hash')).rows, sessions);
-  assert.deepEqual((await a.pool.query('SELECT version FROM schema_migrations ORDER BY version')).rows.map(r => r.version), [1, 2, 3, 4]);
+  assert.deepEqual((await a.pool.query('SELECT version FROM schema_migrations ORDER BY version')).rows.map(r => r.version), [1, 2, 3, 4, 5]);
 });
 
 integration('Admin, Planner and Reviewer sessions enforce tenant-scoped permissions on both replicas', async () => {

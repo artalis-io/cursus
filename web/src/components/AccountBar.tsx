@@ -4,7 +4,7 @@ import { useT } from '@/i18n';
 import type { Role, Permission } from '../../../server/src/roles';
 
 export interface AccountUser {
-  features?: {planningProfiles?:boolean};
+  features?: {planningProfiles?:boolean;acknowledgedHandoff?:boolean};
   email: string;
   tenantId: string;
   tenantName?: string | null;

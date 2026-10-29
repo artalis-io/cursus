@@ -77,8 +77,8 @@ def main():
                  f'OTTO_REVISION={otto_revision}', '-t', image, '.'])
         inspected = json.loads(run(['docker', 'image', 'inspect', image], capture=True).stdout)[0]
         labels = inspected['Config']['Labels'] or {}
-        if labels.get('io.artalis.cursus.schema.minimum') != '1' or labels.get('io.artalis.cursus.schema.maximum') != '4':
-            raise ValueError('image must declare supported schema versions 1..4')
+        if labels.get('io.artalis.cursus.schema.minimum') != '1' or labels.get('io.artalis.cursus.schema.maximum') != '5':
+            raise ValueError('image must declare supported schema versions 1..5')
         report.update(image_id=inspected['Id'], architecture=inspected['Architecture'],
                       image_revision=labels.get('org.opencontainers.image.revision'),
                       otto_revision=labels.get('io.artalis.otto.revision'))
@@ -87,6 +87,9 @@ def main():
             path.chmod(0o755)  # disposable fixture credentials, readable by UID 10001
             for name, value in {'database-url': 'postgres://cursus:integration-only@postgres:5432/cursus',
                                 'access-key': 'integration', 'secret-key': 'integration',
+                                'handoff-token': 'public-disposable-handoff-token',
+                                'handoff.json': json.dumps({'destinations': [{'id': 'warehouse', 'tenantId': 'acceptance', 'label': 'Acceptance warehouse',
+                                    'protocol': 'cursus.handoff.v1', 'url': 'http://cursus-handoff-receiver:8092/instructions', 'tokenFile': '/acceptance-config/handoff-token'}]}),
                                 'allowlist': json.dumps({'admins': ['admin@acceptance.example.test'], 'planners': ['planner@acceptance.example.test'], 'reviewers': ['reviewer@acceptance.example.test']}),
                                 'unused-map.vlg': 'not a geographic index; unused by this suite'}.items():
                 (path / name).write_text(value + '\n')
@@ -133,7 +136,7 @@ def main():
             dc('up', '-d', '--wait', 'postgres', 's3-test')
             seeded = dc('run', '--rm', '-T', 'fixture', 'seed', capture=True)
             report['fixture'] = json.loads(seeded.stdout.strip().splitlines()[-1])
-            dc('up', '-d', '--wait', 'app-a', 'app-b')
+            dc('up', '-d', '--wait', 'cursus-handoff-receiver', 'app-a', 'app-b')
             # Both HTTP replicas must be running the exact image being certified.
             for service in ['app-a', 'app-b']:
                 cid = dc('ps', '-q', service, capture=True).stdout.strip()

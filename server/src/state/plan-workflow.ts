@@ -104,8 +104,11 @@ export class PlanWorkflow {
 
   /** Render bytes, not a lazy/streamed response, while the scenario lock is held.
    * Network delivery is outside the transaction; checkedAt defines the snapshot. */
-  async renderExport(id: string, requireApproved: boolean, render: (plan: Plan, metadata: HandoffMetadata) => string): Promise<{ body: string; metadata: HandoffMetadata }> {
+  async renderExport(id: string, requireApproved: boolean, render: (plan: Plan, metadata: HandoffMetadata) => string,
+    persist?:(client:PoolClient,plan:Plan,metadata:HandoffMetadata,body:string)=>Promise<void>,
+    authorize?:(client:PoolClient)=>Promise<void>): Promise<{ body: string; metadata: HandoffMetadata }> {
     return this.store.tx(async client => {
+      await authorize?.(client);
       const { plan, scenario, event, workflow } = await this.snapshot(client, id, true, true);
       const fresh = scenario !== null && workflow.currentRevision === plan.scenarioRevision;
       const approved = workflow.state === 'approved' && fresh && workflow.blockers.length === 0;
@@ -128,7 +131,9 @@ export class PlanWorkflow {
         constraints: constraintSnapshot(plan, fresh ? scenario : recorded, fresh ? 'matching-revision' : recorded ? 'approval-event' : 'unavailable'),
         policy: plan.provenance?.planningPolicy ?? null,
       };
-      return { body: render(withNormalizedPlanStats(plan), metadata), metadata };
+      const normalized=withNormalizedPlanStats(plan),body=render(normalized,metadata);
+      await persist?.(client,normalized,metadata,body);
+      return { body, metadata };
     });
   }
 

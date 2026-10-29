@@ -175,11 +175,11 @@ app.post<{ Querystring: { token?: string } }>('/api/auth/verify', async (req, re
 });
 app.get('/api/auth/me', async (req, reply) => {
   reply.header('Cache-Control', 'private, no-store');
-  if (!auth) return { email: 'local@cursus', tenantId: 'local', tenantName: config.authTenantName, role: 'admin', permissions: rolePermissions.admin.filter(p => p !== 'role.preview' && p !== 'plan.review' && p !== 'plan.approve' && !p.startsWith('profile.')), build: buildInfo };
+  if (!auth) return { email: 'local@cursus', tenantId: 'local', tenantName: config.authTenantName, role: 'admin', permissions: rolePermissions.admin.filter(p => p !== 'role.preview' && p !== 'plan.review' && p !== 'plan.approve' && !p.startsWith('profile.') && !p.startsWith('handoff.')), build: buildInfo };
   const principal = auth.authenticate(cookieValue(req.headers.cookie, 'cursus_session'));
   if (!principal) return reply.code(401).send({ error: 'authentication required' });
   const identity = viewIdentity(principal, req.headers.cookie);
-  return { ...identity, permissions: identity.permissions.filter(p => p !== 'plan.review' && p !== 'plan.approve' && !p.startsWith('profile.')), tenantName: config.authTenantName, build: buildInfo };
+  return { ...identity, permissions: identity.permissions.filter(p => p !== 'plan.review' && p !== 'plan.approve' && !p.startsWith('profile.') && !p.startsWith('handoff.')), tenantName: config.authTenantName, build: buildInfo };
 });
 app.post('/api/auth/logout', async (req, reply) => {
   if (auth && req.headers.origin !== config.authPublicOrigin) return reply.code(403).send({ error: 'invalid request origin' });

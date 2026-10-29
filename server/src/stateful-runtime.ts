@@ -10,9 +10,11 @@ import { workOneSolve, type SolveOutput } from './state/worker.js';
 import { solveConvertedDataset, workOneDatasetAdmission } from './state/conversion.js';
 import { deliverOne, ResendSender } from './state/outbox.js';
 import type { Scenario } from './store.js';
-import { manualSettings } from './state/manual-settings.js';
+import { manualSettings,fleetPolicyBlockers } from './state/manual-settings.js';
 import { admittedManualDatasetLoader } from './state/manual-dataset.js';
 import { ProfileRepository } from './state/profiles.js';
+import {parseDestinations,HttpHandoffSender} from './state/handoff-sender.js';
+import {workOneTransfer} from './state/transfer-worker.js';
 
 const required = (name: string, value: string): string => {
   if (!value) throw new Error(`${name} is required in stateful mode`);
@@ -45,8 +47,11 @@ const auth = config.authRequired ? new StatefulAuthService(store, {
 }) : undefined;
 const fleetSettings=process.env.CURSUS_MANUAL_SETTINGS_FILE?manualSettings(JSON.parse(await readFile(process.env.CURSUS_MANUAL_SETTINGS_FILE,'utf8'))):undefined;
 const manualPlanning = admittedManualDatasetLoader(store,objects,config.authTenantId,fleetSettings);
+const handoffDestinations=process.env.CURSUS_HANDOFF_CONFIG_FILE?parseDestinations(JSON.parse(await readFile(process.env.CURSUS_HANDOFF_CONFIG_FILE,'utf8')),process.env.CURSUS_HANDOFF_TEST_HTTP==='1'):[];
+if(handoffDestinations.some(d=>d.tenantId!==config.authTenantId))throw new Error('Handoff configuration must belong to this deployment tenant.');
+const handoffSender=handoffDestinations.length?await HttpHandoffSender.create(handoffDestinations):undefined;
 const app = await createStatefulApi({ store, objects, auth, manualPlanning,fleetSettings, tenantId: config.authTenantId,
-  tenantName: config.authTenantName, publicOrigin: config.authPublicOrigin, maxUploadBytes: config.maxUploadMB * 1024 * 1024 });
+  tenantName: config.authTenantName, publicOrigin: config.authPublicOrigin, maxUploadBytes: config.maxUploadMB * 1024 * 1024,handoffDestinations });
 await app.register(fastifyStatic, { root: config.webDist, wildcard: false });
 app.setNotFoundHandler((req, reply) => req.method === 'GET' && !req.url.startsWith('/api/') && !req.url.startsWith('/health/')
   ? reply.sendFile('index.html') : reply.code(404).send({ error: 'not found' }));
@@ -84,6 +89,8 @@ const workers = [
   loop('solve', () => workOneSolve(store, solve, `${workerId}-solve`, config.statefulLeaseSec)),
   loop('conversion', () => workOneDatasetAdmission(store, objects, `${workerId}-conversion`, config.statefulLeaseSec)),
 ];
+if(handoffSender)workers.push(loop('handoff',()=>workOneTransfer(store,config.authTenantId,handoffDestinations,handoffSender,`${workerId}-handoff`,config.statefulLeaseSec,
+ fleetSettings?(plan)=>plan.provenance.planningProfiles?.some(p=>p.kind==='fleet')?[]:fleetPolicyBlockers(plan,fleetSettings):undefined)));
 if (config.resendApiKeyFile) {
   const sender = new ResendSender(await secret('RESEND_API_KEY_FILE', config.resendApiKeyFile));
   workers.push(loop('email', () => deliverOne(store, sender, `${workerId}-email`)));

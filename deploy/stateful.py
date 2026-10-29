@@ -129,7 +129,7 @@ def acceptance_evidence(path: Path | None, image_id: str, *, fresh: bool = True)
                   and report['cleanup_completed'] is True
                   and report['checkout_dirty'] is False and stats['expected'] >= 8
                   and stats['unexpected'] == stats['flaky'] == stats['skipped'] == 0
-                  and report['runtime']['migrations'] in ([1], [1, 2], [1, 2, 3], [1, 2, 3, 4])
+                  and report['runtime']['migrations'] in ([1], [1, 2], [1, 2, 3], [1, 2, 3, 4], [1, 2, 3, 4, 5])
                   and all(len(report['runtime']['native'][name]) == 64 for name in ['surge', 'matrix', 'nexus'])
                   and len(report['image_revision']) == 40 and len(report['otto_revision']) == 40
                   and report['harness_sha256'] == current_harness_digest() and age >= 0 and (not fresh or age <= 86400))

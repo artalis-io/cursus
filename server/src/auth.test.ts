@@ -24,7 +24,7 @@ test('permission grants match an independent specification, not production-deriv
       'scenario.import', 'plan.evaluate', 'plan.review', 'optimization.submit', 'optimization.cancel', 'analysis.generate','profile.propose'],
     admin: ['workspace.read', 'workspace.export', 'scenario.create', 'scenario.rename', 'scenario.edit', 'scenario.import',
       'scenario.delete', 'plan.evaluate', 'plan.review', 'plan.approve', 'optimization.submit', 'optimization.cancel', 'analysis.generate',
-      'dataset.upload', 'dataset.convert', 'dataset.validate', 'dataset.admit', 'dataset.delete', 'role.preview','profile.propose','profile.approve'],
+      'dataset.upload', 'dataset.convert', 'dataset.validate', 'dataset.admit', 'dataset.delete', 'role.preview','profile.propose','profile.approve','handoff.send','handoff.cancel'],
   };
   for (const role of ['admin', 'planner', 'reviewer'] as const)
     assert.deepEqual(permissions.filter(p => hasPermission(role, p)).sort(), expected[role].sort());

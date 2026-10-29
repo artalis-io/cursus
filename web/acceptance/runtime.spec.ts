@@ -1464,8 +1464,11 @@ test('duplicate display references survive keyboard reordering, native replannin
  // for independent manual deassignment checks.
  await page.getByRole('button',{name:'Plans',exact:true}).click();
  page.once('dialog',dialog=>void dialog.accept());
+ const reopenedContext=page.waitForResponse(r=>r.url().endsWith(`/api/plans/${base.id}/manual-context`));
  await page.getByRole('dialog').locator(`[data-plan-id="${base.id}"]`).getByRole('button',{name:'Reopen',exact:true}).click();
+ expect((await reopenedContext).status()).toBe(200);
  await page.getByRole('button',{name:'Manual planning',exact:true}).click();
+ await expect(page.getByRole('button',{name:'Manual planning',exact:true})).toHaveAttribute('aria-pressed','true');
  let current=base;
  for(const requestId of [170,130]){
   const v=current.vehicles.find(v=>v.trips.some(t=>t.stops.some(s=>s.requestId===requestId)))!,tr=v.trips.find(t=>t.stops.some(s=>s.requestId===requestId))!,s=tr.stops.find(s=>s.requestId===requestId)!;
@@ -1486,4 +1489,38 @@ test('duplicate display references survive keyboard reordering, native replannin
  expect(assigned.stats.servedOrders).toBe(1);expect(assigned.stats.totalOrders).toBe(2);
  const handoff=await get<{routes:{stops:{requestId:number}[]}[]}>(page.request,`${peer}/api/plans/${assigned.id}/handoff.json`);
  expect(handoff.routes.flatMap(r=>r.stops.map(s=>s.requestId))).toEqual([170]);
+});
+
+test('approved handoff is durable across replicas, read-only for Planner/Reviewer, acknowledged and explicitly cancelled',async({page})=>{
+ await login(page);await shortBudget(page);
+ const plan=await finishSolve(page,()=>page.getByRole('button',{name:'Optimize',exact:true}).click());
+ const approval=page.getByRole('region',{name:'Plan approval',exact:true});
+ await approval.getByRole('checkbox').check();await approval.getByRole('button',{name:'Mark reviewed',exact:true}).click();
+ await expect(approval).toContainText('Reviewed');await approval.getByRole('checkbox').check();await approval.getByRole('button',{name:'Approve plan',exact:true}).click();await expect(approval).toContainText('Approved');
+ await page.getByRole('button',{name:'Acknowledged handoff',exact:true}).click();
+ const dialog=page.getByRole('dialog');await expect(dialog).toContainText('Acceptance warehouse');
+ await expect(dialog.getByRole('button',{name:'Send approved plan',exact:true})).toBeDisabled();
+ await dialog.getByRole('textbox',{name:'Handoff reason',exact:true}).fill('Public acceptance dispatch');await dialog.getByRole('checkbox').check();
+ const queued=page.waitForResponse(r=>r.request().method()==='POST'&&r.url().endsWith('/transfers/publish'));
+ await dialog.getByRole('button',{name:'Send approved plan',exact:true}).click();const response=await queued;expect(response.status()).toBe(202);const intent=await response.json() as {id:string};
+ const status=()=>get<{intents:{id:string;state:string;receipt:{receiptId:string}|null}[];heads:{acceptedIntentId:string}[]}>(page.request,`${peer}/api/plans/${plan.id}/transfers`);
+ await expect.poll(async()=>(await status()).intents.find(i=>i.id===intent.id)?.state).toBe('acknowledged');
+ await expect(dialog).toContainText(`test-receipt-${intent.id}`);
+ await page.keyboard.press('Escape');
+ const headers={origin:new URL(page.url()).origin};
+ for(const role of ['planner','reviewer']){
+  expect((await page.request.post('/api/auth/view-as',{headers,data:{role}})).status()).toBe(200);await page.evaluate(()=>window.dispatchEvent(new Event('focus')));
+  await expect(page.getByRole('contentinfo')).toContainText(role==='planner'?'Planner':'Reviewer');
+  await page.getByRole('button',{name:'Acknowledged handoff',exact:true}).click();await expect(dialog).toContainText(`test-receipt-${intent.id}`);
+  await expect(dialog.getByRole('textbox',{name:'Handoff reason',exact:true})).toHaveCount(0);await expect(dialog.getByRole('button',{name:'Cancel accepted instruction',exact:true})).toHaveCount(0);
+  expect((await page.request.post(`${peer}/api/plans/${plan.id}/transfers/cancel`,{headers:{...headers,'if-match':`"${plan.scenarioRevision}"`},data:{}})).status()).toBe(403);
+  expect((await page.request.post(`/api/handoff/${intent.id}/retry`,{headers,data:{mode:'lookup'}})).status()).toBe(403);await page.keyboard.press('Escape');
+ }
+ expect((await page.request.post('/api/auth/view-as',{headers,data:{role:null}})).status()).toBe(200);await page.evaluate(()=>window.dispatchEvent(new Event('focus')));
+ await expect(page.getByRole('contentinfo')).toContainText('Admin');await page.getByRole('button',{name:'Acknowledged handoff',exact:true}).click();
+ await dialog.getByRole('textbox',{name:'Handoff reason',exact:true}).fill('Public acceptance cancellation');await dialog.getByRole('checkbox').check();
+ const cancelled=page.waitForResponse(r=>r.request().method()==='POST'&&r.url().endsWith('/transfers/cancel'));
+ await dialog.getByRole('button',{name:'Cancel accepted instruction',exact:true}).click();const cancellation=await cancelled;expect(cancellation.status()).toBe(202);const second=await cancellation.json() as {id:string};
+ await expect.poll(async()=>(await status()).intents.find(i=>i.id===second.id)?.state).toBe('acknowledged');
+ expect((await status()).heads[0]!.acceptedIntentId).toBe(second.id);await expect(dialog).toContainText(`test-receipt-${second.id}`);
 });

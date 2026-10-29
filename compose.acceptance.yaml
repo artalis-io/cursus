@@ -23,6 +23,8 @@ x-app: &app
     CURSUS_TENANT_ID: acceptance
     CURSUS_TENANT_NAME: Acceptance workspace
     CURSUS_MANUAL_SETTINGS_FILE: /acceptance-config/manual-settings.json
+    CURSUS_HANDOFF_CONFIG_FILE: /acceptance-config/handoff.json
+    CURSUS_HANDOFF_TEST_HTTP: "1"
     CURSUS_PUBLIC_ORIGIN: ${CURSUS_ACCEPTANCE_ORIGIN:?set by runner}
     CURSUS_WORKER_POLL_MS: "200"
     CURSUS_WORKER_LEASE_SEC: "10"
@@ -44,6 +46,14 @@ x-app: &app
   stop_grace_period: 40s
 
 services:
+  cursus-handoff-receiver:
+    <<: *app
+    entrypoint: [node, /acceptance/handoff-receiver.mjs]
+    healthcheck:
+      test: [CMD, node, -e, "fetch('http://127.0.0.1:8092/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 2s
+      timeout: 5s
+      retries: 20
   app-a:
     <<: *app
     ports: ["127.0.0.1:${CURSUS_ACCEPTANCE_PORT_A:?set by runner}:8091"]

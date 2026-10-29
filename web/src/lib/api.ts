@@ -51,6 +51,10 @@ async function jsend<T>(url: string, method: string, body?: unknown, revision?: 
 }
 
 export const api = {
+  transferDestinations:()=>jget<import('../../../server/src/integration-contract').DestinationSummary[]>('/api/handoff/destinations'),
+  transfers:(id:string)=>jget<{intents:import('../../../server/src/integration-contract').TransferSummary[];heads:{destinationId:string;version:number;currentIntentId:string|null;acceptedIntentId:string|null}[]}>(`/api/plans/${encodeURIComponent(id)}/transfers`),
+  queueTransfer:(id:string,revision:number,command:unknown)=>jsend<import('../../../server/src/integration-contract').TransferSummary>(`/api/plans/${encodeURIComponent(id)}/transfers/${(command as {operation:string}).operation}`,'POST',command,revision),
+  retryTransfer:(id:string,mode:'retry'|'lookup')=>jsend(`/api/handoff/${encodeURIComponent(id)}/retry`,'POST',{mode}),
   profiles:()=>jget<ProfileRevision[]>('/api/profiles'),
   profileTemplate:(planId:string,kind:ProfileKind)=>jget<ProfileContent>(`/api/profiles/template?planId=${encodeURIComponent(planId)}&kind=${kind}`),
   proposeProfile:(content:ProfileContent,version:number,id?:string)=>jsend<ProfileRef&{version:number}>(id?`/api/profiles/${encodeURIComponent(id)}/revisions`:'/api/profiles','POST',{content},version),
