@@ -37,8 +37,11 @@ export function WorkspaceMenu({label,open,onOpenChange,disabled=false,count=0,wa
  useEffect(()=>{
   if(!open)return;
   const outside=(event:MouseEvent)=>{if(!root.current?.contains(event.target as Node))onOpenChange(false);};
-  document.addEventListener('mousedown',outside);
-  return()=>{document.removeEventListener('mousedown',outside);clearTimeout(tabTimer.current);};
+  // Disabling a pending async command can move focus to the document. Escape
+  // must still dismiss the menu after a rejected/stale export response.
+  const escape=(event:KeyboardEvent)=>{if(event.key==='Escape'){event.preventDefault();event.stopPropagation();onOpenChange(false);trigger.current?.focus();}};
+  document.addEventListener('mousedown',outside);document.addEventListener('keydown',escape);
+  return()=>{document.removeEventListener('mousedown',outside);document.removeEventListener('keydown',escape);clearTimeout(tabTimer.current);};
  },[open,onOpenChange]);
  const close=()=>{onOpenChange(false);trigger.current?.focus();};
  return <div ref={root} className="relative min-w-0">

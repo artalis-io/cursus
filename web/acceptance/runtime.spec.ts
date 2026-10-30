@@ -1326,6 +1326,8 @@ test('native plan review, Admin-only approval and cross-replica stale-edit prote
   expect(badDownloads).toBe(0);
   page.off('download', countBadDownload);
   await page.keyboard.press('Escape');
+  await expect(page.getByRole('menu')).toHaveCount(0);
+  await expect(page.getByRole('button',{name:'Review & release',exact:true})).toBeFocused();
   await page.unroute(`**${handoffUrl}?approval=required`);
   await page.getByRole('button', { name: 'Review & release', exact: true }).click();
   await page.getByRole('menuitem', { name: 'Approved handoff only (JSON)', exact: true }).click();
