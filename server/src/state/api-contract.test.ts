@@ -53,6 +53,16 @@ test('week summary rolls up both stateful base plans', () => {
   assert.equal(summary.totals.totalDistanceKm, 20);
 });
 
+test('replaced input cycles remain navigable but are excluded from weekly totals',()=>{
+  const old={...scenario('old-base','old'),supersededBy:{scenarioId:'new-base',planId:'new-plan',at:'2026-10-30T00:00:00Z'}};
+  const current=scenario('new-base','new');
+  const plans=[plan('old-plan',old.id,'2026-05-06'),plan('new-plan',current.id,'2026-05-06')];
+  const days=statefulDaySummaries([old,current],plans);
+  assert.equal(days.length,2);assert.equal(days.find(d=>d.id==='old')?.archived,true);
+  const week=statefulWeekSummary([old,current],plans);
+  assert.equal(week.days.length,1);assert.equal(week.days[0]?.dayId,'new');assert.equal(week.totals.servedOrders,7);
+});
+
 test('job response maps durable state and result to the SPA contract', () => {
   const job = statefulJobResponse({ id: 'job-1', state: 'succeeded', payload: { scenarioId: 'day1-base', scenarioRevision: 2 },
     result: { planId: 'pln-1' }, createdAt: '2026-05-01T00:00:00Z', updatedAt: '2026-05-01T00:00:03Z' });

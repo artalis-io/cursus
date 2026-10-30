@@ -26,13 +26,14 @@ import { ScenariosDialog } from '@/components/ScenariosDialog';
 import { HelpOverlay } from '@/components/HelpOverlay';
 import { CandidatePanel } from '@/components/CandidatePanel';
 import {ProfilesDialog} from '@/components/ProfilesDialog';
+import {InputUpdatesDialog} from '@/components/InputUpdatesDialog';
 import {HandoffDialog} from '@/components/HandoffDialog';
 import {addPlanGeometry} from '@/lib/plan-geometry';
 import { deliveryReference,deliveryToken } from '@/lib/dnd';
 import { api, ApiError, pollJob } from '@/lib/api';
-import { useT, describeApiError } from '@/i18n';
+import { useT, useI18n, describeApiError } from '@/i18n';
 import type { DaySummary, Job, Objective, Plan, Scenario, ScenarioEdit, Selection, ManualContext, ManualIntent } from '@/types';
-import { StaleWorkspaceContext, usePermission } from '@/permissions';
+import { StaleWorkspaceContext, usePermission,PermissionsContext } from '@/permissions';
 
 /* The live solve budget for UI-triggered solves. The saved baseline used ~240s
  * to reach day-1 117/0; 60s gives a believable, genuinely-elapsed optimize/replan
@@ -139,6 +140,10 @@ function sameSel(a: Selection, b: Selection): boolean {
 }
 
 export default function App() {
+  const {lang}=useI18n();
+  const [scenario,setScenario]=useState<Scenario|null>(null);
+  const inheritedPermissions=useContext(PermissionsContext);
+  const [inputUpdatesOpen,setInputUpdatesOpen]=useState(false);
   const features=useContext(WorkspaceFeaturesContext);
   const [profilesOpen,setProfilesOpen]=useState(false);
   const [handoffOpen,setHandoffOpen]=useState(false);
@@ -147,10 +152,10 @@ export default function App() {
   const [freshnessError, setFreshnessError] = useState<string | null>(null);
   const [workspaceLoading, setWorkspaceLoading] = useState(false);
   const navigationGeneration = useRef(0);
-  const canEdit = usePermission('scenario.edit') && !freshnessError && !workspaceLoading;
-  const canSolve = usePermission('optimization.submit') && !freshnessError && !workspaceLoading;
+  const canEdit = usePermission('scenario.edit') && !freshnessError && !workspaceLoading && !scenario?.supersededBy;
+  const canSolve = usePermission('optimization.submit') && !freshnessError && !workspaceLoading && !scenario?.supersededBy;
   const canCancel = usePermission('optimization.cancel');
-  const canEvaluate = usePermission('plan.evaluate') && !freshnessError && !workspaceLoading;
+  const canEvaluate = usePermission('plan.evaluate') && !freshnessError && !workspaceLoading && !scenario?.supersededBy;
   // Async callbacks can outlive the render that authorized them. Recheck at
   // dispatch, and invalidate queued intents across revocation/regrant cycles.
   const writeAccess = useRef({ edit: canEdit, solve: canSolve, cancel: canCancel, epoch: 0, mounted: true });
@@ -167,7 +172,6 @@ export default function App() {
   const t = useT();
   const [days, setDays] = useState<DaySummary[]>([]);
   const [dayId, setDayId] = useState<string>('day1');
-  const [scenario, setScenario] = useState<Scenario | null>(null);
   const [plan, setPlan] = useState<Plan | null>(null);
   const [baseline, setBaseline] = useState<Plan | null>(null);
   const [pendingEdits, setPendingEdits] = useState(0);
@@ -328,7 +332,7 @@ export default function App() {
             }catch(e){if(!(e instanceof ApiError&&e.status===404))throw e;/* deleted drafts fall back to the day baseline */}
             finally{if(generation===navigationGeneration.current)setWorkspaceLoading(false);}
           }
-          await loadDay(ds.find(d=>d.id===saved?.day)??ds.find((d) => d.id === 'day1') ?? ds[0]!);
+          await loadDay(ds.find(d=>d.id===saved?.day)??ds.find((d) => d.id === 'day1'&&!d.archived) ?? ds.find(d=>!d.archived)??ds[0]!);
         }
       } catch (e) { setError(describeApiError(e, t)); }
       finally{if(writeAccess.current.mounted)setInitialWorkspaceLoaded(true);}
@@ -653,6 +657,22 @@ export default function App() {
     finally{manualBusyRef.current=false;if(writeAccess.current.mounted)setManualBusy(false);}
   }
 
+  async function openUpdatedInputs(next:Plan){
+    if(!writeAccess.current.mounted)return;
+    const generation=++navigationGeneration.current;writeAccess.current.epoch++;pollAbort.current?.abort();activeJobId.current=null;persistActiveJob(null);
+    setJob(null);setCandidate(null);setCompareOpen(false);setWorkspaceLoading(true);
+    try{
+      const [ds,sc]=await Promise.all([api.days(),api.scenario(next.scenarioId)]),day=ds.find(d=>d.id===sc.day);
+      if(!day)throw new Error('The new input cycle has no baseline. Reload before continuing.');
+      const selectedId=sc.selectedPlanId??sc.manualPlanId;
+      const [base,selected]=await Promise.all([api.planSnapshot(day.baselinePlanId),selectedId&&selectedId!==next.id?api.planSnapshot(selectedId):Promise.resolve(next)]);
+      if(!writeAccess.current.mounted||generation!==navigationGeneration.current)return;
+      scenarioRef.current=sc;planRef.current=selected;setDays(ds);setDayId(sc.day);setBaseline(base);setScenario(sc);setPlan(selected);setFreshnessError(null);
+      setRestoredGeometryPlanId(hasCompleteRouteGeometry(selected)?null:selected.id);setInputUpdatesOpen(false);setManualRequest(null);resetSelection();setPlaying(false);setClockSec(null);setError(null);
+    }catch(e){setError(describeApiError(e,t));throw e;}
+    finally{if(generation===navigationGeneration.current)setWorkspaceLoading(false);}
+  }
+
   if (error && !plan) return <div className="flex h-full items-center justify-center text-sm text-destructive">{t('app.failed', { e: error })}</div>;
   if (!plan || !baseline || !scenario) return <div className="flex h-full items-center justify-center text-sm text-muted-foreground">{t('app.loading')}</div>;
 
@@ -693,10 +713,15 @@ export default function App() {
   }
 
   return (
-    <StaleWorkspaceContext.Provider value={!!candidate || !!freshnessError || workspaceLoading || !!(plan.manual||plan.assignments)&&!manualContext?.enabled}><TooltipProvider delayDuration={200}>
+    <PermissionsContext.Provider value={scenario.supersededBy?['workspace.read','workspace.export']:inheritedPermissions}><StaleWorkspaceContext.Provider value={!!candidate || !!freshnessError || workspaceLoading || !!(plan.manual||plan.assignments)&&!manualContext?.enabled}><TooltipProvider delayDuration={200}>
       <div className="flex h-full flex-col overflow-hidden">
+        {scenario.supersededBy&&<div role="status" className="flex items-center justify-between gap-3 border-b bg-muted px-4 py-2 text-sm">
+          <span>{lang==='hu'?'Korábbi adatciklus — csak olvasható. Az új tervezéshez nyissa meg a frissített adatokat.':'Previous input cycle — read-only. Open the updated inputs to continue planning.'}</span>
+          <Button size="sm" variant="outline" onClick={()=>void api.planSnapshot(scenario.supersededBy!.planId).then(openUpdatedInputs).catch(e=>setError(describeApiError(e,t)))}>{lang==='hu'?'Frissített adatok megnyitása':'Open updated inputs'}</Button>
+        </div>}
         <TopBar
           onOpenProfiles={features.planningProfiles?()=>setProfilesOpen(true):undefined}
+          onOpenInputUpdates={features.inputUpdates&&canEdit&&!candidate&&!pendingEdits?()=>setInputUpdatesOpen(true):undefined}
           onOpenHandoff={features.acknowledgedHandoff?()=>setHandoffOpen(true):undefined}
           days={days} dayId={dayId} onDayChange={(id) => { if (!okToSwitch()) return; const d = days.find((x) => x.id === id); if (d) void loadDay(d); }}
           scenario={scenario} plan={plan} job={job} solving={!!solving} exportPending={workspaceLoading}
@@ -847,6 +872,7 @@ export default function App() {
       )}
       <ImportDialog open={importOpen} onOpenChange={setImportOpen} onAdmitted={(id) => void onAdmitted(id)} onDatasetsChanged={() => void onDatasetsChanged()} />
       <HistoryDialog open={historyOpen} onOpenChange={setHistoryOpen} dayId={dayId} currentPlanId={plan.id} onReopen={(id) => { if (okToSwitch()) void reopenPlan(id); }} />
-    </TooltipProvider></StaleWorkspaceContext.Provider>
+      {inputUpdatesOpen&&features.inputUpdates&&<InputUpdatesDialog plan={plan} scenario={scenario} onClose={()=>setInputUpdatesOpen(false)} onApplied={openUpdatedInputs} onUpload={()=>setImportOpen(true)}/>}
+    </TooltipProvider></StaleWorkspaceContext.Provider></PermissionsContext.Provider>
   );
 }

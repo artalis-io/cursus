@@ -12,28 +12,39 @@ export class ScenarioRepository {
 
   async ensureBase(day: string, label: string): Promise<Scenario> {
     const id = `${day}-base`;
-    const existing = await this.get(id);
-    if (existing) return existing;
     const scenario: Scenario = { id, day, kind: 'base', parentId: null, revision: 0, label,
       removedVehicleIds: [], pins: [], forbids: [], vehicleOverrides: [], sequences: [], createdAt: new Date().toISOString() };
-    try { await this.store.createScenario(this.tenantId, id, scenario); }
-    catch (error) { if ((error as { code?: string }).code !== '23505') throw error; }
-    return (await this.get(id))!;
+    return this.store.tx(async client=>{
+      await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))',[`input-day/${this.tenantId}/${day}`]);
+      const existing=await client.query<{body:Scenario}>("SELECT body FROM scenarios WHERE tenant_id=$1 AND body->>'day'=$2 AND body->>'kind'='base' ORDER BY id LIMIT 1",[this.tenantId,day]);
+      if(existing.rows[0])return existing.rows[0].body;
+      await client.query('INSERT INTO scenarios(tenant_id,id,revision,body) VALUES($1,$2,0,$3)',[this.tenantId,id,scenario]);
+      return scenario;
+    });
   }
 
   async copy(parent: Scenario, label?: string): Promise<Scenario> {
     const scenario: Scenario = { ...structuredClone(parent), id: `scn_${randomUUID().slice(0, 8)}`, kind: 'copy',
       parentId: parent.id, revision: 1, label: label ?? `${parent.label} (edited)`, createdAt: new Date().toISOString() };
     delete scenario.selectedPlanId;delete scenario.selectionVersion;
-    await this.store.createScenario(this.tenantId, scenario.id, scenario);
+    await this.store.tx(async client=>{
+      await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))',[`input-day/${this.tenantId}/${parent.day}`]);
+      const current=await client.query<{body:Scenario}>('SELECT body FROM scenarios WHERE tenant_id=$1 AND id=$2 FOR SHARE',[this.tenantId,parent.id]);
+      if(!current.rows[0]||current.rows[0].body.supersededBy||current.rows[0].body.revision!==parent.revision)throw new RevisionConflictError();
+      await client.query('INSERT INTO scenarios(tenant_id,id,revision,body) VALUES($1,$2,1,$3)',[this.tenantId,scenario.id,scenario]);
+    });
     return scenario;
   }
 
   async edit(id: string, edits: ScenarioEdit[], expectedRevision?: number): Promise<Scenario> {
+    const source=await this.get(id);
+    if(!source)throw new Error('scenario not found');
     return this.store.tx(async client => {
+      await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))',[`input-day/${this.tenantId}/${source.day}`]);
       const found = await client.query<{ body: Scenario }>('SELECT body FROM scenarios WHERE tenant_id=$1 AND id=$2 FOR UPDATE', [this.tenantId, id]);
       const current = found.rows[0]?.body;
       if (!current) throw new Error('scenario not found');
+      if(current.supersededBy)throw new RevisionConflictError();
       if (expectedRevision !== undefined && current.revision !== expectedRevision) throw new RevisionConflictError();
       const target: Scenario = current.kind === 'base' ? { ...structuredClone(current), id: `scn_${randomUUID()}`, kind: 'copy',
         parentId: current.id, revision: 1, label: `${current.label} (edited)`, createdAt: new Date().toISOString() } : current;
@@ -49,6 +60,7 @@ export class ScenarioRepository {
     return this.store.tx(async client=>{
       const found=await client.query<{body:Scenario}>('SELECT body FROM scenarios WHERE tenant_id=$1 AND id=$2 FOR UPDATE',[this.tenantId,id]);
       const current=found.rows[0]?.body;if(!current)throw new Error('scenario not found');
+      if(current.supersededBy)throw new RevisionConflictError();
       if(expectedRevision!==undefined&&current.revision!==expectedRevision)throw new RevisionConflictError();
       const updated={...current,label,revision:current.revision+1};
       await client.query('UPDATE scenarios SET revision=$3,body=$4,updated_at=now() WHERE tenant_id=$1 AND id=$2',[this.tenantId,id,updated.revision,updated]);
@@ -61,7 +73,7 @@ export class ScenarioRepository {
     const checksums=new Set(profiles.map(p=>p.content.datasetSha256));
     if(checksums.size>1||[...checksums].some(sha=>edits.deliveryDatasetSha256&&sha!==edits.deliveryDatasetSha256||base.planningPolicy&&sha!==base.planningPolicy.datasetRequestSha256))
       throw new Error('Imported profiles do not match the scenario dataset.');
-    if(checksums.size===1)await new ProfileRepository(this.store,this.tenantId).assertDaySource(base.day,[...checksums][0]!);
+    if(checksums.size===1)await new ProfileRepository(this.store,this.tenantId).assertDaySource(base.day,[...checksums][0]!,this.store.pool,base.datasetBinding);
     if (edits.planningPolicyId && edits.planningPolicyId !== base.planningPolicy?.id) throw new Error('planning policy reference is not approved in this workspace');
     const copy = await this.copy(base, label);
     const updated = { ...copy, removedVehicleIds: [...edits.removedVehicleIds], pins: structuredClone(edits.pins),

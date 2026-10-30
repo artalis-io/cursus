@@ -54,7 +54,7 @@ export class ManualPlanPublisher {
       !Number.isSafeInteger(body.requestId)||Number(body.requestId)<0)throw new ManualPublicationError(400,'Plan, dataset and delivery identities are required.');
     const [scenario,parent]=await Promise.all([this.store.getScenario(this.tenantId,scenarioId),this.store.getPlan(this.tenantId,body.parentPlanId)]);
     if(!scenario||!parent||parent.scenarioId!==scenarioId)throw new ManualPublicationError(404,'Scenario or parent plan not found.');
-    if(scenario.revision!==revision||parent.scenarioRevision!==revision||scenario.manualPlanId&&scenario.manualPlanId!==parent.id||scenario.selectedPlanId&&scenario.selectedPlanId!==parent.id)
+    if(scenario.supersededBy||scenario.revision!==revision||parent.scenarioRevision!==revision||scenario.manualPlanId&&scenario.manualPlanId!==parent.id||scenario.selectedPlanId&&scenario.selectedPlanId!==parent.id)
       throw new ManualPublicationError(409,'Parent plan is stale; reload before planning.');
     let result:PlacementSuggestions;
     try{
@@ -100,7 +100,7 @@ export class ManualPlanPublisher {
     // Hash actual immutable bytes, not read-time normalization of old plans.
     const parent = parentRows.rows[0]?.body;
     if (!scenario || !parent || parent.scenarioId !== scenarioId) throw new ManualPublicationError(404, 'Scenario or parent plan not found.');
-    if (scenario.revision !== revision || parent.scenarioRevision !== revision || scenario.manualPlanId && scenario.manualPlanId !== parent.id)
+    if (scenario.supersededBy || scenario.revision !== revision || parent.scenarioRevision !== revision || scenario.manualPlanId && scenario.manualPlanId !== parent.id)
       throw new ManualPublicationError(409, 'Parent plan is stale; reload before planning.');
     let context: ManualDatasetContext;
     try { context = await this.load(parent, scenario); }
@@ -171,6 +171,7 @@ export class ManualPlanPublisher {
     return this.store.tx(async client => {
       const again = await this.receipt(client, intent.batch.operationId, payloadHash, actorId);
       if (again) return again;
+      await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))',[`input-day/${this.tenantId}/${scenario.day}`]);
       const current = await client.query<{ revision: string; body: Scenario }>('SELECT revision,body FROM scenarios WHERE tenant_id=$1 AND id=$2 FOR UPDATE', [this.tenantId, scenarioId]);
       if (Number(current.rows[0]?.revision) !== revision) throw new ManualPublicationError(409, 'Scenario changed during evaluation.');
       // Native completion advances this pointer without changing the planning

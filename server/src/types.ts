@@ -176,6 +176,7 @@ export interface PlanUnassigned {
 }
 
 export interface PlanProvenance {
+  inputUpdate?:import('./input-update-contract.js').InputUpdateLineage;
   shipmentSha256?:string;
   planningProfiles?: import('./planning-profiles.js').ProfileRef[];
   warmStart?:{planId:string;used:boolean};

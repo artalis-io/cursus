@@ -82,7 +82,7 @@ export class StatefulStore {
 
   async deleteScenario(tenantId: string, id: string, expectedRevision?: number): Promise<boolean> {
     let result;
-    try{result = await this.pool.query("DELETE FROM scenarios WHERE tenant_id=$1 AND id=$2 AND body->>'kind'='copy' AND ($3::bigint IS NULL OR revision=$3)", [tenantId, id, expectedRevision ?? null]);}
+    try{result = await this.pool.query("DELETE FROM scenarios WHERE tenant_id=$1 AND id=$2 AND body->>'kind'='copy' AND NOT (body ? 'supersededBy') AND NOT (body ? 'inputUpdate') AND ($3::bigint IS NULL OR revision=$3)", [tenantId, id, expectedRevision ?? null]);}
     catch(error){if((error as {constraint?:string}).constraint==='handoff_heads_scenario_fk')throw new ScenarioHandoffHistoryError();throw error;}
     if (!result.rowCount && expectedRevision !== undefined && await this.getScenario(tenantId, id)) throw new RevisionConflictError();
     return result.rowCount === 1;
@@ -204,6 +204,7 @@ export class StatefulStore {
     await this.tx(async (client) => {
       const scenario = await client.query<{ revision: string; body: Scenario }>(
         'SELECT revision,body FROM scenarios WHERE tenant_id=$1 AND id=$2 FOR UPDATE', [lease.tenantId, scenarioId]);
+      if(scenario.rows[0]?.body.supersededBy)throw new RevisionConflictError();
       if (scenario.rows[0]?.body.manualPlanId && Number(scenario.rows[0].revision) !== scenarioRevision)
         throw new RevisionConflictError();
       if (scenario.rows[0]?.body.manualDecisions) {

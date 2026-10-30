@@ -50,7 +50,7 @@ const manualPlanning = admittedManualDatasetLoader(store,objects,config.authTena
 const handoffDestinations=process.env.CURSUS_HANDOFF_CONFIG_FILE?parseDestinations(JSON.parse(await readFile(process.env.CURSUS_HANDOFF_CONFIG_FILE,'utf8')),process.env.CURSUS_HANDOFF_TEST_HTTP==='1'):[];
 if(handoffDestinations.some(d=>d.tenantId!==config.authTenantId))throw new Error('Handoff configuration must belong to this deployment tenant.');
 const handoffSender=handoffDestinations.length?await HttpHandoffSender.create(handoffDestinations):undefined;
-const app = await createStatefulApi({ store, objects, auth, manualPlanning,fleetSettings, tenantId: config.authTenantId,
+const app = await createStatefulApi({ store, objects, auth, manualPlanning,fleetSettings,inputUpdatesEnabled:config.inputUpdatesEnabled, tenantId: config.authTenantId,
   tenantName: config.authTenantName, publicOrigin: config.authPublicOrigin, maxUploadBytes: config.maxUploadMB * 1024 * 1024,handoffDestinations });
 await app.register(fastifyStatic, { root: config.webDist, wildcard: false });
 app.setNotFoundHandler((req, reply) => req.method === 'GET' && !req.url.startsWith('/api/') && !req.url.startsWith('/health/')
@@ -65,10 +65,10 @@ async function solve(lease: Lease, signal: AbortSignal): Promise<SolveOutput> {
   const wantedSha = payload.scenario.deliveryDatasetSha256 ?? payload.scenario.manualDecisions?.datasetSha256 ?? payload.scenario.planningPolicy?.datasetRequestSha256;
   if (payload.scenario.manualDecisions && payload.scenario.planningPolicy && wantedSha !== payload.scenario.planningPolicy.datasetRequestSha256)
     throw new Error('manual decisions and policy reference different datasets');
-  const matches = datasets.filter((item) => ((item.manifest as { days?: { dayId: string }[] })?.days ?? [])
-    .some((day) => day.dayId === payload.scenario!.day) && (!wantedSha ||
+  const matches = datasets.filter((item) => (!payload.scenario!.datasetBinding||item.id===payload.scenario!.datasetBinding.datasetId)&&((item.manifest as { days?: { dayId: string }[] })?.days ?? [])
+    .some((day) => day.dayId === (payload.scenario!.datasetBinding?.dayId??payload.scenario!.day)) && (!wantedSha ||
       (item.manifest as { artifacts?: { request?: { sha256?: string } } }).artifacts?.request?.sha256 === wantedSha));
-  if (payload.scenario.manualDecisions && matches.length !== 1) throw new Error('manual replanning requires exactly one pinned admitted dataset');
+  if ((payload.scenario.manualDecisions||payload.scenario.datasetBinding) && matches.length !== 1) throw new Error('replanning requires exactly one pinned admitted dataset');
   const dataset = matches[0];
   if (!dataset) throw new Error(`no admitted dataset contains day ${payload.scenario.day}`);
   const profiles=await new ProfileRepository(store,lease.tenantId).resolve(payload.scenario.planningProfiles??[]);

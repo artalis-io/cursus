@@ -110,14 +110,14 @@ export function ScenariosDialog({ open, onOpenChange, dayId, currentScenarioId, 
                       )}
                       {s.kind === 'base' && <Badge variant="outline" className="shrink-0 text-[9px]">{t('scenarios.base')}</Badge>}
                       {isCurrent && <Badge variant="default" className="shrink-0 bg-primary text-[9px]">{t('scenarios.current')}</Badge>}
-                      {canRename && s.kind === 'copy' && editing !== s.id && (
+                      {canRename && !s.supersededBy && s.kind === 'copy' && editing !== s.id && (
                         <button type="button" onClick={() => { setEditing(s.id); setEditLabel(s.label); }} aria-label={t('scenarios.rename')} className="shrink-0 rounded p-0.5 text-muted-foreground hover:bg-accent hover:text-foreground"><Pencil className="h-3 w-3" /></button>
                       )}
                       {L && !isCurrent && (
                         <button type="button" onClick={() => { onOpen(L.planId); onOpenChange(false); }} aria-label={t('scenarios.open')} title={t('scenarios.open')} className="shrink-0 rounded p-0.5 text-muted-foreground hover:bg-accent hover:text-foreground"><FolderOpen className="h-3.5 w-3.5" /></button>
                       )}
                       <button type="button" onClick={() => void exportOne(s.id, s.label)} aria-label={t('scenarios.export')} title={t('scenarios.export')} className="shrink-0 rounded p-0.5 text-muted-foreground hover:bg-accent hover:text-foreground"><Download className="h-3.5 w-3.5" /></button>
-                      {canDelete && s.kind === 'copy' && (
+                      {canDelete && !s.supersededBy && !s.inputUpdate && s.kind === 'copy' && (
                         <button type="button" onClick={() => void del(s.id)} aria-label={t('scenarios.delete')} className="shrink-0 rounded p-0.5 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"><Trash2 className="h-3.5 w-3.5" /></button>
                       )}
                     </div>

@@ -44,13 +44,14 @@ import { fleetPolicyBlockers, applyFleetSettings } from './manual-settings.js';
 import type { ManualDatasetContext } from '../plan/manual-adapter.js';
 import { ManualPlanPublisher, ManualPublicationError, parseManualRequest, type ManualDatasetLoader } from './manual.js';
 import { prepareManualInput,ManualAdapterError } from '../plan/manual-adapter.js';
+import {registerInputUpdates} from './input-updates-api.js';
 
 // Do not advertise legacy-only endpoints as usable controls in this runtime.
 function statefulPermissions(role: string) {
   return isRole(role) ? rolePermissions[role].filter(p => p !== 'optimization.cancel' && p !== 'analysis.generate' && p !== 'dataset.delete') : [];
 }
 
-export interface StatefulApiOptions { store: StatefulStore; tenantId: string; tenantName: string; auth?: StatefulAuthService; publicOrigin?: string; objects?: ObjectStore; maxUploadBytes?: number; manualPlanning?: ManualDatasetLoader;fleetSettings?:Omit<ManualDatasetContext,'day'>;handoffDestinations?:Destination[];geometryLoader?:typeof fillPlanGeometry }
+export interface StatefulApiOptions { store: StatefulStore; tenantId: string; tenantName: string; auth?: StatefulAuthService; publicOrigin?: string; objects?: ObjectStore; maxUploadBytes?: number; manualPlanning?: ManualDatasetLoader;fleetSettings?:Omit<ManualDatasetContext,'day'>;handoffDestinations?:Destination[];geometryLoader?:typeof fillPlanGeometry;inputUpdatesEnabled?:boolean }
 
 /** Stateful HTTP surface used by the runtime integration tests and, after
  * cutover, by the production entry point. Every repository is tenant-bound. */
@@ -66,6 +67,7 @@ export async function createStatefulApi(options: StatefulApiOptions): Promise<Fa
   const scenarios = new ScenarioRepository(options.store, options.tenantId);
   registerScenarioPreconditions(app, id => scenarios.get(id));
   registerProfileApi(app,options.store,options.tenantId,options.manualPlanning);
+  registerInputUpdates(app,options.store,options.tenantId,options.inputUpdatesEnabled?options.objects:undefined,options.manualPlanning);
   const policyIssues=options.fleetSettings?(plan:Plan)=>plan.provenance.planningProfiles?.some(p=>p.kind==='fleet')?[]:fleetPolicyBlockers(plan,options.fleetSettings!):undefined;
   const workflow = new PlanWorkflow(options.store, options.tenantId,policyIssues);
   registerTransferApi(app,options.store,options.tenantId,options.handoffDestinations??[],workflow);
@@ -171,11 +173,11 @@ export async function createStatefulApi(options: StatefulApiOptions): Promise<Fa
   });
   app.get('/api/auth/me', async (req, reply) => {
     reply.header('Cache-Control', 'private, no-store');
-    if (!options.auth) return { email: 'local@cursus', tenantId: options.tenantId, tenantName: options.tenantName, role: 'admin', permissions: statefulPermissions('admin').filter(p => p !== 'role.preview'), build: buildInfo,features:{planningProfiles:true,acknowledgedHandoff:true} };
+    if (!options.auth) return { email: 'local@cursus', tenantId: options.tenantId, tenantName: options.tenantName, role: 'admin', permissions: statefulPermissions('admin').filter(p => p !== 'role.preview'), build: buildInfo,features:{planningProfiles:true,acknowledgedHandoff:true,inputUpdates:!!options.inputUpdatesEnabled&&!!options.objects&&!!options.manualPlanning} };
     const principal = await options.auth.authenticate(cookieValue(req.headers.cookie, 'cursus_session'));
     if (!principal || principal.tenantId !== options.tenantId) return reply.code(401).send({ error: 'authentication required' });
     const identity = viewIdentity(principal, req.headers.cookie);
-    return { ...identity, permissions: statefulPermissions(identity.effectiveRole), tenantName: await options.store.getTenantName(principal.tenantId), build: buildInfo,features:{planningProfiles:true,acknowledgedHandoff:true} };
+    return { ...identity, permissions: statefulPermissions(identity.effectiveRole), tenantName: await options.store.getTenantName(principal.tenantId), build: buildInfo,features:{planningProfiles:true,acknowledgedHandoff:true,inputUpdates:!!options.inputUpdatesEnabled&&!!options.objects&&!!options.manualPlanning} };
   });
   app.post('/api/auth/logout', async (req, reply) => {
     if (options.auth && req.headers.origin !== options.publicOrigin) return reply.code(403).send({ error: 'invalid request origin' });
@@ -187,13 +189,14 @@ export async function createStatefulApi(options: StatefulApiOptions): Promise<Fa
   ));
   app.get<{ Querystring: { day?: string } }>('/api/scenarios', async (req) => {
     const rows=await scenarios.list(req.query.day),plans=await options.store.listPlans(options.tenantId);
-    return rows.map(s=>{const matching=plans.filter(p=>p.scenarioId===s.id&&p.scenarioRevision===s.revision).sort((a,b)=>b.createdAt.localeCompare(a.createdAt));
+    return rows.map(s=>{const matching=plans.filter(p=>p.scenarioId===s.id&&(s.supersededBy||p.scenarioRevision===s.revision)).sort((a,b)=>b.createdAt.localeCompare(a.createdAt));
       const p=matching.find(p=>p.id===s.selectedPlanId)??matching[0];
       return {...s,changesCount:s.removedVehicleIds.length+s.pins.length+s.forbids.length+s.sequences.length+s.vehicleOverrides.length,
         latest:p?{planId:p.id,createdAt:p.createdAt,...p.stats,unassigned:p.unassigned.length,cost:p.cost?.total??null,currency:p.cost?.currency??null}:null};});
   });
   app.post<{ Body: { day?: string; from?: string; label?: string } }>('/api/scenarios', async (req, reply) => {
-    if (req.body?.from) { const parent = await scenarios.get(req.body.from); if (!parent) return reply.code(404).send({ error: 'parent scenario not found' }); return reply.code(201).send(await scenarios.copy(parent, req.body.label)); }
+    if (req.body?.from) { const parent = await scenarios.get(req.body.from); if (!parent) return reply.code(404).send({ error: 'parent scenario not found' });
+      try{return reply.code(201).send(await scenarios.copy(parent, req.body.label));}catch(e){if(e instanceof RevisionConflictError)return reply.code(409).send({error:'Source scenario changed or was superseded.'});throw e;} }
     if (req.body?.day) return scenarios.ensureBase(req.body.day, req.body.label ?? req.body.day);
     return reply.code(400).send({ error: 'day or from required' });
   });
@@ -291,7 +294,7 @@ export async function createStatefulApi(options: StatefulApiOptions): Promise<Fa
         return reply.code(409).send({error:'Planning profile revisions changed; create a fresh plan before previewing.'});
       if (options.objects) {
         const rows = await options.store.listDatasets(options.tenantId, true);
-        const row = rows.find((candidate) => ((candidate.manifest as ConvertedManifest | undefined)?.days ?? []).some((d) => d.dayId === scenario.day) &&
+        const row = rows.find((candidate) => (!scenario.datasetBinding||candidate.id===scenario.datasetBinding.datasetId)&&((candidate.manifest as ConvertedManifest | undefined)?.days ?? []).some((d) => d.dayId === (scenario.datasetBinding?.dayId??scenario.day)) &&
           (candidate.manifest as ConvertedManifest).artifacts?.request?.sha256 === (plan.provenance?.datasetSha256??plan.provenance?.planningPolicy?.datasetRequestSha256));
         if (!row) return reply.code(404).send({ error: 'dataset not available for plan' });
         day = await loadConvertedDay(options.objects, options.tenantId, row.manifest as ConvertedManifest, scenario,profiles);
@@ -513,9 +516,10 @@ export function statefulDaySummaries(scenarios: Scenario[], plans: Plan[]) {
         id: scenario.day,
         isoDate: plan.day,
         label: scenario.label,
-        datasetLabel: null,
         orders: plan.stats.totalOrders,
         vehicles: plan.vehicles.length,
+        ...(scenario.supersededBy?{archived:true}:{}),
+        datasetLabel:scenario.inputUpdate?scenario.label:null,
         baseScenarioId: scenario.id,
         baselinePlanId: plan.id,
       };
@@ -552,7 +556,7 @@ export function statefulPlanSummaries(scenarios: Scenario[], plans: Plan[], day?
  * selector and legacy runtime semantics. */
 export function statefulWeekSummary(scenarios: Scenario[], plans: Plan[]) {
   return weekSummary(scenarios
-    .filter((scenario) => scenario.kind === 'base')
+    .filter((scenario) => scenario.kind === 'base'&&!scenario.supersededBy)
     .map((scenario) => ({ scenario, plan: preferredPlan(scenario, plans) }))
     .filter((item): item is { scenario: Scenario; plan: Plan } => Boolean(item.plan))
     .map(({ scenario, plan }) => ({ dayId: scenario.day, isoDate: plan.day, label: scenario.label, plan })));

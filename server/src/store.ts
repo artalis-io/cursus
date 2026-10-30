@@ -42,6 +42,9 @@ export interface VehicleSequence { vehicleId: number; orderNos: string[]; reques
 export const MAX_SEQUENCE_LEN = 500;
 
 export interface Scenario {
+  datasetBinding?:import('./input-update-contract.js').DatasetBinding;
+  inputUpdate?:import('./input-update-contract.js').InputUpdateLineage;
+  supersededBy?:{scenarioId:string;planId:string;at:string};
   planningProfiles?: import('./planning-profiles.js').ProfileRef[];
   deliveryDatasetSha256?:string;
   selectedPlanId?: string;

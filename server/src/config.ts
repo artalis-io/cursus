@@ -29,6 +29,7 @@ function populationThreads(): number {
  */
 export const config = {
   runtimeMode: env('CURSUS_RUNTIME_MODE', 'legacy') as 'legacy' | 'stateful',
+  inputUpdatesEnabled:env('CURSUS_INPUT_UPDATES_ENABLED','0')==='1',
   databaseUrl: env('CURSUS_DATABASE_URL', ''),
   databaseUrlFile: env('CURSUS_DATABASE_URL_FILE', ''),
   r2Endpoint: env('CURSUS_R2_ENDPOINT', ''),

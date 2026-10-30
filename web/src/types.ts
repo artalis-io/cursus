@@ -7,6 +7,7 @@
 export type PlanSource = 'saved' | 'live' | 'sample';
 
 export interface PlanProvenance {
+  inputUpdate?: import('../../server/src/input-update-contract').InputUpdateLineage;
   shipmentSha256?:string;
   planningProfiles?: import('../../server/src/planning-profile-contract').ProfileRef[];
   tariffSha256?:string;
@@ -179,6 +180,8 @@ export interface PlacementSuggestions {
 
 /* ---- API shapes ---- */
 export interface DaySummary {
+  archived?:boolean;
+  datasetLabel?:string|null;
   id: string;
   isoDate: string;
   label: string;
@@ -203,6 +206,9 @@ export interface VehicleOverride {
 export type VehicleConstraintPatch = Omit<VehicleOverride, 'vehicleId'>;
 
 export interface Scenario {
+  datasetBinding?:import('../../server/src/input-update-contract').DatasetBinding;
+  inputUpdate?:import('../../server/src/input-update-contract').InputUpdateLineage;
+  supersededBy?:{scenarioId:string;planId:string;at:string};
   planningProfiles?: import('../../server/src/planning-profile-contract').ProfileRef[];
   deliveryDatasetSha256?:string;
   selectedPlanId?: string;
