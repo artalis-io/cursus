@@ -11,6 +11,7 @@ This assessment is based on the implementation, recent real Gyermelyi Playwright
 
 Related documents:
 
+- [Three-view workspace proposal and offline mockups](workflow-workspace-design.md) — 30 October design follow-up; not an application change.
 - [Manual planning](manual-planning.md)
 - [Plan review and freshness](plan-review-and-freshness.md)
 - [Approved-plan handoff](approved-plan-handoff.md)
