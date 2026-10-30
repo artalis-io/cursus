@@ -50,7 +50,7 @@ export function PlanApproval({ planId, revision, pending, children }: {
       } }
       finally { fetching = false; }
     };
-    retry.current = () => { if (!fetching) { setError(null); setPhase('loading'); void refresh(); } };
+    retry.current = () => { setError(null); setPhase('loading'); void refresh(); };
     void refresh(); const timer = setInterval(() => { void refresh(); }, 5000);
     return () => { alive = false; retry.current = () => {}; clearInterval(timer); };
   }, [planId, revision, accept]);

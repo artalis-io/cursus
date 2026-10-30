@@ -825,6 +825,8 @@ test('a hard GVW access violation is visible and cannot be labelled Baseline OK'
   });
   await page.reload();
   await expect(page.getByText('Baseline · Constraint violation', { exact: true })).toBeVisible();
+  await expect(page.getByTestId('status-coverage')).toContainText('Constraint checks failed');
+  await expect(page.locator('#cursus-status-details')).not.toHaveAttribute('open','');
   await expect(page.getByText('Baseline · OK', { exact: true })).toHaveCount(0);
   await selectWorkspaceAction(page,'Issues');
   await expect(page.getByRole('dialog')).toContainText('Constraint violations');
@@ -1763,11 +1765,11 @@ test('compact status: unavailable or corrupt approval stays Unknown, retry is re
    await expect(status).toContainText('Unknown');await expect(status).not.toContainText('Approved');
    await expect(page.getByRole('button',{name:'Approve plan',exact:true})).toHaveCount(0);
   }
-  mode='held';const before=reads;
-  await page.getByRole('button',{name:'Retry approval status',exact:true}).click();await captured.wait;
+  mode='held';
+  await page.getByRole('button',{name:'Retry approval status',exact:true}).click();await captured.wait;const heldReadCount=reads;
   await expect(status).toContainText('Loading');
   // A timer tick during a held read must not start overlapping refreshes.
-  await page.waitForTimeout(5200);expect(reads).toBe(before+1);
+  await page.waitForTimeout(5200);expect(reads).toBe(heldReadCount);
   held.release();await finished.wait;await expect(status).toContainText('Approved');
   held=gate();captured=gate();finished=gate();
   await captured.wait;
@@ -1786,8 +1788,13 @@ test('compact status: another replica changes approval evidence and invalidates 
  await expect(page.getByTestId('status-approval')).toContainText('Reviewed');await expect(panel.getByRole('checkbox')).not.toBeChecked();await expect(panel.getByRole('button',{name:'Approve plan',exact:true})).toBeDisabled();
  await panel.getByRole('checkbox').check();await page.locator('#cursus-status-details summary').click();
  await selectWorkspaceAction(page,'Plan approval');await expect(panel.getByRole('checkbox')).toBeChecked();
- await page.getByRole('button',{name:'View as Reviewer',exact:true}).click();await expect(page.getByRole('button',{name:'Return to Admin',exact:true})).toBeVisible();
- await expect(panel.getByRole('checkbox')).toHaveCount(0);await page.getByRole('button',{name:'Return to Admin',exact:true}).click();
+ // Use the real preview API plus auth refresh to exercise a permission change
+ // in the same mounted workspace; the account buttons intentionally reload.
+ expect((await page.request.post('/api/auth/view-as',{headers,data:{role:'reviewer'}})).status()).toBe(200);
+ await page.evaluate(()=>window.dispatchEvent(new Event('focus')));await expect(page.getByRole('button',{name:'Return to Admin',exact:true})).toBeVisible();
+ await expect(panel.getByRole('checkbox')).toHaveCount(0);
+ expect((await page.request.post('/api/auth/view-as',{headers,data:{role:null}})).status()).toBe(200);
+ await page.evaluate(()=>window.dispatchEvent(new Event('focus')));await expect(page.getByRole('button',{name:'View as Reviewer',exact:true})).toBeVisible();
  await expect(panel.getByRole('checkbox')).not.toBeChecked();await expect(panel.getByRole('button',{name:'Approve plan',exact:true})).toBeDisabled();
  const heldReads=gate();let approvalWrites=0;
  await page.route(`**/api/plans/${plan.id}/workflow`,async route=>{await heldReads.wait;await route.continue();});

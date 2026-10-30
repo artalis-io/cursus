@@ -92,6 +92,7 @@ test('reviewed snapshot update preserves manual delivery identity, recalculates 
  // Archived workspace has no write controls, but its original plan remains readable.
  await page.evaluate(({planId,day})=>localStorage.setItem('cursus.manual-workspace.v1:acceptance',JSON.stringify({planId,day})),{planId:source.id,day:oldDay.id});await page.reload();
  await expect(page.getByRole('button',{name:'Open updated inputs',exact:true})).toBeVisible();
+ await expect(page.getByTestId('status-freshness')).toContainText('Archived input cycle');
  await openWorkspaceMenu(page,'Prepare');await expect(page.getByRole('menuitem',{name:'Update input snapshot',exact:true})).toHaveCount(0);await page.keyboard.press('Escape');
  await expect(page.getByRole('button',{name:'Manual planning',exact:true})).toHaveCount(0);
  await page.getByRole('button',{name:'Open updated inputs',exact:true}).click();await expect(await workspaceAction(page,'Update input snapshot')).toBeEnabled();
