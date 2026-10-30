@@ -8,7 +8,7 @@ export interface InputUpdateLineage {
 export interface InputUpdateIntent {
   operationId:string;parentPlanId:string;datasetId:string;dayId:string;reason:string;
   matches:{from:number;to:number}[];releaseRequestIds:number[];unlockVehicleIds:number[];
-  profiles:ProfileRef[];identityReviewed:true;carryExceptions:boolean;acknowledgeInvalid:boolean;
+  profiles:ProfileRef[];identityReviewed:boolean;carryExceptions:boolean;acknowledgeInvalid:boolean;
 }
 export interface UpdateDelivery {id:number;reference:string;customer:string;address:string;weightKg:number;pallets:number}
 export interface InputUpdateDiff {

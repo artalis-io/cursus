@@ -11,7 +11,7 @@ async function login(page:Page,email='admin@acceptance.example.test'){
  await page.getByRole('button',{name:'Continue to Cursus',exact:true}).click();await expect(page.getByText('Served / Total')).toBeVisible();
 }
 
-test('reviewed snapshot update preserves manual delivery identity, recalculates KPIs, reloads and replans through the real worker',async({page})=>{
+test('reviewed snapshot update preserves manual delivery identity, recalculates KPIs, reloads and replans through the real worker',async({page},testInfo)=>{
  await login(page);
  const origin=new URL(page.url()).origin,days=await (await page.request.get('/api/days')).json() as DaySummary[];
  const oldDay=days.find(d=>d.id==='acceptance-day-two')!;
@@ -37,6 +37,16 @@ test('reviewed snapshot update preserves manual delivery identity, recalculates 
  await dialog.getByRole('button',{name:'Preview input changes',exact:true}).click();
  await expect(dialog.getByRole('region',{name:'Input update preview'})).toContainText('Retained decisions: 1');
  await expect(dialog).toContainText('Recalculated: 2/2');
+ await dialog.getByRole('checkbox',{name:/I verified the delivery correspondence/}).uncheck();
+ await expect(dialog.getByRole('region',{name:'Input update preview'})).toHaveCount(0);
+ await expect(dialog.getByRole('button',{name:'Create updated draft',exact:true})).toBeDisabled();
+ await dialog.getByRole('checkbox',{name:/I verified the delivery correspondence/}).check();
+ await dialog.getByRole('button',{name:'Preview input changes',exact:true}).click();
+ await expect(dialog).toContainText('Recalculated: 2/2');
+ await page.setViewportSize({width:600,height:800});
+ expect(await dialog.evaluate(el=>el.scrollWidth<=el.clientWidth+1)).toBe(true);
+ await dialog.screenshot({path:testInfo.outputPath('input-update-preview.png')});
+ await page.setViewportSize({width:1440,height:1000});
  await dialog.getByRole('checkbox',{name:/Make this the new input cycle/}).check();
  let committed!:(plan:Plan)=>void;
  const applied=new Promise<Plan>(resolve=>{committed=resolve;});

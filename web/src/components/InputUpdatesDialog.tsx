@@ -21,7 +21,7 @@ export function InputUpdatesDialog({plan,scenario,onClose,onApplied,onUpload}:{p
  useEffect(()=>{if(!approve)setCarry(false);},[approve]);
  useEffect(()=>{alive.current=true;void api.inputUpdateOptions(scenario.id,plan.id).then(value=>{if(alive.current)setOptions(value);}).catch(e=>{if(alive.current)setError(describeApiError(e,t));});return()=>{alive.current=false;};},[scenario.id,plan.id,t]);
  const intent:InputUpdateIntent={operationId,parentPlanId:plan.id,datasetId:choice?.datasetId??'',dayId:choice?.dayId??'',reason,matches,releaseRequestIds:released,unlockVehicleIds:unlocked,
-  profiles,identityReviewed:true,carryExceptions:carry,acknowledgeInvalid:invalid};
+  profiles,identityReviewed:reviewed,carryExceptions:carry,acknowledgeInvalid:invalid};
  const key=JSON.stringify(intent);
  useEffect(()=>{generation.current++;setPreview(null);setArchive(false);},[key]);
  async function run(work:()=>Promise<void>){
@@ -115,6 +115,6 @@ export function InputUpdatesDialog({plan,scenario,onClose,onApplied,onUpload}:{p
   {error&&<p role="alert" className="text-sm text-destructive">{error}{attempted&&` ${text('Retry the same operation; do not create another update.','Ugyanezt a műveletet próbálja újra, ne hozzon létre másik frissítést.')}`}</p>}
   <div className="flex flex-wrap justify-end gap-2"><Button variant="outline" disabled={busy&&attempted} onClick={onClose}>{text('Cancel','Mégse')}</Button>
    <Button variant="outline" disabled={busy||attempted||!choice||!reason.trim()||!reviewed||!edit||!create} onClick={()=>void calculate()}>{text('Preview input changes','Adatváltozások előnézete')}</Button>
-   <Button disabled={busy||!preview||!archive||!!preview.diff.conflicts.length||(!preview.validation.valid&&!invalid)||!edit||!create} onClick={()=>void apply()}>{text(preview&&!preview.validation.valid?'Create invalid updated draft':'Create updated draft',preview&&!preview.validation.valid?'Érvénytelen új munkaterv létrehozása':'Új munkaterv létrehozása')}</Button></div>
+   <Button disabled={busy||!reviewed||!preview||!archive||!!preview.diff.conflicts.length||(!preview.validation.valid&&!invalid)||!edit||!create} onClick={()=>void apply()}>{text(preview&&!preview.validation.valid?'Create invalid updated draft':'Create updated draft',preview&&!preview.validation.valid?'Érvénytelen új munkaterv létrehozása':'Új munkaterv létrehozása')}</Button></div>
  </DialogContent></Dialog>;
 }

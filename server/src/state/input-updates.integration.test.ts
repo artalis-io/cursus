@@ -76,6 +76,7 @@ test('snapshot replacement through two APIs is atomic, idempotent, tenant-scoped
   const intent:InputUpdateIntent={operationId:'revision-one',parentPlanId:source.id,datasetId:next.datasetId,dayId:'revised-day',reason:'Reviewed revised orders',matches:[{from:91,to:1091},{from:92,to:1092}],
    releaseRequestIds:[],unlockVehicleIds:[],profiles:[nextFleet],identityReviewed:true,carryExceptions:true,acknowledgeInvalid:true};
   const path=`/api/scenarios/${scenario.id}/input-update-`;
+  assert.equal((await apps[0]!.inject({method:'POST',url:path+'preview',headers:{'if-match':`"${scenario.revision}"`},payload:{...intent,identityReviewed:false}})).statusCode,400);
   await a.pool.query("INSERT INTO datasets(tenant_id,id,status,manifest) VALUES($1,'incomplete-test-snapshot','admitted',$2)",[tenant,{days:[{dayId:'incomplete',isoDate:'2026-10-26',label:'Incomplete old admission'}]}]);
   const options=await apps[1]!.inject({url:`/api/scenarios/${scenario.id}/input-update-options?planId=${source.id}&datasetId=${next.datasetId}&dayId=revised-day`});
   assert.equal(options.statusCode,200);assert.deepEqual(options.json().suggested,intent.matches);
