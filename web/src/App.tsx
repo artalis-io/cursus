@@ -752,7 +752,7 @@ export default function App() {
         {manualContext?.reason==='fresh_plan_required'&&<div role="status" className="shrink-0 border-b border-warning/40 bg-warning/10 px-4 py-2 text-sm">{t('manual.freshPlanRequired')}</div>}
         <WorkspaceStatus plan={plan} baseline={baseline} scenario={scenario} loading={workspaceLoading}
           saving={pendingEdits>0} running={!!solving} candidate={!!candidate} conflict={!!freshnessError}
-          revalidate={!!manualContext?.requiresRevalidation||manualContext?.reason==='fresh_plan_required'}
+          revalidate={!!manualContext?.requiresRevalidation}
           changesCount={changesCount} onOpenChanges={()=>setChangesOpen(true)} />
         {freshnessError && <div role="alert" className="border-b border-warning/40 bg-warning/10 px-4 py-2 text-sm">
           {t(freshnessError)} <button className="underline" onClick={() => {

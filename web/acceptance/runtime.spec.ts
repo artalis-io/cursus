@@ -1812,3 +1812,16 @@ test('compact status: another replica changes approval evidence and invalidates 
   await expect(page.getByTestId('status-approval')).toContainText('Approved');expect(approvalWrites).toBe(1);
  }finally{heldReads.release();}
 });
+
+
+test('compact status: manual eligibility warnings stay visible without changing independent approval eligibility',async({page})=>{
+ await page.route('**/api/plans/*/manual-context',route=>route.fulfill({json:{enabled:false,reason:'fresh_plan_required'}}));
+ await login(page);
+ await expect(page.getByText('This historical plan has no unambiguous delivery identities. Replan to create a fresh plan before manual editing.',{exact:true})).toBeVisible();
+ const details=page.locator('#cursus-status-details');await expect(details).not.toHaveAttribute('open','');
+ await expect(page.getByTestId('status-freshness')).toContainText('Matches the loaded scenario revision');
+ await expect(page.getByTestId('status-approval')).toContainText('Draft');
+ await selectWorkspaceAction(page,'Plan approval');await expect(page.getByRole('region',{name:'Plan approval',exact:true}).getByRole('checkbox')).toBeVisible();
+ await details.locator('summary').click();
+ await expect(page.getByText('This historical plan has no unambiguous delivery identities. Replan to create a fresh plan before manual editing.',{exact:true})).toBeVisible();
+});
