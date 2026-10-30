@@ -56,7 +56,7 @@ test.describe('app shell', () => {
 
   test('export menu offers route sheets, CSV and JSON', async ({ page }) => {
     await loadApp(page);
-    await page.getByRole('button', { name: /Export/ }).click();
+    await page.getByRole('button', { name: /Review & release/ }).click();
     await expect(page.getByText('Driver route sheets')).toBeVisible();
     await expect(page.getByText('Stops (CSV)')).toBeVisible();
     await expect(page.getByText('Plan (JSON)')).toBeVisible();

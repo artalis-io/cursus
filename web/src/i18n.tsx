@@ -10,6 +10,8 @@ export type Lang = 'en' | 'hu';
 type Dict = Record<string, string>;
 
 const en: Dict = {
+  'nav.workspace':'Workspace tools','nav.prepare':'Prepare','nav.plan':'Plan','nav.review':'Review & release','nav.library':'Library',
+  'nav.profiles':'Planning profiles','nav.inputUpdates':'Update input snapshot','nav.handoff':'Acknowledged handoff','nav.approval':'Plan approval','nav.help':'Help',
   'placement.title':'Find a place for this order','placement.find':'Find feasible placements','placement.checking':'Checking placements…',
   'placement.reference':'Compared with the current layout recalculated using the same matrix and tariff: {distance} · {cost}. Historical displayed values may differ.',
   'placement.scope':'Checks existing trips and a new trip on each available, unlocked vehicle. Shows the best found position per vehicle, ranked by added cost.',
@@ -308,6 +310,8 @@ const en: Dict = {
 };
 
 const hu: Dict = {
+  'nav.workspace':'Munkaterület eszközei','nav.prepare':'Előkészítés','nav.plan':'Tervezés','nav.review':'Ellenőrzés és átadás','nav.library':'Tervek és munkaterületek',
+  'nav.profiles':'Tervezési profilok','nav.inputUpdates':'Bemeneti adatok frissítése','nav.handoff':'Visszaigazolt átadás','nav.approval':'Terv jóváhagyása','nav.help':'Súgó',
   'placement.title':'Hely keresése a megrendelésnek','placement.find':'Megvalósítható besorolások keresése','placement.checking':'Besorolások ellenőrzése…',
   'placement.reference':'Összehasonlítás az aktuális elrendezés azonos mátrixszal és díjszabással újraszámolt értékeivel: {distance} · {cost}. A történeti kijelzett értékek eltérhetnek.',
   'placement.scope':'A rendelkezésre álló, nem zárolt járművek meglévő fordulóit és egy új fordulót ellenőriz. Járművenként a legjobb talált pozíciót mutatja, többletköltség szerint.',

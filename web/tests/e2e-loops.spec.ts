@@ -1,3 +1,4 @@
+import {selectWorkspaceAction} from './workspace-navigation';
 import { test, expect } from '@playwright/test';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
@@ -19,7 +20,7 @@ test('Optimize the base day: the live plan is saved, listed in Plans, and reopen
   // Keep settings open: the same click must both dismiss it and start solving.
   // The former full-screen backdrop swallowed this first Optimize click.
   await setShortBudget(page, false);
-  const exportBefore = await page.getByRole('button', { name: 'Export' }).boundingBox();
+  const exportBefore = await page.getByRole('button', { name: 'Review & release' }).boundingBox();
   await page.evaluate(() => {
     const labels: string[] = [];
     const sample = () => {
@@ -34,7 +35,7 @@ test('Optimize the base day: the live plan is saved, listed in Plans, and reopen
   await page.getByRole('button', { name: 'Optimize', exact: true }).click();
   await expect(page.getByText('Optimizing')).toBeVisible();
   await expect(page.getByRole('button', { name: /Optimizing [1-9]\d*s/ })).toBeVisible({ timeout: 5_000 });
-  const exportDuring = await page.getByRole('button', { name: 'Export' }).boundingBox();
+  const exportDuring = await page.getByRole('button', { name: 'Review & release' }).boundingBox();
   expect(exportBefore?.x).toBe(exportDuring?.x);
   await expect(page.getByText('Optimizing')).toHaveCount(0, { timeout: 90_000 });
   const solveLabels = await page.evaluate(() => (window as unknown as { __solveLabels: string[] }).__solveLabels);
@@ -63,7 +64,7 @@ test('Optimize the base day: the live plan is saved, listed in Plans, and reopen
     }
     await route.fulfill({ response, json: body });
   });
-  await page.getByRole('button', { name: 'Plans' }).click();
+  await selectWorkspaceAction(page,'Plans');
   const dialog = page.getByRole('dialog');
   await expect(dialog.getByText('Saved plans')).toBeVisible();
   await dialog.locator(`[data-plan-id="${baselineId}"]`).getByRole('button').click();
@@ -81,7 +82,7 @@ test('Bring-your-own-data: upload -> admit -> solve the new day', async ({ page 
   await loadApp(page);
 
   // upload -> map (auto) -> reconcile -> geocode
-  await page.getByRole('button', { name: 'Data' }).click();
+  await selectWorkspaceAction(page,'Data');
   await page.getByRole('tab', { name: 'Upload' }).click();
   await page.locator('input[type=file]').first().setInputFiles(RAW);
   await expect(page.getByText('Map columns')).toBeVisible();
@@ -103,7 +104,7 @@ test('Bring-your-own-data: upload -> admit -> solve the new day', async ({ page 
   await expect(page.getByText('Solve time')).toBeVisible();
 
   // cleanup: remove the admitted dataset so the test doesn't accumulate state
-  await page.getByRole('button', { name: 'Data' }).click();
+  await selectWorkspaceAction(page,'Data');
   await page.getByRole('tab', { name: 'Upload' }).click();
   const del = page.getByRole('button', { name: 'Delete' }).first();
   if (await del.count()) {

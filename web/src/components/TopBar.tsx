@@ -1,5 +1,5 @@
 import { useContext, useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { Play, RotateCcw, Download, Loader2, Repeat, GitCompareArrows, Database, History, Settings2, X, ChevronDown, FileText, FileSpreadsheet, FileJson, SlidersHorizontal, CalendarRange, AlertTriangle, GitBranch, HelpCircle } from 'lucide-react';
+import { Play, RotateCcw, Loader2, Repeat, GitCompareArrows, Database, History, Settings2, X, FileText, FileSpreadsheet, FileJson, SlidersHorizontal, CalendarRange, AlertTriangle, GitBranch, HelpCircle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -9,6 +9,7 @@ import type { DaySummary, Objective, Plan, Scenario } from '@/types';
 import type { JobView } from '@/App';
 import { WorkspaceNameContext } from '@/workspace';
 import { usePermission } from '@/permissions';
+import {WorkspaceNavigation,WorkspaceMenu,WorkspaceMenuItem,useAnchoredPanel,type WorkspaceCommand} from '@/components/WorkspaceNavigation';
 
 /* Localize the planning-day label from its ISO date (e.g. "kedd, 2026. május 6."
  * in Hungarian) rather than using the backend's fixed English label. */
@@ -22,6 +23,7 @@ function fmtDay(iso: string, lang: string): string {
  * that closes on outside click. Avoids pulling in a dropdown primitive. */
 function Popover({ open, onClose, align = 'right', children }: { open: boolean; onClose: () => void; align?: 'left' | 'right'; children: React.ReactNode }) {
   const panel = useRef<HTMLDivElement>(null);
+  useAnchoredPanel(open,panel);
   useEffect(() => {
     if (!open) return;
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
@@ -34,7 +36,7 @@ function Popover({ open, onClose, align = 'right', children }: { open: boolean; 
   }, [open, onClose]);
   if (!open) return null;
   return (
-    <div ref={panel} role="menu" className={`absolute top-full z-50 mt-1.5 ${align === 'right' ? 'right-0' : 'left-0'} min-w-[220px] rounded-md border border-divider bg-card p-2 text-foreground shadow-lg`}>
+    <div ref={panel} role="menu" className={`absolute top-full z-50 mt-1.5 ${align === 'right' ? 'right-0' : 'left-0'} max-h-[65vh] min-w-[220px] max-w-[calc(100vw-2rem)] overflow-y-auto rounded-md border border-divider bg-card p-2 text-foreground shadow-lg`}>
       {children}
     </div>
   );
@@ -44,7 +46,7 @@ export function TopBar({
   days, dayId, onDayChange, scenario, plan, job, solving, exportPending = false,
   objective, onObjectiveChange, budgetSec, onBudgetChange, fullBudget, onFullBudgetChange, changesCount, dirty,
   onOptimize, onCancel, onReset, onOpenChanges, showCompare, onCompare, onOpenImport, onOpenHistory, onOpenWeek, onOpenIssues, issuesCount, onOpenScenarios, onOpenHelp,
-  onOpenProfiles,onOpenHandoff,onOpenInputUpdates,
+  onOpenProfiles,onOpenHandoff,onOpenInputUpdates,onOpenReview,
 }: {
   days: DaySummary[]; dayId: string; onDayChange: (id: string) => void;
   scenario: Scenario; plan: Plan; job: JobView | null; solving: boolean;
@@ -54,6 +56,7 @@ export function TopBar({
   onOptimize: () => void; onCancel: () => void; onReset: () => void; onOpenChanges: () => void;
   showCompare: boolean; onCompare: () => void; onOpenImport: () => void; onOpenHistory: () => void; onOpenWeek: () => void;
   onOpenIssues: () => void; issuesCount: number; onOpenScenarios: () => void; onOpenHelp: () => void;
+  onOpenReview:()=>void;
   onOpenProfiles?:()=>void;
   onOpenHandoff?:()=>void;
   onOpenInputUpdates?:()=>void;
@@ -99,8 +102,34 @@ export function TopBar({
     } finally { if (generation === exportGeneration.current) setExportBusy(false); }
   }
 
+  const icon=(Icon:typeof Database)=><Icon className="h-4 w-4"/>;
+  const prepare:WorkspaceCommand[]=[{label:t('topbar.data'),onSelect:onOpenImport,icon:icon(Database)},
+    ...(onOpenProfiles?[{label:t('nav.profiles'),onSelect:onOpenProfiles,icon:icon(SlidersHorizontal)}]:[]),
+    ...(onOpenInputUpdates?[{label:t('nav.inputUpdates'),onSelect:onOpenInputUpdates,disabled:solving||dirty,icon:icon(Repeat)}]:[])];
+  const planning:WorkspaceCommand[]=[{label:t('topbar.issues'),onSelect:onOpenIssues,count:issuesCount,icon:icon(AlertTriangle)},
+    ...(changesCount>0?[{label:t('topbar.changes'),onSelect:onOpenChanges,count:changesCount,icon:icon(SlidersHorizontal)}]:[]),
+    ...(showCompare?[{label:t('topbar.compare'),onSelect:onCompare,disabled:solving,icon:icon(GitCompareArrows)}]:[]),
+    ...(canEdit&&isReplan?[{label:t('topbar.reset'),onSelect:onReset,disabled:solving,icon:icon(RotateCcw)}]:[])];
+  const library:WorkspaceCommand[]=[{label:t('topbar.scenarios'),onSelect:onOpenScenarios,icon:icon(GitBranch)},
+    {label:t('topbar.plans'),onSelect:onOpenHistory,icon:icon(History)},{label:t('topbar.week'),onSelect:onOpenWeek,icon:icon(CalendarRange)}];
+  const review=<WorkspaceMenu label={t('nav.review')} open={exportOpen} onOpenChange={setExportOpen} disabled={exportPending}>
+    <WorkspaceMenuItem label={t('nav.approval')} onSelect={onOpenReview} icon={<FileText className="h-4 w-4"/>}/>
+    {onOpenHandoff&&<WorkspaceMenuItem label={t('nav.handoff')} onSelect={onOpenHandoff} icon={<FileJson className="h-4 w-4"/>}/>}
+            <div className="space-y-0.5">
+              <div className="px-2 pb-0.5 pt-1 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">{t('export.forDrivers')}</div>
+              <MenuItem icon={<FileText className="h-4 w-4" />} label={t('export.routesheet')} onClick={() => { setExportOpen(false); openRouteSheets(); }} />
+              <MenuItem icon={<FileSpreadsheet className="h-4 w-4" />} label={t('export.csv')} onClick={() => { setExportOpen(false); downloadUrl(api.exportCsvUrl(plan.id)); }} />
+              <div className="px-2 pb-0.5 pt-1.5 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">{t('export.handoffGroup')}</div>
+              <MenuItem icon={<FileSpreadsheet className="h-4 w-4" />} label={t('export.routes')} onClick={() => { setExportOpen(false); downloadUrl(api.routesCsvUrl(plan.id)); }} />
+              <MenuItem icon={<FileJson className="h-4 w-4" />} label={t('export.handoff')} onClick={() => { setExportOpen(false); downloadUrl(api.handoffJsonUrl(plan.id)); }} />
+              <WorkspaceMenuItem label={t('export.approved')} icon={<FileJson className="h-4 w-4"/>} disabled={exportBusy} closeOnSelect={false} onSelect={()=>void downloadApproved()}/>
+              <p className="max-w-[280px] px-2 py-1 text-xs text-muted-foreground">{t('export.statusNote')}</p>
+              {exportError && <p role="alert" className="max-w-[280px] px-2 py-1 text-xs text-destructive">{exportError}</p>}
+            </div>
+  </WorkspaceMenu>;
   return (
-    <header className="flex h-14 shrink-0 items-center gap-4 bg-graphite px-4 text-graphite-foreground">
+    <header className="shrink-0 bg-graphite px-4 text-graphite-foreground">
+      <div className="flex min-h-12 min-w-0 flex-wrap items-center gap-2 py-1.5 sm:gap-3">
       <div className="flex shrink-0 items-baseline gap-2">
         <span className="text-lg font-bold tracking-tight">Cursus</span>
         {workspaceName ? <div role="group" aria-label={t('workspace.current')} className="flex min-w-0 items-baseline gap-2">
@@ -108,8 +137,6 @@ export function TopBar({
           <span title={workspaceName} className="max-w-[120px] truncate text-sm font-medium text-graphite-foreground/80 sm:max-w-[180px]">{workspaceName}</span>
         </div> : <span className="text-sm font-medium text-graphite-muted">{t('brand.sub')}</span>}
       </div>
-
-      <div className="mx-1 h-6 w-px bg-white/10" />
 
       <div className="flex items-center rounded-md border border-white/15 bg-white/5 p-0.5" role="group" aria-label={t('lang.switch')}>
         {(['en', 'hu'] as const).map((l) => (
@@ -121,7 +148,7 @@ export function TopBar({
         ))}
       </div>
 
-      <div className="w-64">
+      <div className="w-full min-w-0 max-w-full sm:w-64">
         <Select value={dayId} onValueChange={onDayChange} disabled={solving}>
           <SelectTrigger className="h-8 border-white/15 bg-white/5 text-graphite-foreground">
             <SelectValue placeholder={t('topbar.selectDay')} />
@@ -138,7 +165,7 @@ export function TopBar({
       </div>
 
       {isReplan ? (
-        <Badge variant="warning" title="Editable scenario (baseline preserved)">
+        <Badge variant="warning" className="max-w-full min-w-0 truncate sm:max-w-[240px]" title={scenario.label}>
           {scenario.label}{changesCount > 0 ? ` · ${t('topbar.editsN', { n: changesCount })}` : ''}
         </Badge>
       ) : (
@@ -148,34 +175,11 @@ export function TopBar({
       )}
       {isReplan && invalid && <Badge variant="destructive">{t('topbar.invalid')}</Badge>}
 
-      <div className="ml-auto flex items-center gap-1.5">
-        {/* Navigation / panels: icon-only toolbar (labels via tooltip + aria-label) */}
-        <div className="flex items-center gap-1">
-          <IconButton onClick={onOpenIssues} label={t('topbar.issues')} warn={issuesCount > 0} count={issuesCount}><AlertTriangle className="h-4 w-4" /></IconButton>
-          <IconButton onClick={onOpenScenarios} label={t('topbar.scenarios')}><GitBranch className="h-4 w-4" /></IconButton>
-          <IconButton onClick={onOpenWeek} label={t('topbar.week')}><CalendarRange className="h-4 w-4" /></IconButton>
-          <IconButton onClick={onOpenHistory} label={t('topbar.plans')}><History className="h-4 w-4" /></IconButton>
-          <IconButton onClick={onOpenImport} label={t('topbar.data')}><Database className="h-4 w-4" /></IconButton>
-          {onOpenProfiles&&<IconButton onClick={onOpenProfiles} label={lang==='hu'?'Tervezési profilok':'Planning profiles'}><SlidersHorizontal className="h-4 w-4" /></IconButton>}
-          {onOpenInputUpdates&&<IconButton onClick={onOpenInputUpdates} disabled={solving||dirty} label={lang==='hu'?'Bemeneti adatok frissítése':'Update input snapshot'}><Repeat className="h-4 w-4" /></IconButton>}
-          {onOpenHandoff&&<IconButton onClick={onOpenHandoff} label={lang==='hu'?'Visszaigazolt átadás':'Acknowledged handoff'}><FileJson className="h-4 w-4" /></IconButton>}
-          <IconButton onClick={onOpenHelp} label={t('help.title')}><HelpCircle className="h-4 w-4" /></IconButton>
-        </div>
-
-        <div className="h-6 w-px bg-white/10" />
-
-        {changesCount > 0 && (
-          <Button variant="graphite" size="sm" className={`border ${dirty ? 'border-warning/60 text-warning' : 'border-white/15'}`} onClick={onOpenChanges}>
-            <SlidersHorizontal className="h-4 w-4" /> {t('topbar.changes')} <span className="tnum rounded bg-white/15 px-1 text-[10px]">{changesCount}</span>
-          </Button>
-        )}
-        {showCompare && (
-          <IconButton onClick={onCompare} disabled={solving} label={t('topbar.compare')}><GitCompareArrows className="h-4 w-4" /></IconButton>
-        )}
-        {canEdit && isReplan && (
-          <IconButton onClick={onReset} disabled={solving} label={t('topbar.reset')}><RotateCcw className="h-4 w-4" /></IconButton>
-        )}
-
+        <Button type="button" variant="graphite" size="sm" className="ml-auto shrink-0 border border-white/15" onClick={onOpenHelp} aria-label={t('help.title')}><HelpCircle aria-hidden className="h-4 w-4"/>{t('nav.help')}</Button>
+      </div>
+      <div className="flex min-h-11 min-w-0 flex-wrap items-center justify-between gap-2 border-t border-white/10 py-1.5">
+        <WorkspaceNavigation prepare={prepare} planning={planning} library={library} review={review} contextKey={`${plan.id}/${scenario.id}/${canEdit}/${exportPending}`} issuesCount={issuesCount}/>
+        <div className="ml-auto flex shrink-0 items-center gap-1.5">
         {/* Solve settings (objective + time budget) */}
         {canEdit && <div className="relative">
           <Button variant="graphite" size="icon" className="h-8 w-8 border border-white/15" title={t('topbar.settings')} aria-label={t('topbar.settings')}
@@ -233,55 +237,12 @@ export function TopBar({
           </Button>}
         </div> : <span className="px-2 text-xs text-graphite-foreground/80">{t('account.readOnly')}</span>}
 
-        {/* Export menu */}
-        <div className="relative">
-          <Button variant="graphite" size="sm" className="border border-white/15" disabled={exportPending} onClick={() => setExportOpen((o) => !o)} title={t('topbar.export')} aria-label={t('topbar.export')}>
-            <Download className="h-4 w-4" /> <ChevronDown className="h-3 w-3 opacity-70" />
-          </Button>
-          <Popover open={exportOpen} onClose={() => setExportOpen(false)}>
-            <div className="space-y-0.5">
-              <div className="px-2 pb-0.5 pt-1 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">{t('export.forDrivers')}</div>
-              <MenuItem icon={<FileText className="h-4 w-4" />} label={t('export.routesheet')} onClick={() => { setExportOpen(false); openRouteSheets(); }} />
-              <MenuItem icon={<FileSpreadsheet className="h-4 w-4" />} label={t('export.csv')} onClick={() => { setExportOpen(false); downloadUrl(api.exportCsvUrl(plan.id)); }} />
-              <div className="px-2 pb-0.5 pt-1.5 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">{t('export.handoffGroup')}</div>
-              <MenuItem icon={<FileSpreadsheet className="h-4 w-4" />} label={t('export.routes')} onClick={() => { setExportOpen(false); downloadUrl(api.routesCsvUrl(plan.id)); }} />
-              <MenuItem icon={<FileJson className="h-4 w-4" />} label={t('export.handoff')} onClick={() => { setExportOpen(false); downloadUrl(api.handoffJsonUrl(plan.id)); }} />
-              <button type="button" role="menuitem" disabled={exportBusy} onClick={() => void downloadApproved()} className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-sm hover:bg-muted disabled:opacity-50">
-                <FileJson className="h-4 w-4" />{t('export.approved')}
-              </button>
-              <p className="max-w-[280px] px-2 py-1 text-xs text-muted-foreground">{t('export.statusNote')}</p>
-              {exportError && <p role="alert" className="max-w-[280px] px-2 py-1 text-xs text-destructive">{exportError}</p>}
-            </div>
-          </Popover>
         </div>
       </div>
     </header>
   );
 }
 
-/* Compact icon-only toolbar button. The label is the accessible name (aria-label
- * + tooltip) so the control stays discoverable and keeps its test/SR identity;
- * an optional count renders as a small corner badge (e.g. open issues). */
-function IconButton({ onClick, label, warn, count, disabled, children }: {
-  onClick: () => void; label: string; warn?: boolean; count?: number; disabled?: boolean; children: React.ReactNode;
-}) {
-  return (
-    <Button variant="graphite" size="icon" onClick={onClick} disabled={disabled} title={label} aria-label={label}
-      className={`relative h-8 w-8 border ${warn ? 'border-warning/60 text-warning' : 'border-white/15'}`}>
-      {children}
-      {count != null && count > 0 && (
-        <span className="absolute -right-1 -top-1 min-w-[15px] rounded-full bg-warning px-0.5 text-center text-[9px] font-semibold leading-[15px] text-graphite">
-          {count > 99 ? '99+' : count}
-        </span>
-      )}
-    </Button>
-  );
-}
-
 function MenuItem({ icon, label, onClick }: { icon: React.ReactNode; label: string; onClick: () => void }) {
-  return (
-    <button type="button" onClick={onClick} className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-xs hover:bg-accent">
-      <span className="text-muted-foreground">{icon}</span> {label}
-    </button>
-  );
+  return <WorkspaceMenuItem icon={icon} label={label} onSelect={onClick}/>;
 }

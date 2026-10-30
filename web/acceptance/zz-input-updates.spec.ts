@@ -1,3 +1,4 @@
+import {selectWorkspaceAction,workspaceAction,openWorkspaceMenu} from '../tests/workspace-navigation';
 import {test,expect,type Page} from '@playwright/test';
 import {execFileSync} from 'node:child_process';
 import type {Plan,DaySummary,Scenario} from '../src/types';
@@ -25,8 +26,8 @@ test('reviewed snapshot update preserves manual delivery identity, recalculates 
  expect(upload.status()).toBe(201);const {datasetId}=await upload.json() as {datasetId:string};
  for(const action of ['validate','admit']){const r=await page.request.post(`/api/import/datasets/${datasetId}/${action}`,{headers:{origin},data:{}});expect(r.ok(),await r.text()).toBe(true);}
  await page.evaluate(({planId,day})=>localStorage.setItem('cursus.manual-workspace.v1:acceptance',JSON.stringify({planId,day})),{planId:source.id,day:oldDay.id});await page.reload();
- await expect(page.getByRole('button',{name:'Update input snapshot',exact:true})).toBeEnabled();
- await page.getByRole('button',{name:'Update input snapshot',exact:true}).click();
+ await expect(await workspaceAction(page,'Update input snapshot')).toBeEnabled();
+ await selectWorkspaceAction(page,'Update input snapshot');
  const dialog=page.getByRole('dialog',{name:'Update input snapshot',exact:true});
  await dialog.getByRole('combobox',{name:'Replacement snapshot',exact:true}).selectOption(JSON.stringify([datasetId,'acceptance-day-two-revised']));
  // Repeated business references deliberately have no automatic pairing.
@@ -91,8 +92,8 @@ test('reviewed snapshot update preserves manual delivery identity, recalculates 
  // Archived workspace has no write controls, but its original plan remains readable.
  await page.evaluate(({planId,day})=>localStorage.setItem('cursus.manual-workspace.v1:acceptance',JSON.stringify({planId,day})),{planId:source.id,day:oldDay.id});await page.reload();
  await expect(page.getByRole('button',{name:'Open updated inputs',exact:true})).toBeVisible();
- await expect(page.getByRole('button',{name:'Update input snapshot',exact:true})).toHaveCount(0);
+ await openWorkspaceMenu(page,'Prepare');await expect(page.getByRole('menuitem',{name:'Update input snapshot',exact:true})).toHaveCount(0);await page.keyboard.press('Escape');
  await expect(page.getByRole('button',{name:'Manual planning',exact:true})).toHaveCount(0);
- await page.getByRole('button',{name:'Open updated inputs',exact:true}).click();await expect(page.getByRole('button',{name:'Update input snapshot',exact:true})).toBeEnabled();
+ await page.getByRole('button',{name:'Open updated inputs',exact:true}).click();await expect(await workspaceAction(page,'Update input snapshot')).toBeEnabled();
  await expect.poll(()=>page.evaluate(()=>JSON.parse(localStorage.getItem('cursus.manual-workspace.v1:acceptance')??'null')?.planId)).toBe(job.planId);
 });

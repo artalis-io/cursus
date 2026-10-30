@@ -1,3 +1,4 @@
+import {selectWorkspaceAction} from './workspace-navigation';
 import { test, expect } from '@playwright/test';
 import { loadApp, closePopover, selectVehicle } from './helpers';
 
@@ -17,7 +18,7 @@ test('replan applies a staged removal and opens the comparison', async ({ page }
   await page.getByRole('button', { name: /Mark RIC-124 unavailable/ }).click();
 
   // replan from the Changes dialog
-  await page.getByRole('button', { name: /Changes/ }).click();
+  await selectWorkspaceAction(page,'Changes');
   await page.getByRole('dialog').getByRole('button', { name: /Replan/ }).click();
 
   // wait out the solve

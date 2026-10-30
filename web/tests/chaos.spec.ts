@@ -1,3 +1,4 @@
+import {selectWorkspaceAction,workspaceAction} from './workspace-navigation';
 import { test, expect, type Page } from '@playwright/test';
 
 /* Chaos monkey: drive random, reversible UI actions and watch for crashes,
@@ -68,13 +69,13 @@ test('chaos monkey finds no crashes, uncaught errors or dead-ends', async ({ pag
 
   // Each action is reversible / non-destructive and tolerant of "nothing to do".
   const actions: { name: string; run: () => Promise<void> }[] = [
-    { name: 'open-issues', run: async () => { await page.getByRole('button', { name: /Issues/ }).first().click({ timeout: 2500 }); } },
-    { name: 'open-scenarios', run: async () => { await page.getByRole('button', { name: /Scenarios/ }).first().click({ timeout: 2500 }); } },
-    { name: 'open-week', run: async () => { await page.getByRole('button', { name: /^Week$/ }).first().click({ timeout: 2500 }); } },
-    { name: 'open-plans', run: async () => { await page.getByRole('button', { name: /Plans/ }).first().click({ timeout: 2500 }); } },
-    { name: 'open-data', run: async () => { await page.getByRole('button', { name: /^Data$/ }).first().click({ timeout: 2500 }); } },
+    { name: 'open-issues', run: async () => { await selectWorkspaceAction(page,'Issues'); } },
+    { name: 'open-scenarios', run: async () => { await selectWorkspaceAction(page,'Scenarios'); } },
+    { name: 'open-week', run: async () => { await selectWorkspaceAction(page,'Week'); } },
+    { name: 'open-plans', run: async () => { await selectWorkspaceAction(page,'Plans'); } },
+    { name: 'open-data', run: async () => { await selectWorkspaceAction(page,'Data'); } },
     { name: 'open-help', run: async () => { await page.getByRole('button', { name: /Help|\?/ }).first().click({ timeout: 2500 }); } },
-    { name: 'open-changes', run: async () => { const b = page.getByRole('button', { name: /Changes/ }); if (await b.count()) await b.first().click({ timeout: 2500 }); } },
+    { name: 'open-changes', run: async () => { const b = await workspaceAction(page,'Changes'); if (await b.count()) await b.first().click({ timeout: 2500 }); } },
     { name: 'esc', run: async () => { await page.keyboard.press('Escape'); } },
     { name: 'dialog-random-button', run: async () => {
       const dlg = page.getByRole('dialog');
@@ -100,8 +101,8 @@ test('chaos monkey finds no crashes, uncaught errors or dead-ends', async ({ pag
     { name: 'timeline-fleet-row', run: async () => { await clickRandVisible(page.getByRole('button', { name: /:\s*\d+ trips/ }), 12); } },
     { name: 'map-zoom', run: async () => { await clickRandVisible(page.getByRole('button', { name: /Zoom in|Zoom out|Fit plan/ }), 3); } },
     { name: 'map-click', run: async () => { const c = page.locator('canvas.maplibregl-canvas').first(); if (await c.count()) { const box = await c.boundingBox(); if (box) await page.mouse.click(box.x + box.width * rand(), box.y + box.height * rand()); } } },
-    { name: 'export-menu', run: async () => { await page.getByRole('button', { name: /Export/ }).first().click({ timeout: 2500 }); } },
-    { name: 'reset-baseline', run: async () => { const b = page.getByRole('button', { name: /Baseline|Reset/ }); if (await b.count()) await b.first().click({ timeout: 2500 }); } },
+    { name: 'export-menu', run: async () => { await page.getByRole('button', { name: /Review & release/ }).first().click({ timeout: 2500 }); } },
+    { name: 'reset-baseline', run: async () => { const b = await workspaceAction(page,'Reset to baseline'); if (await b.count()) await b.first().click({ timeout: 2500 }); } },
     { name: 'collapse-panels', run: async () => { await clickRandVisible(page.getByRole('button', { name: /fleet panel|inspector/ }), 2); } },
   ];
 

@@ -1,3 +1,4 @@
+import {selectWorkspaceAction,workspaceAction} from './workspace-navigation';
 import { test, expect } from '@playwright/test';
 import { loadApp, expectNoErrors, selectVehicle } from './helpers';
 
@@ -11,10 +12,10 @@ test.describe('staged edit stack', () => {
     await expect(page.getByText('Optimizing')).toHaveCount(0);
     // staged indicators
     await expect(page.getByText(/staged change\(s\)/)).toBeVisible();
-    await expect(page.getByRole('button', { name: /Changes/ })).toBeVisible();
+    await expect(await workspaceAction(page,'Changes')).toBeVisible();
 
     // open the Changes dialog -> RIC-124 under Removed vehicles
-    await page.getByRole('button', { name: /Changes/ }).click();
+    await selectWorkspaceAction(page,'Changes');
     const dialog = page.getByRole('dialog');
     await expect(dialog.getByText('Removed vehicles')).toBeVisible();
     await expect(dialog.getByText('RIC-124')).toBeVisible();
@@ -54,7 +55,7 @@ test.describe('staged edit stack', () => {
     // The pin must stage (not auto-solve) and show the target vehicle.
     await expect(page.getByText('Optimizing')).toHaveCount(0);
     await expect(page.getByText(/staged change\(s\)/)).toBeVisible();
-    await page.getByRole('button', { name: /Changes/ }).click();
+    await selectWorkspaceAction(page,'Changes');
     const dialog = page.getByRole('dialog');
     await expect(dialog.getByText(picked.target)).toBeVisible();
     expectNoErrors(page);
@@ -103,7 +104,7 @@ test.describe('staged edit stack', () => {
     await expect(page.locator('aside').last().getByText('Preview of this order (recomputed). Apply it with Replan.')).toBeVisible();
     const firstStop = page.locator('aside').last().locator('ol li').first();
     await expect(firstStop).toContainText(/^1\./); // renumbered to the new position
-    await page.getByRole('button', { name: /Changes/ }).click();
+    await selectWorkspaceAction(page,'Changes');
     await expect(page.getByRole('dialog').getByText('Stop order')).toBeVisible();
     expectNoErrors(page);
   });
@@ -128,7 +129,7 @@ test.describe('staged edit stack', () => {
     await expect(page.getByText('Optimizing')).toHaveCount(0);
     await expect(page.getByText(/staged change\(s\)/)).toBeVisible();
     await expect(inspector.getByText('Preview of this order (recomputed). Apply it with Replan.')).toBeVisible();
-    await page.getByRole('button', { name: /Changes/ }).click();
+    await selectWorkspaceAction(page,'Changes');
     await expect(page.getByRole('dialog').getByText('Stop order')).toBeVisible();
     expectNoErrors(page);
   });
@@ -181,7 +182,7 @@ test.describe('staged edit stack', () => {
     await inspector.getByRole('button', { name: 'Lock route' }).click();
     await expect(inspector.getByRole('button', { name: /Route locked/ })).toBeVisible();
     await expect(page.getByText(/staged change\(s\)/)).toBeVisible();
-    await page.getByRole('button', { name: /Changes/ }).click();
+    await selectWorkspaceAction(page,'Changes');
     await expect(page.getByRole('dialog').getByText('Stop order')).toBeVisible();
     expectNoErrors(page);
   });
@@ -193,8 +194,8 @@ test.describe('staged edit stack', () => {
     const capKg = page.locator('input[type=number]').first();
     await capKg.fill('9000');
     await capKg.blur();
-    await expect(page.getByRole('button', { name: /Changes/ })).toBeVisible();
-    await page.getByRole('button', { name: /Changes/ }).click();
+    await expect(await workspaceAction(page,'Changes')).toBeVisible();
+    await selectWorkspaceAction(page,'Changes');
     const dialog = page.getByRole('dialog');
     await expect(dialog.getByText('Vehicle constraints')).toBeVisible();
     await expect(dialog.getByText(/9000/)).toBeVisible();

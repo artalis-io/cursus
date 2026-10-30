@@ -1,3 +1,4 @@
+import {selectWorkspaceAction} from '../tests/workspace-navigation';
 import { test, expect, type Page, type APIRequestContext } from '@playwright/test';
 import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
@@ -448,7 +449,7 @@ test(`chaos: queued edits are dropped after permission transition (${transition}
 test('chaos: open rename/upload dialogs lose their privileged controls immediately on demotion', async ({ page }) => {
   await chaosLogin(page, 'admin');
   try {
-    await page.getByRole('button', { name: 'Data', exact: true }).click();
+    await selectWorkspaceAction(page,'Data');
     await page.getByRole('tab', { name: 'Upload', exact: true }).click();
     await expect(page.locator('input[type=file]').first()).toBeAttached();
     chaosRole('planner'); await page.evaluate(() => window.dispatchEvent(new Event('focus')));
@@ -458,7 +459,7 @@ test('chaos: open rename/upload dialogs lose their privileged controls immediate
     await page.keyboard.press('Escape');
     const base = await baseline(page);
     const copy = await (await page.request.post('/api/scenarios', { headers: { origin: new URL(page.url()).origin }, data: { from: base.scenarioId, label: 'Chaos original' } })).json() as Scenario;
-    await page.getByRole('button', { name: 'Scenarios', exact: true }).click();
+    await selectWorkspaceAction(page,'Scenarios');
     const row = page.getByText('Chaos original', { exact: true }).locator('..');
     await row.getByRole('button', { name: 'Rename', exact: true }).click();
     await page.getByRole('dialog').getByRole('textbox').fill('Must not be committed');
@@ -671,7 +672,7 @@ test('approved exceptions remain visible and cannot be injected through scenario
   await login(page);
   const plan = await baseline(page);
   assertPlan(plan);
-  await page.getByRole('button', { name: 'Issues', exact: true }).click();
+  await selectWorkspaceAction(page,'Issues');
   await expect(page.getByRole('region', { name: 'Approved planning exceptions' })).toContainText('PUBLIC-1');
   await expect(page.getByRole('region', { name: 'Approved planning exceptions' })).toContainText('Tail-lift waived');
   await page.keyboard.press('Escape');
@@ -711,7 +712,7 @@ test('Planner can manage scenario edits but cannot administer shared data or ele
   expect(me.permissions).not.toContain('dataset.upload');
   await expect(page.getByRole('contentinfo')).toContainText('Planner');
   await expect(page.getByRole('button', { name: /^View as / })).toHaveCount(0);
-  await page.getByRole('button', { name: 'Data', exact: true }).click();
+  await selectWorkspaceAction(page,'Data');
   await expect(page.getByRole('tab', { name: 'Upload', exact: true })).toHaveCount(0);
   await page.keyboard.press('Escape');
   const plan = await baseline(page);
@@ -722,7 +723,7 @@ test('Planner can manage scenario edits but cannot administer shared data or ele
   expect(renamed.status()).toBe(200);
   const bundle = await get<unknown>(page.request, `/api/scenarios/${scenario.id}/export`);
   expect((await page.request.post('/api/scenarios/import', { headers: { origin: new URL(page.url()).origin }, data: bundle })).status()).toBe(200);
-  await page.getByRole('button', { name: 'Scenarios', exact: true }).click();
+  await selectWorkspaceAction(page,'Scenarios');
   await expect(page.getByRole('button', { name: 'Rename', exact: true }).first()).toBeVisible();
   await expect(page.getByRole('button', { name: 'Delete', exact: true })).toHaveCount(0);
   await page.keyboard.press('Escape');
@@ -761,11 +762,11 @@ test('Reviewer can inspect and export but cannot edit, upload, compute or drag s
   await page.locator('aside').first().getByRole('button', { name: /Trip 1/ }).first().click();
   await expect(page.locator('[draggable=true]')).toHaveCount(0);
   await expect(page.getByRole('button', { name: /Move .* (earlier|later)/ })).toHaveCount(0);
-  await page.getByRole('button', { name: 'Data', exact: true }).click();
+  await selectWorkspaceAction(page,'Data');
   await expect(page.getByRole('tab', { name: 'Upload', exact: true })).toHaveCount(0);
   await expect(page.locator('input[type=file]')).toHaveCount(0);
   await page.keyboard.press('Escape');
-  await page.getByRole('button', { name: 'Scenarios', exact: true }).click();
+  await selectWorkspaceAction(page,'Scenarios');
   await expect(page.getByRole('button', { name: /Rename|Delete/ })).toHaveCount(0);
   await expect(page.locator('input[type=file]')).toHaveCount(0);
   await page.keyboard.press('Escape');
@@ -818,7 +819,7 @@ test('a hard GVW access violation is visible and cannot be labelled Baseline OK'
   await page.reload();
   await expect(page.getByText('Baseline · Constraint violation', { exact: true })).toBeVisible();
   await expect(page.getByText('Baseline · OK', { exact: true })).toHaveCount(0);
-  await page.getByRole('button', { name: 'Issues', exact: true }).click();
+  await selectWorkspaceAction(page,'Issues');
   await expect(page.getByRole('dialog')).toContainText('Constraint violations');
   await expect(page.getByRole('dialog').getByText(/24t.*7.5t/)).toBeVisible();
 });
@@ -1262,7 +1263,7 @@ test('native reduced-fleet result reports unassigned orders without claiming eff
     `/api/compare?base=${(await baseline(page)).id}&revised=${revised.id}`);
   expect(delta.deltas.costTotal).toBeLessThan(0); // exercises the former false "saved" branch
   // Open through the real history UI, including its real scenario context.
-  await page.getByRole('button', { name: 'Plans', exact: true }).click();
+  await selectWorkspaceAction(page,'Plans');
   const history = page.getByRole('dialog');
   await history.locator(`[data-plan-id="${revised.id}"]`).getByRole('button', { name: 'Reopen', exact: true }).click();
   await expect(history).toHaveCount(0);
@@ -1273,7 +1274,7 @@ test('native reduced-fleet result reports unassigned orders without claiming eff
   await expect(coverage).toContainText('PUBLIC-1');
   await expect(coverage).toContainText('Unassigned orders are reported by Surge');
   await expect(panel).toContainText('Lower distance or cost must not be interpreted as efficiency savings');
-  await page.getByRole('button', { name: 'Compare', exact: true }).click();
+  await selectWorkspaceAction(page,'Compare');
   const comparison = page.getByRole('dialog');
   await expect(comparison).toContainText('Lower distance or cost must not be interpreted as efficiency savings');
   await expect(comparison.getByText(/% saved/)).toHaveCount(0);
@@ -1295,14 +1296,14 @@ test('native plan review, Admin-only approval and cross-replica stale-edit prote
   const planId = job!.planId!;
   const navigation = gate();
   await page.route(`**/api/plans/${planId}`, async route => { await navigation.wait; await route.continue(); });
-  await page.getByRole('button', { name: 'Plans', exact: true }).click();
+  await selectWorkspaceAction(page,'Plans');
   await page.getByRole('dialog').locator(`[data-plan-id="${planId}"]`).getByRole('button', { name: 'Reopen', exact: true }).click();
   const panel = page.getByRole('region', { name: 'Plan approval', exact: true });
   await expect(panel.getByRole('button')).toHaveCount(0);
-  await expect(page.getByRole('button', { name: 'Export', exact: true })).toBeDisabled();
+  await expect(page.getByRole('button', { name: 'Review & release', exact: true })).toBeDisabled();
   navigation.release();
   await expect(panel).toHaveAttribute('data-plan-id', planId);
-  await expect(page.getByRole('button', { name: 'Export', exact: true })).toBeEnabled();
+  await expect(page.getByRole('button', { name: 'Review & release', exact: true })).toBeEnabled();
   await page.unroute(`**/api/plans/${planId}`);
   await expect(panel).toContainText('Draft');
   const handoffUrl = `/api/plans/${planId}/handoff.json`;
@@ -1313,19 +1314,21 @@ test('native plan review, Admin-only approval and cross-replica stale-edit prote
   const countBadDownload = () => { badDownloads++; };
   page.on('download', countBadDownload);
   await page.route(`**${handoffUrl}?approval=required`, route => route.fulfill({ json: { otto_dispatch_plan: 1, routes: [] } }));
-  await page.getByRole('button', { name: 'Export', exact: true }).click();
+  await page.getByRole('button', { name: 'Review & release', exact: true }).click();
   await page.getByRole('menuitem', { name: 'Approved handoff only (JSON)', exact: true }).click();
   await expect(page.getByRole('menu').getByRole('alert')).toContainText('not currently approved');
   expect(badDownloads).toBe(0);
   page.off('download', countBadDownload);
   await page.keyboard.press('Escape');
   await page.unroute(`**${handoffUrl}?approval=required`);
-  await page.getByRole('button', { name: 'Export', exact: true }).click();
+  await page.getByRole('button', { name: 'Review & release', exact: true }).click();
   await page.getByRole('menuitem', { name: 'Approved handoff only (JSON)', exact: true }).click();
   await expect(page.getByRole('menu').getByRole('alert')).toContainText('not currently approved');
   await page.keyboard.press('Escape');
   await expect(panel.getByRole('button', { name: 'Mark reviewed', exact: true })).toBeDisabled();
   await panel.getByRole('checkbox').check();
+  await selectWorkspaceAction(page,'Plan approval');
+  await expect(panel.getByRole('checkbox')).toBeChecked();
   await panel.getByRole('button', { name: 'Mark reviewed', exact: true }).click();
   await expect(panel).toContainText('Reviewed');
   expect((await get<{ handoff: { status: string } }>(page.request, `${peer}${handoffUrl}`)).handoff.status).toBe('Draft');
@@ -1354,7 +1357,7 @@ test('native plan review, Admin-only approval and cross-replica stale-edit prote
   expect((await page.request.post('/api/auth/view-as', { headers, data: { role: 'reviewer' } })).status()).toBe(200);
   await page.evaluate(() => window.dispatchEvent(new Event('focus')));
   await expect(panel.getByRole('button', { name: 'Approve plan', exact: true })).toHaveCount(0);
-  await page.getByRole('button', { name: 'Export', exact: true }).click();
+  await page.getByRole('button', { name: 'Review & release', exact: true }).click();
   const downloading = page.waitForEvent('download');
   await page.getByRole('menuitem', { name: 'Approved handoff only (JSON)', exact: true }).click();
   const download = await downloading;
@@ -1370,7 +1373,7 @@ test('native plan review, Admin-only approval and cross-replica stale-edit prote
   await expect(panel).toContainText('Superseded');
   expect((await page.request.get(`${peer}${handoffUrl}?approval=required`)).status()).toBe(409);
   expect((await get<{ handoff: { status: string } }>(page.request, handoffUrl)).handoff.status).toBe('Superseded');
-  await page.getByRole('button', { name: 'Export', exact: true }).click();
+  await page.getByRole('button', { name: 'Review & release', exact: true }).click();
   await page.getByRole('menuitem', { name: 'Approved handoff only (JSON)', exact: true }).click();
   await expect(page.getByRole('menu').getByRole('alert')).toContainText('not currently approved');
   await page.keyboard.press('Escape');
@@ -1402,16 +1405,16 @@ test('restart retains authentication, plans, and exports while the peer stays re
 
 test('history, week, provenance, and upload render with real stateful responses', async ({ page }) => {
   await login(page);
-  await page.getByRole('button', { name: 'Plans', exact: true }).click();
+  await selectWorkspaceAction(page,'Plans');
   await expect(page.getByRole('dialog').getByText('Saved plans')).toBeVisible();
   await expect(page.getByRole('dialog').locator('[data-plan-id]').first()).toBeVisible();
   await page.keyboard.press('Escape');
-  await page.getByRole('button', { name: 'Week', exact: true }).click();
+  await selectWorkspaceAction(page,'Week');
   await expect(page.getByRole('dialog').getByText('Week overview')).toBeVisible();
   await expect(page.getByRole('dialog').getByText(/Not found/)).toHaveCount(0);
   await page.keyboard.press('Escape');
   const summary = await get<{ sources: { sha256: string }[] }>(page.request, '/api/import/summary');
-  await page.getByRole('button', { name: 'Data', exact: true }).click();
+  await selectWorkspaceAction(page,'Data');
   const checksum = page.getByText(new RegExp(`sha ${summary.sources[0]!.sha256}`));
   await expect(checksum).toBeVisible();
   // Read both boxes in one frame; separate browser round trips can straddle
@@ -1431,7 +1434,7 @@ test('history, week, provenance, and upload render with real stateful responses'
 
 test('approved fleet profiles are explicitly pinned, replan with native Surge and preserve earlier revisions',async({page})=>{
  await login(page);await shortBudget(page);
- await page.getByRole('button',{name:'Planning profiles',exact:true}).click();
+ await selectWorkspaceAction(page,'Planning profiles');
  const dialog=page.getByRole('dialog',{name:'Planning profiles',exact:true});
  await dialog.getByRole('button',{name:'New fleet profile',exact:true}).click();
  const label='Public approved fleet '+Date.now();
@@ -1449,7 +1452,7 @@ test('approved fleet profiles are explicitly pinned, replan with native Surge an
  await expect(dialog).toHaveCount(0);
  const plan=await finishSolve(page,()=>page.getByRole('button',{name:'Replan',exact:true}).click());
  expect(plan.provenance.planningProfiles).toHaveLength(1);expect(plan.provenance.planningProfiles![0].revision).toBe(1);
- await page.getByRole('button',{name:'Planning profiles',exact:true}).click();
+ await selectWorkspaceAction(page,'Planning profiles');
  await dialog.locator('article').filter({hasText:label}).getByRole('button',{name:'Propose changes',exact:true}).click();
  await dialog.getByRole('textbox',{name:'Change reason',exact:true}).fill('Later proposed revision, not activated');
  await dialog.getByRole('button',{name:'Propose revision',exact:true}).click();
@@ -1460,7 +1463,7 @@ test('approved fleet profiles are explicitly pinned, replan with native Surge an
 
 test('Planner may propose profiles but cannot activate them; Reviewer cannot propose',async({page})=>{
  await login(page,'planner@acceptance.example.test');
- await page.getByRole('button',{name:'Planning profiles',exact:true}).click();
+ await selectWorkspaceAction(page,'Planning profiles');
  const dialog=page.getByRole('dialog',{name:'Planning profiles',exact:true});
  await dialog.getByRole('button',{name:'New fleet profile',exact:true}).click();
  await dialog.getByRole('textbox',{name:'Profile name',exact:true}).fill('Planner proposal');
@@ -1474,7 +1477,7 @@ test('Planner may propose profiles but cannot activate them; Reviewer cannot pro
  await page.getByRole('button',{name:'Sign out',exact:true}).click();
  await expect(page.getByRole('heading',{name:'Continue to Cursus',exact:true})).toBeVisible();
  await login(page,'reviewer@acceptance.example.test');
- await page.getByRole('button',{name:'Planning profiles',exact:true}).click();
+ await selectWorkspaceAction(page,'Planning profiles');
  await expect(dialog.getByRole('button',{name:'New fleet profile',exact:true})).toHaveCount(0);
  await expect(dialog.getByRole('button',{name:'Propose changes',exact:true})).toHaveCount(0);
  expect((await page.request.post('/api/profiles',{headers:{origin:new URL(page.url()).origin,'if-match':'"0"'},data:{content:{}}})).status()).toBe(403);
@@ -1552,7 +1555,7 @@ test('duplicate display references survive keyboard reordering, native replannin
  await expect(page.getByRole('region',{name:'Plan candidate'})).toHaveCount(0);
  // Keep the sequenced scenario intact and reopen the untouched day snapshot
  // for independent manual deassignment checks.
- await page.getByRole('button',{name:'Plans',exact:true}).click();
+ await selectWorkspaceAction(page,'Plans');
  page.once('dialog',dialog=>void dialog.accept());
  const reopenedContext=page.waitForResponse(r=>r.url().endsWith(`/api/plans/${base.id}/manual-context`));
  await page.getByRole('dialog').locator(`[data-plan-id="${base.id}"]`).getByRole('button',{name:'Reopen',exact:true}).click();
@@ -1587,7 +1590,7 @@ test('approved handoff is durable across replicas, read-only for Planner/Reviewe
  const approval=page.getByRole('region',{name:'Plan approval',exact:true});
  await approval.getByRole('checkbox').check();await approval.getByRole('button',{name:'Mark reviewed',exact:true}).click();
  await expect(approval).toContainText('Reviewed');await approval.getByRole('checkbox').check();await approval.getByRole('button',{name:'Approve plan',exact:true}).click();await expect(approval).toContainText('Approved');
- await page.getByRole('button',{name:'Acknowledged handoff',exact:true}).click();
+ await selectWorkspaceAction(page,'Acknowledged handoff');
  const dialog=page.getByRole('dialog');await expect(dialog).toContainText('Acceptance warehouse');
  await expect(dialog.getByRole('button',{name:'Send approved plan',exact:true})).toBeDisabled();
  await dialog.getByRole('textbox',{name:'Handoff reason',exact:true}).fill('Public acceptance dispatch');await dialog.getByRole('checkbox').check();
@@ -1601,16 +1604,62 @@ test('approved handoff is durable across replicas, read-only for Planner/Reviewe
  for(const role of ['planner','reviewer']){
   expect((await page.request.post('/api/auth/view-as',{headers,data:{role}})).status()).toBe(200);await page.evaluate(()=>window.dispatchEvent(new Event('focus')));
   await expect(page.getByRole('contentinfo')).toContainText(role==='planner'?'Planner':'Reviewer');
-  await page.getByRole('button',{name:'Acknowledged handoff',exact:true}).click();await expect(dialog).toContainText(`test-receipt-${intent.id}`);
+  await selectWorkspaceAction(page,'Acknowledged handoff');await expect(dialog).toContainText(`test-receipt-${intent.id}`);
   await expect(dialog.getByRole('textbox',{name:'Handoff reason',exact:true})).toHaveCount(0);await expect(dialog.getByRole('button',{name:'Cancel accepted instruction',exact:true})).toHaveCount(0);
   expect((await page.request.post(`${peer}/api/plans/${plan.id}/transfers/cancel`,{headers:{...headers,'if-match':`"${plan.scenarioRevision}"`},data:{}})).status()).toBe(403);
   expect((await page.request.post(`/api/handoff/${intent.id}/retry`,{headers,data:{mode:'lookup'}})).status()).toBe(403);await page.keyboard.press('Escape');
  }
  expect((await page.request.post('/api/auth/view-as',{headers,data:{role:null}})).status()).toBe(200);await page.evaluate(()=>window.dispatchEvent(new Event('focus')));
- await expect(page.getByRole('contentinfo')).toContainText('Admin');await page.getByRole('button',{name:'Acknowledged handoff',exact:true}).click();
+ await expect(page.getByRole('contentinfo')).toContainText('Admin');await selectWorkspaceAction(page,'Acknowledged handoff');
  await dialog.getByRole('textbox',{name:'Handoff reason',exact:true}).fill('Public acceptance cancellation');await dialog.getByRole('checkbox').check();
  const cancelled=page.waitForResponse(r=>r.request().method()==='POST'&&r.url().endsWith('/transfers/cancel'));
  await dialog.getByRole('button',{name:'Cancel accepted instruction',exact:true}).click();const cancellation=await cancelled;expect(cancellation.status()).toBe(202);const second=await cancellation.json() as {id:string};
  await expect.poll(async()=>(await status()).intents.find(i=>i.id===second.id)?.state).toBe('acknowledged');
  expect((await status()).heads[0]!.acceptedIntentId).toBe(second.id);await expect(dialog).toContainText(`test-receipt-${second.id}`);
+});
+
+// Navigation is presentation-only: no writes, lost focus or reset state.
+test('workspace navigation: keyboard and dialog focus preserve state without writes',async({page},testInfo)=>{
+ await login(page);
+ const writes:string[]=[];page.on('request',r=>{if(new URL(r.url()).pathname.startsWith('/api/')&&!['GET','HEAD','OPTIONS'].includes(r.method()))writes.push(r.method()+' '+new URL(r.url()).pathname);});
+ const before=await get<Scenario[]>(page.request,'/api/scenarios');
+ const selected=await page.evaluate(()=>localStorage.getItem('cursus.manual-workspace.v1:acceptance'));
+ const nav=page.getByRole('navigation',{name:'Workspace tools'}),prepare=nav.getByRole('button',{name:'Prepare',exact:true});
+ await prepare.focus();await page.keyboard.press('ArrowDown');await expect(page.getByRole('menuitem',{name:'Data',exact:true})).toBeFocused();
+ await page.keyboard.press('End');await expect(page.getByRole('menuitem').last()).toBeFocused();
+ await page.keyboard.press('Home');await expect(page.getByRole('menuitem',{name:'Data',exact:true})).toBeFocused();
+ await page.keyboard.press('ArrowUp');await expect(page.getByRole('menuitem').last()).toBeFocused();
+ await page.keyboard.press('Escape');await expect(prepare).toBeFocused();await expect(page.getByRole('menu')).toHaveCount(0);
+ await prepare.click();await prepare.click();await expect(page.getByRole('menu')).toHaveCount(0);
+ await prepare.focus();await page.keyboard.press('ArrowUp');await expect(page.getByRole('menuitem').last()).toBeFocused();
+ await page.keyboard.press('Tab');await expect(page.getByRole('menu')).toHaveCount(0);await expect(nav.getByRole('button',{name:'Plan',exact:true})).toBeFocused();
+ await prepare.click();await page.keyboard.press('Shift+Tab');await expect(page.getByRole('menu')).toHaveCount(0);await expect(prepare).toBeFocused();
+ for(const [action,group] of [['Data','Prepare'],['Scenarios','Library'],['Issues','Plan']] as const){
+  await selectWorkspaceAction(page,action);await expect(page.getByRole('dialog')).toBeVisible();await page.keyboard.press('Escape');await expect(page.getByRole('dialog')).toHaveCount(0);await expect(nav.getByRole('button',{name:group,exact:true})).toBeFocused();
+ }
+ await selectWorkspaceAction(page,'Plan approval');await expect(page.locator('#cursus-plan-review')).toBeFocused();
+ await prepare.click();await page.getByText('Served / Total',{exact:true}).click();await expect(page.getByRole('menu')).toHaveCount(0);
+ expect(await get<Scenario[]>(page.request,'/api/scenarios')).toEqual(before);expect(await page.evaluate(()=>localStorage.getItem('cursus.manual-workspace.v1:acceptance'))).toBe(selected);expect(writes).toEqual([]);
+ await page.screenshot({path:testInfo.outputPath('workspace-desktop.png')});
+});
+
+for(const role of ['admin','planner','reviewer'] as const)test(`workspace navigation: ${role} narrow EN/HU menus preserve permission boundaries`,async({page},testInfo)=>{
+ await chaosLogin(page,role);
+ try{
+  const writes:string[]=[];page.on('request',r=>{if(new URL(r.url()).pathname.startsWith('/api/')&&!['GET','HEAD','OPTIONS'].includes(r.method()))writes.push(r.url());});
+  for(const width of [375,600,1440])for(const hu of [false,true]){
+   await page.setViewportSize({width,height:900});await page.getByRole('button',{name:hu?'HU':'EN',exact:true}).click();
+   const labels=hu?['Előkészítés','Tervezés','Ellenőrzés és átadás','Tervek és munkaterületek']:['Prepare','Plan','Review & release','Library'];
+   const nav=page.getByRole('navigation',{name:hu?'Munkaterület eszközei':'Workspace tools'});
+   for(const label of labels){
+    const trigger=nav.getByRole('button',{name:label,exact:true});await trigger.click();const menu=page.getByRole('menu',{name:label,exact:true});await expect(menu).toBeVisible();
+    const box=await menu.boundingBox();expect(box!.x).toBeGreaterThanOrEqual(0);expect(box!.x+box!.width).toBeLessThanOrEqual(width+1);expect(box!.y+box!.height).toBeLessThanOrEqual(901);
+    await page.keyboard.press('Escape');await expect(trigger).toBeFocused();
+   }
+   expect(await page.locator('header').evaluate(el=>el.scrollWidth<=el.clientWidth+1)).toBe(true);
+   if(width===375)await page.screenshot({path:testInfo.outputPath(`workspace-${role}-${hu?'hu':'en'}-375.png`)});
+  }
+  await page.getByRole('button',{name:'EN',exact:true}).click();await selectWorkspaceAction(page,'Data');await expect(page.getByRole('dialog').getByRole('tab',{name:'Upload',exact:true})).toHaveCount(role==='admin'?1:0);await page.keyboard.press('Escape');
+  await expect(page.getByRole('button',{name:'Optimize',exact:true})).toHaveCount(role==='reviewer'?0:1);expect(writes).toEqual([]);
+ }finally{chaosRole('planner');}
 });

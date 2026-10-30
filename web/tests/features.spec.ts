@@ -1,3 +1,4 @@
+import {selectWorkspaceAction} from './workspace-navigation';
 import { test, expect } from '@playwright/test';
 import { loadApp, expectNoErrors, closePopover, selectVehicle } from './helpers';
 
@@ -6,7 +7,7 @@ test.describe('tier-2 features', () => {
     await loadApp(page);
     // the day-1 baseline is fully served (no unassigned/hard), but has access
     // advisories (oversize / tail-lift), which the panel surfaces.
-    await page.getByRole('button', { name: 'Issues', exact: true }).click();
+    await selectWorkspaceAction(page,'Issues');
     const dialog = page.getByRole('dialog');
     await expect(dialog.getByText('Plan issues')).toBeVisible();
     await expect(dialog.getByText('Advisories')).toBeVisible();
@@ -32,7 +33,7 @@ test.describe('tier-2 features', () => {
 
   test('scenarios workspace lists the day and compares selected', async ({ page }) => {
     await loadApp(page);
-    await page.getByRole('button', { name: 'Scenarios' }).click();
+    await selectWorkspaceAction(page,'Scenarios');
     const dialog = page.getByRole('dialog');
     await expect(dialog.getByText('What-if scenarios')).toBeVisible();
     await expect(dialog.getByText(/served/).first()).toBeVisible();   // base KPI row
@@ -48,7 +49,7 @@ test.describe('tier-2 features', () => {
 
   test('export menu offers driver sheets and a re-importable handoff', async ({ page }) => {
     await loadApp(page);
-    await page.getByRole('button', { name: 'Export' }).click();
+    await page.getByRole('button', { name: 'Review & release' }).click();
     await expect(page.getByText('Hand back to your system')).toBeVisible();
     await expect(page.getByText('Routes (CSV, re-importable)')).toBeVisible();
     await expect(page.getByText('Dispatch plan (JSON)')).toBeVisible();
@@ -58,7 +59,7 @@ test.describe('tier-2 features', () => {
 
   test('week view shows combined totals and per-vehicle utilization', async ({ page }) => {
     await loadApp(page);
-    await page.getByRole('button', { name: 'Week' }).click();
+    await selectWorkspaceAction(page,'Week');
     const dialog = page.getByRole('dialog');
     await expect(dialog.getByText('Week overview')).toBeVisible();
     await expect(dialog.getByText('263/263')).toBeVisible();   // orders across both days
@@ -69,7 +70,7 @@ test.describe('tier-2 features', () => {
 
   test('saved plans opens without a render error', async ({ page }) => {
     await loadApp(page);
-    await page.getByRole('button', { name: 'Plans' }).click();
+    await selectWorkspaceAction(page,'Plans');
     const dialog = page.getByRole('dialog');
     await expect(dialog.getByText('Saved plans')).toBeVisible();
     await expect(dialog.getByText(/km/).first()).toBeVisible();
