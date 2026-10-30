@@ -1,6 +1,6 @@
 # A clearer Cursus planning workspace
 
-Status: design proposal for review; no application implementation or production change.  
+Status: design approved; milestone 1 implementation on `feature/labeled-workspace-navigation`. No production change.  
 Reviewed source: `b69712f22fbc3d15b261821a5bb45f071137415a`.  
 Date: 30 October 2026.
 
@@ -161,3 +161,11 @@ Each milestone gets a separate reviewable change and exact-image acceptance. Do 
 ## Evidence for this proposal
 
 Source inspection and the existing public-fixture workspace captures inform this design. The prototype is checked independently for stage/state/role/language switching, narrow layout and zero network calls. These checks validate only the design artifact. They are not evidence that the proposed application layout is implemented, production-tested or approved for release.
+
+## Milestone 1 implementation
+
+Prepare, Plan, Review & release, and Library are labeled command menus in the existing header. They open the existing dialogs or focus the existing approval section; they do not yet switch work surfaces. Help, selected day/workspace and the fixed-width Optimize/Replan controls remain directly reachable. The planning canvas, readiness, approval, manual previews, running jobs and candidate decisions remain mounted.
+
+Menu commands reuse existing handlers, feature flags, disabled states and permission checks. This milestone adds no backend route, persisted stage, customer-data change or solver behavior. A shared menu supports keyboard navigation, outside dismissal without swallowing Optimize, viewport-clamped positioning and focus return. Controlled dialogs restore their opener when it still exists, while preserving explicit autofocus overrides.
+
+Browser regression tests navigate through these menus and retain their existing business assertions. Additional checks cover navigation without API writes, keyboard paths and dialog focus, EN/HU at 375/600/1440 pixels for Admin/Planner/Reviewer, approval acknowledgement continuity, and the existing exact-image two-replica native workflow. Prototype checks remain separate from application acceptance. Production activation requires a subsequent release decision.

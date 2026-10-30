@@ -26,7 +26,9 @@ DialogOverlay.displayName = DialogPrimitive.Overlay.displayName;
 const DialogContent = React.forwardRef<
   React.ElementRef<typeof DialogPrimitive.Content>,
   React.ComponentPropsWithoutRef<typeof DialogPrimitive.Content>
->(({ className, children, ...props }, ref) => (
+>(({ className, children, onOpenAutoFocus, onCloseAutoFocus, ...props }, ref) => {
+  const opener = React.useRef<HTMLElement | null>(null);
+  return (
   <DialogPortal>
     <DialogOverlay />
     <DialogPrimitive.Content
@@ -36,6 +38,18 @@ const DialogContent = React.forwardRef<
         className
       )}
       {...props}
+      onOpenAutoFocus={event => {
+        // Controlled dialogs have no Radix Trigger. Remember the stable menu
+        // trigger selected by the caller before the command item unmounts.
+        opener.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+        onOpenAutoFocus?.(event);
+      }}
+      onCloseAutoFocus={event => {
+        onCloseAutoFocus?.(event);
+        if (!event.defaultPrevented && opener.current?.isConnected) {
+          event.preventDefault(); opener.current.focus();
+        }
+      }}
     >
       {children}
       <DialogPrimitive.Close className="absolute right-4 top-4 rounded-sm opacity-70 ring-offset-background transition-opacity hover:opacity-100 focus:outline-none focus:ring-1 focus:ring-ring">
@@ -44,7 +58,8 @@ const DialogContent = React.forwardRef<
       </DialogPrimitive.Close>
     </DialogPrimitive.Content>
   </DialogPortal>
-));
+);
+});
 DialogContent.displayName = DialogPrimitive.Content.displayName;
 
 function DialogHeader({ className, ...props }: React.HTMLAttributes<HTMLDivElement>) {
