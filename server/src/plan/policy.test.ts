@@ -57,6 +57,12 @@ test('approval fails closed for a different day/dataset, stale source, invalid b
 test('stateful copies, edits and exports retain server-owned approvals; imports cannot invent approval', async () => {
   const rows = new Map<string, Scenario>([['day1-base', scenario()]]);
   const store = { getScenario: async (_t: string, id: string) => rows.get(id),
+    tx:async(work:(client:{query:(sql:string,args:unknown[])=>Promise<unknown>})=>Promise<unknown>)=>work({query:async(sql,args)=>{
+      if(sql.startsWith('SELECT pg_advisory'))return {rows:[]};
+      if(sql.startsWith('SELECT body FROM scenarios'))return {rows:rows.has(String(args[1]))?[{body:rows.get(String(args[1]))}]:[]};
+      if(sql.startsWith('INSERT INTO scenarios')){rows.set(String(args[1]),args[2] as Scenario);return {rows:[]};}
+      throw new Error(`Unexpected scenario transaction query: ${sql}`);
+    }}),
     createScenario: async (_t: string, id: string, body: Scenario) => { rows.set(id, body); },
     updateScenario: async (_t: string, id: string, _r: number, body: Scenario) => { rows.set(id, body); return body.revision; } } as unknown as StatefulStore;
   const repo = new ScenarioRepository(store, 'test');

@@ -131,6 +131,7 @@ export async function loadConvertedDay(objects: ObjectStore, tenantId: string, m
   const requestObject = manifest?.artifacts?.request as ImmutableObject | undefined;
   const geoObject = manifest?.artifacts?.geocoded as ImmutableObject | undefined;
   if (!requestObject || !geoObject) throw new Error('admitted dataset artifacts are incomplete');
+  if(scenario.datasetBinding&&scenario.datasetBinding.requestSha256!==requestObject.sha256)throw new Error('Bound dataset checksum changed');
   if(scenario.deliveryDatasetSha256&&scenario.deliveryDatasetSha256!==requestObject.sha256)throw new Error('Scenario delivery identities belong to another dataset');
   const prefix = `tenants/${tenantId}/sha256/`;
   if (!requestObject.key.startsWith(prefix) || !geoObject.key.startsWith(prefix)) throw new Error('dataset artifact is outside the tenant namespace');
@@ -142,7 +143,7 @@ export async function loadConvertedDay(objects: ObjectStore, tenantId: string, m
   const rows = Array.isArray(geoJson) ? geoJson : geoJson.records ?? [];
   let shipmentDocument:ShipmentDocument|undefined;
   if(shipmentObject)shipmentDocument=validateShipments(JSON.parse(new TextDecoder().decode(await objects.getVerified(shipmentObject))),request,requestObject.sha256);
-  const dayMeta = manifest.days?.find((d) => d.dayId === scenario.day);
+  const dayMeta = manifest.days?.find((d) => d.dayId === (scenario.datasetBinding?.dayId??scenario.day));
   if (!dayMeta) throw new Error('dataset day is missing');
   const refs = new Set(rows.filter((r) => String(r.delivery_date ?? '') === String(dayMeta.date ?? dayMeta.isoDate))
     .map((r) => String(r.order_no)));
@@ -166,7 +167,7 @@ export async function loadConvertedDay(objects: ObjectStore, tenantId: string, m
     stats: { vehicles_used: 0, trips: 0, total_distance: 0, unassigned: scopedReqIds.length } };
   const day=withPlanningPolicy({ datasetRequestSha256: requestObject.sha256,deliveryEnrichment,
     ...(shipmentDocument?{shipmentDocument,shipmentSha256:shipmentObject!.sha256}:{}),
-    def: { id: dayMeta.dayId, date: dayMeta.date ?? dayMeta.isoDate, isoDate: dayMeta.isoDate, label: dayMeta.label,
+    def: { id: scenario.day, date: dayMeta.date ?? dayMeta.isoDate, isoDate: dayMeta.isoDate, label: dayMeta.label,
     requestFile: '', solutionFile: '' }, kind: 'uploaded', request, solution,
     scopeTaskIds: new Set(request.requests.map((r) => r.delivery_task_id)),
     depot: { name: 'Depot', lon: request.locations[0]!.x, lat: request.locations[0]!.y }, enrichment: enrichmentFromRecords(rows),
@@ -218,6 +219,7 @@ export async function solveConvertedDataset(objects: ObjectStore, tenantId: stri
     const mapped = mapSolutionToPlan({ day, request, solution, enrichment: day.enrichment, vehicleInfo, tariff:applied?policy!.tariff:undefined, scenarioId: scenario.id,
       scenarioRevision: scenario.revision, planId: `pln_${randomUUID().slice(0, 8)}`, source: 'live', createdAt: new Date().toISOString() });
     const plan = withRetainedProvenance(mapped, scenario, datasetVehicles);
+    if(scenario.inputUpdate)plan.provenance.inputUpdate=structuredClone(scenario.inputUpdate);
     if(applied)plan.provenance.tariffSha256=tariffIdentity(policy!.tariff);
     if(incumbent)plan.provenance.warmStart={planId:incumbent.id,used:seeded};
     if (scenario.planningPolicy) plan.provenance.planningPolicy = structuredClone(scenario.planningPolicy);

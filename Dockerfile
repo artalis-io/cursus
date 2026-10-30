@@ -11,6 +11,7 @@ COPY server/src/plan/identity.ts /src/server/src/plan/identity.ts
 COPY server/src/planning-profile-contract.ts /src/server/src/planning-profile-contract.ts
 COPY server/src/shipment-contract.ts /src/server/src/shipment-contract.ts
 COPY server/src/integration-contract.ts /src/server/src/integration-contract.ts
+COPY server/src/input-update-contract.ts /src/server/src/input-update-contract.ts
 RUN npm run build
 
 FROM node:20.19.5-bookworm-slim@sha256:9e70124bd00f47dd023e349cd587132ae61892acc0e47ed641416c3e18f401c3 AS server-build

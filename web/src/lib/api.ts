@@ -1,5 +1,6 @@
-import type { Comparison, DaySummary, Job, Objective, Plan, Scenario, ScenarioEdit, Trip } from '@/types';
+import type { Comparison, DaySummary, Job, Objective, Plan, Scenario, ScenarioEdit, Trip, ManualPreview } from '@/types';
 import type {ProfileContent,ProfileRef,ProfileRevision,ProfileKind} from '../../../server/src/planning-profile-contract';
+import type {InputUpdateIntent,InputUpdateDiff,UpdateDelivery} from '../../../server/src/input-update-contract';
 
 /* Same-origin API client. In dev, Vite proxies /api and /tiles to the backend
  * (VITE_API_ORIGIN); in production the backend serves the SPA and these paths. */
@@ -64,6 +65,9 @@ export const api = {
   manualContext:(id:string)=>jget<import('@/types').ManualContext>(`/api/plans/${encodeURIComponent(id)}/manual-context`),
   manualPreview:(id:string,revision:number,intent:import('@/types').ManualIntent)=>jsend<import('@/types').ManualPreview>(`/api/scenarios/${encodeURIComponent(id)}/manual-preview`,'POST',intent,revision),
   placements:(id:string,revision:number,body:{parentPlanId:string;datasetSha256:string;requestId:number})=>jsend<import('@/types').PlacementSuggestions>(`/api/scenarios/${encodeURIComponent(id)}/placements`,'POST',body,revision),
+  inputUpdateOptions:(scenarioId:string,planId:string,datasetId?:string,dayId?:string)=>jget<InputUpdateOptions>(`/api/scenarios/${encodeURIComponent(scenarioId)}/input-update-options?${new URLSearchParams({planId,...(datasetId&&dayId?{datasetId,dayId}:{})})}`),
+  inputUpdatePreview:(scenario:Scenario,intent:InputUpdateIntent)=>jsend<InputUpdatePreview>(`/api/scenarios/${encodeURIComponent(scenario.id)}/input-update-preview`,'POST',intent,scenario.revision),
+  inputUpdateApply:(scenario:Scenario,intent:InputUpdateIntent,previewSha256:string)=>jsend<Plan>(`/api/scenarios/${encodeURIComponent(scenario.id)}/input-update-apply`,'POST',{intent,previewSha256,acknowledgeSupersession:true},scenario.revision),
   manualApply:(id:string,revision:number,intent:import('@/types').ManualIntent)=>jsend<Plan>(`/api/scenarios/${encodeURIComponent(id)}/manual-plan`,'POST',intent,revision),
   approvedHandoff: async (id: string, revision: number) => {
     const value = await jget<{ handoff?: { status: string; planId: string; scenarioRevision: number; planSha256: string; checkedAt: string;
@@ -163,12 +167,25 @@ export interface ScenarioExport {
 }
 
 export interface ScenarioSummary {
+  supersededBy?:Scenario['supersededBy'];inputUpdate?:Scenario['inputUpdate'];
   id: string; label: string; kind: 'base' | 'copy'; revision: number; changesCount: number;
   latest: {
     planId: string; createdAt: string;
     servedOrders: number; totalOrders: number; vehiclesUsed: number; totalDistanceKm: number;
     unassigned: number; cost: number | null; currency: string | null;
   } | null;
+}
+
+export interface InputUpdateOptions {
+ choices:{datasetId:string;dayId:string;label:string;sha256:string}[];
+ scope:{id:string;label:string;revision:number}[];
+ before?:UpdateDelivery[];after?:UpdateDelivery[];suggested?:{from:number;to:number}[];
+ lockedVehicleIds?:number[];manualRequestIds?:number[];requiredProfiles?:ProfileKind[];
+ profiles?:ProfileRevision[];profileTemplates?:Record<ProfileKind,ProfileContent|null>;
+ exceptions?:{orderNo:string;reason:string}[];
+}
+export interface InputUpdatePreview extends ManualPreview {
+ previewSha256:string;diff:InputUpdateDiff;archivedWorkspaces:{id:string;label:string}[];approval:'Draft';
 }
 
 export interface DatasetSummary {

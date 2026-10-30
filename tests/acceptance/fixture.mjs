@@ -10,6 +10,7 @@ import { ObjectStore } from '/app/server/dist/state/objects.js';
 import { solveConvertedDataset } from '/app/server/dist/state/conversion.js';
 import { manualSettings } from '/app/server/dist/state/manual-settings.js';
 import {validateShipments} from '/app/server/dist/shipments.js';
+import {enrichmentFromRecords} from '/app/server/dist/data/dataset.js';
 const require = createRequire('/app/server/package.json');
 const { S3Client, CreateBucketCommand } = require('@aws-sdk/client-s3');
 const url = (await readFile(config.databaseUrlFile, 'utf8')).trim();
@@ -114,6 +115,15 @@ try {
       assert.equal(expired.rowCount, 1, 'expire only the freshly requested isolated test link');
     }
     result = { link };
+  } else if(action==='revised-input-bundle'){
+    const row=await store.getDataset('acceptance','acceptance-dataset');assert.equal(row?.status,'admitted');
+    const manifest=row.manifest,request=JSON.parse(new TextDecoder().decode(await objects.getVerified(manifest.artifacts.request)));
+    const raw=JSON.parse(new TextDecoder().decode(await objects.getVerified(manifest.artifacts.geocoded))).records;
+    const geocoded=raw.map(record=>{const info=enrichmentFromRecords([record]).get(String(record.order_no));assert.ok(info);
+      return {...record,request_id:record.request_id+1000,requires_tail_lift:info.requiresTailLift,max_gross_weight_kg:info.maxTonnage===null?null:info.maxTonnage*1000};});
+    request.requests=request.requests.map(order=>({...order,id:order.id+1000}));
+    request.tasks.find(task=>task.id===3).demand[0]=150;
+    result={schemaVersion:1,days:manifest.days.map(day=>({...day,dayId:day.dayId+'-revised'})),surgeRequest:request,geocoded};
   } else if (action === 'evidence') {
     const migrations = (await store.pool.query('select version from schema_migrations order by version')).rows.map(r => r.version);
     const mail = (await store.pool.query('select state,count(*)::int as count from email_outbox group by state')).rows;

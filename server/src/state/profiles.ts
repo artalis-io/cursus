@@ -82,28 +82,32 @@ export class ProfileRepository {
     return result;
   }
 
-  async assertDaySource(day:string,sha:string,client:Pick<PoolClient,'query'>=this.store.pool):Promise<void>{
+  async assertDaySource(day:string,sha:string,client:Pick<PoolClient,'query'>=this.store.pool,binding?:Scenario['datasetBinding']):Promise<void>{
+    if(binding&&binding.requestSha256!==sha)throw new WorkflowError(409,'Profile does not match the bound snapshot.');
     const sources=await client.query<{sha:string}>(`SELECT DISTINCT manifest->'artifacts'->'request'->>'sha256' sha FROM datasets
-      WHERE tenant_id=$1 AND status='admitted' AND EXISTS(
+      WHERE tenant_id=$1 AND status='admitted' AND ($3::text IS NULL OR id=$3) AND EXISTS(
         SELECT 1 FROM jsonb_array_elements(CASE WHEN jsonb_typeof(manifest->'days')='array' THEN manifest->'days' ELSE '[]'::jsonb END) d
-        WHERE d->>'dayId'=$2)`,[this.tenantId,day]);
+        WHERE d->>'dayId'=$2)`,[this.tenantId,binding?.dayId??day,binding?.datasetId??null]);
     if(sources.rows.length!==1||sources.rows[0]!.sha!==sha)throw new WorkflowError(409,'Profile does not match the unambiguous admitted source for this planning day.');
   }
 
   async bind(scenarioId:string,revision:number,refs:ProfileRef[],actor?:Principal):Promise<Scenario>{
     const resolved=await this.resolve(refs);
+    const source=await this.store.getScenario(this.tenantId,scenarioId);
     const checksums=new Set(resolved.map(p=>p.content.datasetSha256));
     if(checksums.size>1)throw new WorkflowError(409,'Profiles refer to different datasets.');
     return this.store.tx(async client=>{
       await this.authorize(client,actor,'scenario.edit');
+      if(source)await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))',[`input-day/${this.tenantId}/${source.day}`]);
       const found=await client.query<{body:Scenario;revision:string}>('SELECT body,revision FROM scenarios WHERE tenant_id=$1 AND id=$2 FOR UPDATE',[this.tenantId,scenarioId]);
       const current=found.rows[0];
       if(!current)throw new WorkflowError(404,'Scenario not found.');
+      if(current.body.supersededBy)throw new WorkflowError(409,'This input cycle is read-only. Open its replacement.');
       if(Number(current.revision)!==revision)throw new WorkflowError(409,'Scenario changed; reload before selecting profiles.');
       const ordered=(values:ProfileRef[])=>JSON.stringify([...values].sort((a,b)=>a.kind<b.kind?-1:a.kind>b.kind?1:0));
       if(ordered(refs)===ordered(current.body.planningProfiles??[]))return current.body;
       const sha=[...checksums][0];
-      if(sha)await this.assertDaySource(current.body.day,sha,client);
+      if(sha)await this.assertDaySource(current.body.day,sha,client,current.body.datasetBinding);
       const bound=current.body.deliveryDatasetSha256??current.body.manualDecisions?.datasetSha256??current.body.planningPolicy?.datasetRequestSha256;
       if(sha&&bound&&sha!==bound)throw new WorkflowError(409,'Profile does not match the scenario dataset.');
       if(current.body.manualDecisions)throw new WorkflowError(409,'Create a clean scenario before changing profiles with retained manual decisions.');
