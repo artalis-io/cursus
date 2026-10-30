@@ -1317,6 +1317,7 @@ test('native plan review, Admin-only approval and cross-replica stale-edit prote
   const panel = page.getByRole('region', { name: 'Plan approval', exact: true });
   await expect(panel.getByRole('button')).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'Review & release', exact: true })).toBeDisabled();
+  for(const label of ['Prepare','Plan','Library'])await expect(page.getByRole('navigation',{name:'Workspace tools'}).getByRole('button',{name:label,exact:true})).toBeDisabled();
   navigation.release();
   await expect(page.getByRole('button', { name: 'Review & release', exact: true })).toBeEnabled();
   await selectWorkspaceAction(page,'Plan approval');
