@@ -1,4 +1,4 @@
-import {selectWorkspaceAction} from '../tests/workspace-navigation';
+import {selectWorkspaceAction,openWorkspaceMenu} from '../tests/workspace-navigation';
 import { test, expect, type Page, type APIRequestContext } from '@playwright/test';
 import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
@@ -615,6 +615,12 @@ async function finishSolve(page: Page, start: () => Promise<unknown>, options:{k
   await page.keyboard.press('Escape');
   const candidate = page.getByRole('region', { name: 'Plan candidate' });
   await expect(candidate).toBeVisible();
+  const selectionBeforeNavigation=(await get<Scenario>(page.request,`${peer}/api/scenarios/${scenarioId}`)).selectedPlanId;
+  for(const label of ['Prepare','Plan','Review & release','Library']){
+    await openWorkspaceMenu(page,label);await page.keyboard.press('Escape');
+    await expect(candidate).toBeVisible();
+  }
+  expect((await get<Scenario>(page.request,`${peer}/api/scenarios/${scenarioId}`)).selectedPlanId).toBe(selectionBeforeNavigation);
   if(options.reload){await page.reload();await expect(candidate).toBeVisible();}
   if (plan.unassigned.length) await candidate.getByRole('checkbox').check();
   await candidate.getByRole('button', { name: options.keep?'Keep previous':'Use candidate', exact: true }).click();
@@ -1662,4 +1668,13 @@ for(const role of ['admin','planner','reviewer'] as const)test(`workspace naviga
   await page.getByRole('button',{name:'EN',exact:true}).click();await selectWorkspaceAction(page,'Data');await expect(page.getByRole('dialog').getByRole('tab',{name:'Upload',exact:true})).toHaveCount(role==='admin'?1:0);await page.keyboard.press('Escape');
   await expect(page.getByRole('button',{name:'Optimize',exact:true})).toHaveCount(role==='reviewer'?0:1);expect(writes).toEqual([]);
  }finally{chaosRole('planner');}
+});
+
+
+test('workspace navigation: first outside click starts one native solve without losing its candidate',async({page})=>{
+ await login(page);await shortBudget(page);
+ let submissions=0;page.on('request',r=>{if(r.method()==='POST'&&/\/api\/scenarios\/[^/]+\/solve$/.test(new URL(r.url()).pathname))submissions++;});
+ await openWorkspaceMenu(page,'Prepare');
+ await finishSolve(page,()=>page.getByRole('button',{name:'Optimize',exact:true}).click());
+ expect(submissions).toBe(1);
 });
