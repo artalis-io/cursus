@@ -107,7 +107,7 @@ test('snapshot replacement through two APIs is atomic, idempotent, tenant-scoped
    assert.equal((await a.getScenario(tenant,base.id))!.supersededBy,undefined);assert.equal((await a.listPlans(tenant)).length,2);
   }finally{await a.pool.query('DROP TRIGGER input_update_test_failure ON audit_events');await a.pool.query('DROP FUNCTION input_update_test_failure()');}
   const job=await post<{jobId:string}>(1,`/api/scenarios/${scenario.id}/solve`,{budgetSec:1},scenario.revision);
-  const lease=await a.claimJob('solve','old-worker',60);assert.equal(lease?.id,job.jobId);
+  const lease=await a.claimJob('solve','old-worker',60,tenant);assert.equal(lease?.id,job.jobId);
   // Competing operations on distinct servers: exactly one new cycle can win.
   const other={...intent,operationId:'revision-two'},otherPreview=await post<{previewSha256:string}>(1,path+'preview',other,scenario.revision);
   const race=await Promise.all(apps.map((app,i)=>app.inject({method:'POST',url:path+'apply',headers:{'if-match':`"${scenario.revision}"`},payload:i===0?apply:{intent:other,previewSha256:otherPreview.previewSha256,acknowledgeSupersession:true}})));
