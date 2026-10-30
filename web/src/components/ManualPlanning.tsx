@@ -108,7 +108,7 @@ export function ManualPlanningDialog({plan,scenario,fleet,request,onClose,onAppl
             return <li key={s.vehicleId} className="rounded border bg-card p-2" data-vehicle-id={s.vehicleId}>
               <div className="font-medium">{v?.ref??`#${s.vehicleId}`} · {position}</div>
               <p>{t('placement.delta')}: {s.delta.distanceKm>=0?'+':''}{km(s.delta.distanceKm,1)} · {s.delta.cost>=0?'+':''}{money(s.delta.cost,guidance.currency)}</p>
-              <p>{t('placement.timing',{arrival:hhmm(s.serviceStartSec),finish:hhmm(s.tripEndSec),delay:Math.ceil(s.delta.finishSec/60)})}</p>
+              <p>{t('placement.timing',{arrival:hhmm(s.serviceStartSec),finish:hhmm(s.tripEndSec)})} · {s.delta.finishSec===null?t('placement.newVehicle'):t('placement.delay',{delay:Math.ceil(s.delta.finishSec/60)})}</p>
               <p>{t('placement.resources',{vehicles:s.delta.vehicles,trips:s.delta.trips})}</p>
               <Button size="sm" variant="outline" disabled={busy||attempted||!canEdit} onClick={()=>choosePlacement(s)}>{t('placement.use',{ref:v?.ref??`#${s.vehicleId}`})}</Button>
             </li>;})}

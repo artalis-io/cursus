@@ -168,7 +168,7 @@ export interface ManualContext {enabled:boolean;reason?:'fresh_plan_required';re
 export interface ManualPreview {stats:PlanStats;cost:PlanCost|null;validation:PlanProvenance['validation']}
 export interface PlacementSuggestion {
   vehicleId:number;tripId:string;position:number;newTrip:boolean;serviceStartSec:number;tripEndSec:number;
-  delta:{distanceKm:number;cost:number;vehicles:number;trips:number;finishSec:number};
+  delta:{distanceKm:number;cost:number;vehicles:number;trips:number;finishSec:number|null};
 }
 export interface PlacementSuggestions {
   parentPlanId:string;revision:number;datasetSha256:string;requestId:number;currency:string;checked:number;complete:boolean;feasiblePositions:number;

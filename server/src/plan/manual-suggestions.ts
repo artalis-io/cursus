@@ -6,7 +6,7 @@ import type { Scenario } from '../store.js';
 
 export interface PlacementSuggestion {
   vehicleId:number; tripId:string; position:number; newTrip:boolean;
-  delta:{distanceKm:number;cost:number;vehicles:number;trips:number;finishSec:number};
+  delta:{distanceKm:number;cost:number;vehicles:number;trips:number;finishSec:number|null};
   serviceStartSec:number; tripEndSec:number;
 }
 export interface PlacementSuggestions {
@@ -30,7 +30,7 @@ export async function suggestPlacements(input:ManualEvaluationInput,scenario:Sce
   const started=performance.now(),at=new Date().toISOString();
   const best=new Map<number,PlacementSuggestion>();
   const compare=(a:PlacementSuggestion,b:PlacementSuggestion)=>a.delta.cost-b.delta.cost||a.delta.distanceKm-b.delta.distanceKm||
-    a.delta.finishSec-b.delta.finishSec||a.vehicleId-b.vehicleId||a.tripId.localeCompare(b.tripId)||a.position-b.position;
+    (a.delta.finishSec??Infinity)-(b.delta.finishSec??Infinity)||a.vehicleId-b.vehicleId||a.tripId.localeCompare(b.tripId)||a.position-b.position;
   for(const vehicleId of input.layout.vehicleIds){
     const row:PlacementSuggestions['vehicles'][number]={vehicleId,checked:0,feasible:0,blockers:[]};result.vehicles.push(row);
     if(input.layout.excludedVehicleIds.includes(vehicleId)){row.skipped='excluded';continue;}
@@ -58,7 +58,8 @@ export async function suggestPlacements(input:ManualEvaluationInput,scenario:Sce
       const end=(vs:typeof evaluated.vehicles)=>Math.max(0,...vs.find(v=>v.vehicleId===vehicleId)?.trips.map(t=>t.endSec)??[]);
       const suggestion:PlacementSuggestion={vehicleId,...target,serviceStartSec:route.stops.find(s=>s.requestId===requestId)!.serviceStartSec,tripEndSec:route.endSec,
         delta:{distanceKm:evaluated.stats.totalDistanceKm-baseline.stats.totalDistanceKm,cost:evaluated.cost.total-baseline.cost.total,
-          vehicles:evaluated.stats.vehiclesUsed-baseline.stats.vehiclesUsed,trips:evaluated.stats.trips-baseline.stats.trips,finishSec:end(evaluated.vehicles)-end(baseline.vehicles)}};
+          vehicles:evaluated.stats.vehiclesUsed-baseline.stats.vehiclesUsed,trips:evaluated.stats.trips-baseline.stats.trips,
+          finishSec:baseline.vehicles.some(v=>v.vehicleId===vehicleId)?end(evaluated.vehicles)-end(baseline.vehicles):null}};
       if(!best.has(vehicleId)||compare(suggestion,best.get(vehicleId)!)<0)best.set(vehicleId,suggestion);
     }
   }

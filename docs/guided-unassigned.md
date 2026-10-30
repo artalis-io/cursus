@@ -13,6 +13,8 @@ are recalculated with the same immutable matrix, tariff and pinned planning
 settings; the reference values are displayed explicitly. Historical displayed
 totals may have different rounding or settings and are not the comparison basis.
 The estimates are changes, never a claim of savings from reduced service.
+An idle vehicle has no previous finish time: it is labeled newly used rather
+than displaying a fictitious delay measured from midnight.
 
 Selecting a placement only fills the existing vehicle/trip/position form. The
 planner must **Calculate preview**, review the complete draft, and **Apply manual

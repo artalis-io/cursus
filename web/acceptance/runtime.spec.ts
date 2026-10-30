@@ -181,6 +181,8 @@ for(const role of ['admin','planner'] as const)test(`placements ${role}: unassig
   const result=await search.json() as PlacementSuggestions;expect(result.suggestions.length).toBeGreaterThan(0);
   expect(result.parentPlanId).toBe(partial.id);expect(result.suggestions.some(s=>s.vehicleId===99)).toBe(false);
   await expect(section.getByRole('list',{name:'Feasible placements',exact:true})).toBeVisible();
+  for(const suggestion of result.suggestions)if(suggestion.delta.finishSec===null)
+    await expect(section.locator(`[data-vehicle-id="${suggestion.vehicleId}"]`)).toContainText('Newly used vehicle');
   await expect(section.locator('[data-vehicle-id="99"]')).toHaveCount(0);
   expect((await get<Plan[]>(page.request,'/api/plans')).length).toBe(before);
   expect((await get<Scenario>(page.request,`${peer}/api/scenarios/${partial.scenarioId}`)).revision).toBe(partial.scenarioRevision);
