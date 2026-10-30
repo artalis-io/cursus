@@ -80,4 +80,5 @@ test('reviewed snapshot update preserves manual delivery identity, recalculates 
  await expect(page.getByRole('button',{name:'Update input snapshot',exact:true})).toHaveCount(0);
  await expect(page.getByRole('button',{name:'Manual planning',exact:true})).toHaveCount(0);
  await page.getByRole('button',{name:'Open updated inputs',exact:true}).click();await expect(page.getByRole('button',{name:'Update input snapshot',exact:true})).toBeEnabled();
+ await expect.poll(()=>page.evaluate(()=>JSON.parse(localStorage.getItem('cursus.manual-workspace.v1:acceptance')??'null')?.planId)).toBe(job.planId);
 });

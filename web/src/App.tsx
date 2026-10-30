@@ -665,10 +665,11 @@ export default function App() {
     try{
       const [ds,sc]=await Promise.all([api.days(),api.scenario(next.scenarioId)]),day=ds.find(d=>d.id===sc.day);
       if(!day)throw new Error('The new input cycle has no baseline. Reload before continuing.');
-      const base=await api.planSnapshot(day.baselinePlanId);
+      const selectedId=sc.selectedPlanId??sc.manualPlanId;
+      const [base,selected]=await Promise.all([api.planSnapshot(day.baselinePlanId),selectedId&&selectedId!==next.id?api.planSnapshot(selectedId):Promise.resolve(next)]);
       if(!writeAccess.current.mounted||generation!==navigationGeneration.current)return;
-      scenarioRef.current=sc;planRef.current=next;setDays(ds);setDayId(sc.day);setBaseline(base);setScenario(sc);setPlan(next);setFreshnessError(null);
-      setRestoredGeometryPlanId(hasCompleteRouteGeometry(next)?null:next.id);setInputUpdatesOpen(false);setManualRequest(null);resetSelection();setPlaying(false);setClockSec(null);setError(null);
+      scenarioRef.current=sc;planRef.current=selected;setDays(ds);setDayId(sc.day);setBaseline(base);setScenario(sc);setPlan(selected);setFreshnessError(null);
+      setRestoredGeometryPlanId(hasCompleteRouteGeometry(selected)?null:selected.id);setInputUpdatesOpen(false);setManualRequest(null);resetSelection();setPlaying(false);setClockSec(null);setError(null);
     }catch(e){setError(describeApiError(e,t));throw e;}
     finally{if(generation===navigationGeneration.current)setWorkspaceLoading(false);}
   }
