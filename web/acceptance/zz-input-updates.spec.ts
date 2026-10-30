@@ -50,15 +50,25 @@ test('reviewed snapshot update preserves manual delivery identity, recalculates 
  await dialog.getByRole('checkbox',{name:/Make this the new input cycle/}).check();
  let committed!:(plan:Plan)=>void;
  const applied=new Promise<Plan>(resolve=>{committed=resolve;});
+ let navigationScenarioId:string|null=null,releaseNavigation!:()=>void,captureNavigation!:()=>void;
+ const navigationGate=new Promise<void>(resolve=>{releaseNavigation=resolve;}),navigationCaptured=new Promise<void>(resolve=>{captureNavigation=resolve;});
+ await page.route('**/api/scenarios/*',async route=>{
+  if(route.request().method()==='GET'&&new URL(route.request().url()).pathname===`/api/scenarios/${navigationScenarioId}`){
+   const response=await route.fetch();captureNavigation();await navigationGate;await route.fulfill({response});
+  }else await route.continue();
+ });
  await page.route('**/input-update-apply',async route=>{
   const response=await route.fetch();expect(response.status(),await response.text()).toBe(201);
-  committed(await response.json() as Plan);
+  const plan=await response.json() as Plan;navigationScenarioId=plan.scenarioId;committed(plan);
   // Server committed, but the browser lost the response. Recover by the
   // operation-bound immutable receipt, without issuing another update.
   await route.abort('failed');
  });
  await dialog.getByRole('button',{name:'Create updated draft',exact:true}).click();
  const updated=await applied;
+ await navigationCaptured;
+ try{await expect(dialog).toBeVisible();await expect(dialog.getByRole('button',{name:'Create updated draft',exact:true})).toBeDisabled();}
+ finally{releaseNavigation();}
  await expect(dialog).toHaveCount(0);await expect(page.getByText('Served / Total')).toBeVisible();
  expect(updated.stats.servedOrders).toBe(2);expect(updated.stats.totalOrders).toBe(2);
  expect(updated.vehicles.flatMap(v=>v.trips).reduce((sum,t)=>sum+t.loadKg,0)).toBe(250);
