@@ -1,3 +1,4 @@
+import type {Workflow} from '../../server/src/workflow-contract';
 import {selectWorkspaceAction,openWorkspaceMenu} from '../tests/workspace-navigation';
 import { test, expect, type Page, type APIRequestContext } from '@playwright/test';
 import { execFileSync } from 'node:child_process';
@@ -1308,8 +1309,9 @@ test('native plan review, Admin-only approval and cross-replica stale-edit prote
   await expect(panel.getByRole('button')).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'Review & release', exact: true })).toBeDisabled();
   navigation.release();
-  await expect(panel).toHaveAttribute('data-plan-id', planId);
   await expect(page.getByRole('button', { name: 'Review & release', exact: true })).toBeEnabled();
+  await selectWorkspaceAction(page,'Plan approval');
+  await expect(panel).toHaveAttribute('data-plan-id', planId);
   await page.unroute(`**/api/plans/${planId}`);
   await expect(panel).toContainText('Draft');
   const handoffUrl = `/api/plans/${planId}/handoff.json`;
@@ -1526,7 +1528,7 @@ test('saved manual workspace survives failed metadata reads and slow road geomet
   await page.reload();await outage;await expect(page.getByText('Served / Total',{exact:true})).toHaveCount(0);
   expect(await page.evaluate(k=>JSON.parse(localStorage.getItem(k)??'null')?.planId,key)).toBe(saved.id);
   failStored=false;await page.reload();await expect(page.getByText('5 / 6',{exact:true})).toBeVisible();
-  await expect(page.getByRole('region',{name:'Plan approval',exact:true})).toHaveAttribute('data-plan-id',saved.id);
+  await expect(page.locator('section[aria-label="Plan approval"]')).toHaveAttribute('data-plan-id',saved.id);
   await page.getByRole('button',{name:'Undo manual change',exact:true}).click();const dialog=page.getByRole('dialog',{name:'Manual planning',exact:true});
   const previewRequest=page.waitForRequest(r=>r.method()==='POST'&&r.url().endsWith('/manual-preview'));
   await dialog.getByRole('button',{name:'Calculate preview',exact:true}).click();const intent=(await previewRequest).postDataJSON();
@@ -1595,6 +1597,7 @@ test('duplicate display references survive keyboard reordering, native replannin
 test('approved handoff is durable across replicas, read-only for Planner/Reviewer, acknowledged and explicitly cancelled',async({page})=>{
  await login(page);await shortBudget(page);
  const plan=await finishSolve(page,()=>page.getByRole('button',{name:'Optimize',exact:true}).click());
+ await selectWorkspaceAction(page,'Plan approval');
  const approval=page.getByRole('region',{name:'Plan approval',exact:true});
  await approval.getByRole('checkbox').check();await approval.getByRole('button',{name:'Mark reviewed',exact:true}).click();
  await expect(approval).toContainText('Reviewed');await approval.getByRole('checkbox').check();await approval.getByRole('button',{name:'Approve plan',exact:true}).click();await expect(approval).toContainText('Approved');
@@ -1679,4 +1682,111 @@ test('workspace navigation: first outside click starts one native solve without 
  await openWorkspaceMenu(page,'Prepare');
  await finishSolve(page,()=>page.getByRole('button',{name:'Optimize',exact:true}).click());
  expect(submissions).toBe(1);
+});
+
+for(const role of ['admin','planner','reviewer'] as const)test(`compact status: ${role} EN/HU disclosure is compact, keyboard reachable and read-only`,async({page},testInfo)=>{
+ await chaosLogin(page,role);
+ try{
+  const base=await baseline(page),writes:string[]=[];
+  page.on('request',r=>{if(new URL(r.url()).pathname.startsWith('/api/')&&!['GET','HEAD','OPTIONS'].includes(r.method()))writes.push(r.url());});
+  const details=page.locator('#cursus-status-details'),summary=details.locator('summary');
+  await expect(summary.getByTestId('status-approval')).toContainText('Draft');
+  await expect(details).not.toHaveAttribute('open','');
+  await expect(page.getByRole('region',{name:'Plan approval',exact:true})).toHaveCount(0);
+  const startHeight=(await page.locator('#cursus-map-pane').boundingBox())!.height;
+  await summary.focus();await page.keyboard.press('Enter');await expect(details).toHaveAttribute('open','');
+  await expect(page.getByRole('region',{name:'Coverage',exact:true})).toBeVisible();
+  const approval=page.getByRole('region',{name:'Plan approval',exact:true});await expect(approval).toBeVisible();
+  if(role==='reviewer')await expect(approval.getByRole('button')).toHaveCount(0);
+  else await approval.getByRole('checkbox').check();
+  await summary.focus();await page.keyboard.press('Space');await expect(details).not.toHaveAttribute('open','');
+  await expect.poll(async()=>(await page.locator('#cursus-map-pane').boundingBox())!.height).toBe(startHeight);
+  await selectWorkspaceAction(page,'Plan approval');await expect(page.locator('#cursus-plan-review')).toBeFocused();
+  if(role!=='reviewer')await expect(approval.getByRole('checkbox')).toBeChecked();
+  await summary.click();
+  for(const width of [375,600,1440])for(const hu of [false,true]){
+   await page.setViewportSize({width,height:900});await page.getByRole('button',{name:hu?'HU':'EN',exact:true}).click();
+   for(const id of ['status-coverage','status-freshness','status-approval'])await expect(summary.getByTestId(id)).toBeVisible();
+   expect(await details.evaluate(el=>el.scrollWidth<=el.clientWidth+1)).toBe(true);
+   const box=(await summary.boundingBox())!;expect(box.x).toBeGreaterThanOrEqual(0);expect(box.x+box.width).toBeLessThanOrEqual(width+1);
+   if(width===1440)expect(box.height).toBeLessThan(80);
+   await page.screenshot({path:testInfo.outputPath(`compact-${role}-${hu?'hu':'en'}-${width}.png`)});
+   await summary.click();await expect(details).toHaveAttribute('open','');
+   expect(await details.evaluate(el=>el.scrollWidth<=el.clientWidth+1)).toBe(true);
+   await summary.click();
+  }
+  expect(writes).toEqual([]);expect(await baseline(page)).toEqual(base);
+ }finally{chaosRole('planner');}
+});
+
+async function statusScenario(page:Page,label:string){
+ const base=await baseline(page),headers={origin:new URL(page.url()).origin};
+ const response=await page.request.post('/api/scenarios',{headers,data:{from:base.scenarioId,label}});expect(response.status()).toBe(201);
+ const scenario=await response.json() as Scenario;
+ const submitted=await page.request.post(`/api/scenarios/${scenario.id}/solve`,{headers:{...headers,'if-match':`"${scenario.revision}"`},data:{budgetSec:1}});expect(submitted.status()).toBe(202);
+ const {jobId}=await submitted.json() as {jobId:string};let job:Job;
+ await expect.poll(async()=>{job=await get<Job>(page.request,`${peer}/api/jobs/${jobId}`);return job.status;},{timeout:60000}).toBe('completed');
+ return {plan:await get<Plan>(page.request,`${peer}/api/plans/${job!.planId}`),scenario,headers};
+}
+async function reopenStatusPlan(page:Page,id:string){
+ await selectWorkspaceAction(page,'Plans');await page.getByRole('dialog').locator(`[data-plan-id="${id}"]`).getByRole('button',{name:'Reopen',exact:true}).click();
+ await expect(page.getByRole('dialog')).toHaveCount(0);await expect(page.locator('section[aria-label="Plan approval"]')).toHaveAttribute('data-plan-id',id);
+}
+
+test('compact status: unavailable or corrupt approval stays Unknown, retry is read-only and old responses cannot certify another plan',async({page})=>{
+ await login(page);
+ const {plan,scenario,headers}=await statusScenario(page,'Approval status recovery');
+ let version=0;
+ for(const action of ['review','approve']){
+  const response=await page.request.post(`${peer}/api/plans/${plan.id}/${action}`,{headers,data:{version,revision:scenario.revision,acknowledgeExceptions:true}});expect(response.status(),await response.text()).toBe(200);version++;
+ }
+ await reopenStatusPlan(page,plan.id);
+ const status=page.getByTestId('status-approval');await expect(status).toContainText('Approved');
+ const writes:string[]=[];page.on('request',r=>{if(new URL(r.url()).pathname.startsWith('/api/')&&!['GET','HEAD','OPTIONS'].includes(r.method()))writes.push(r.url());});
+ const authoritative=await get<Workflow>(page.request,`/api/plans/${plan.id}/workflow`);
+ let mode:'503'|'404'|'invalid'|'older'|'success'|'held'='503',reads=0;
+ let held=gate(),captured=gate(),finished=gate();
+ const path=`**/api/plans/${plan.id}/workflow`;
+ await page.route(path,async route=>{
+  reads++;
+  if(mode==='503'||mode==='404'){await route.fulfill({status:Number(mode),json:{error:'Public fixture approval outage'}});return;}
+  if(mode==='invalid'){await route.fulfill({json:{state:'approved'}});return;}
+  if(mode==='older'){await route.fulfill({json:{...authoritative,state:'draft',version:0}});return;}
+  if(mode==='held'){const response=await route.fetch();captured.release();await held.wait;await route.fulfill({response});finished.release();return;}
+  await route.continue();
+ });
+ try{
+  await expect(status).toContainText('Unknown');await expect(status).not.toContainText('Approved');
+  await selectWorkspaceAction(page,'Plan approval');
+  for(const failure of ['503','404','invalid','older'] as const){
+   mode=failure;await page.getByRole('button',{name:'Retry approval status',exact:true}).click();
+   await expect(status).toContainText('Unknown');await expect(status).not.toContainText('Approved');
+   await expect(page.getByRole('button',{name:'Approve plan',exact:true})).toHaveCount(0);
+  }
+  mode='held';const before=reads;
+  await page.getByRole('button',{name:'Retry approval status',exact:true}).click();await captured.wait;
+  await expect(status).toContainText('Loading');
+  // A timer tick during a held read must not start overlapping refreshes.
+  await page.waitForTimeout(5200);expect(reads).toBe(before+1);
+  held.release();await finished.wait;await expect(status).toContainText('Approved');
+  held=gate();captured=gate();finished=gate();
+  await captured.wait;
+  const base=await baseline(page);await reopenStatusPlan(page,base.id);
+  await expect(status).toContainText('Draft');held.release();await finished.wait;
+  await page.evaluate(()=>new Promise<void>(resolve=>requestAnimationFrame(()=>requestAnimationFrame(()=>resolve()))));
+  await expect(status).toContainText('Draft');await expect(status).not.toContainText('Approved');expect(writes).toEqual([]);
+ }finally{held.release();await page.unroute(path);}
+});
+
+test('compact status: another replica changes approval evidence and invalidates an earlier acknowledgement',async({page})=>{
+ await login(page);const {plan,scenario,headers}=await statusScenario(page,'Concurrent status evidence');
+ await reopenStatusPlan(page,plan.id);await selectWorkspaceAction(page,'Plan approval');
+ const panel=page.getByRole('region',{name:'Plan approval',exact:true});await panel.getByRole('checkbox').check();
+ const response=await page.request.post(`${peer}/api/plans/${plan.id}/review`,{headers,data:{version:0,revision:scenario.revision,acknowledgeExceptions:true}});expect(response.status()).toBe(200);
+ await expect(page.getByTestId('status-approval')).toContainText('Reviewed');await expect(panel.getByRole('checkbox')).not.toBeChecked();await expect(panel.getByRole('button',{name:'Approve plan',exact:true})).toBeDisabled();
+ await panel.getByRole('checkbox').check();await page.locator('#cursus-status-details summary').click();
+ await selectWorkspaceAction(page,'Plan approval');await expect(panel.getByRole('checkbox')).toBeChecked();
+ await page.getByRole('button',{name:'View as Reviewer',exact:true}).click();await expect(page.getByRole('button',{name:'Return to Admin',exact:true})).toBeVisible();
+ await expect(panel.getByRole('checkbox')).toHaveCount(0);await page.getByRole('button',{name:'Return to Admin',exact:true}).click();
+ await expect(panel.getByRole('checkbox')).not.toBeChecked();await expect(panel.getByRole('button',{name:'Approve plan',exact:true})).toBeDisabled();
 });

@@ -7,8 +7,7 @@ import { TooltipProvider } from '@/components/ui/tooltip';
 import { Button } from '@/components/ui/button';
 import { TopBar } from '@/components/TopBar';
 import { KpiStrip } from '@/components/KpiStrip';
-import { ReadinessPanel } from '@/components/ReadinessPanel';
-import { PlanApproval } from '@/components/PlanApproval';
+import {WorkspaceStatus} from '@/components/WorkspaceStatus';
 import { ResizeHandle } from '@/components/ResizeHandle';
 import { useWorkspaceLayout } from '@/useWorkspaceLayout';
 import { FleetPanel } from '@/components/FleetPanel';
@@ -720,7 +719,7 @@ export default function App() {
           <Button size="sm" variant="outline" onClick={()=>void api.planSnapshot(scenario.supersededBy!.planId).then(openUpdatedInputs).catch(e=>setError(describeApiError(e,t)))}>{lang==='hu'?'Frissített adatok megnyitása':'Open updated inputs'}</Button>
         </div>}
         <TopBar
-          onOpenReview={()=>document.getElementById('cursus-plan-review')?.focus()}
+          onOpenReview={()=>{const details=document.getElementById('cursus-status-details') as HTMLDetailsElement|null;if(details)details.open=true;document.getElementById('cursus-plan-review')?.focus();}}
           onOpenProfiles={features.planningProfiles?()=>setProfilesOpen(true):undefined}
           onOpenInputUpdates={features.inputUpdates&&canEdit&&!candidate&&!pendingEdits?()=>setInputUpdatesOpen(true):undefined}
           onOpenHandoff={features.acknowledgedHandoff?()=>setHandoffOpen(true):undefined}
@@ -751,10 +750,10 @@ export default function App() {
         </div>
         {manualContext?.requiresRevalidation&&<div role="status" className="shrink-0 border-b border-warning/40 bg-warning/10 px-4 py-2 text-sm">{t('manual.policyChanged')}</div>}
         {manualContext?.reason==='fresh_plan_required'&&<div role="status" className="shrink-0 border-b border-warning/40 bg-warning/10 px-4 py-2 text-sm">{t('manual.freshPlanRequired')}</div>}
-        <ReadinessPanel plan={plan} baseline={baseline} scenario={scenario} pending={pendingEdits > 0 || !!solving || !!freshnessError || workspaceLoading} />
-        <div id="cursus-plan-review" tabIndex={-1} className="shrink-0 focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary">
-        <PlanApproval key={plan.id} planId={plan.id} revision={scenario.revision} pending={!!candidate || pendingEdits > 0 || !!solving || !!freshnessError || workspaceLoading || scenario.id !== plan.scenarioId} />
-        </div>
+        <WorkspaceStatus plan={plan} baseline={baseline} scenario={scenario} loading={workspaceLoading}
+          saving={pendingEdits>0} running={!!solving} candidate={!!candidate} conflict={!!freshnessError}
+          revalidate={!!manualContext?.requiresRevalidation||manualContext?.reason==='fresh_plan_required'}
+          changesCount={changesCount} onOpenChanges={()=>setChangesOpen(true)} />
         {freshnessError && <div role="alert" className="border-b border-warning/40 bg-warning/10 px-4 py-2 text-sm">
           {t(freshnessError)} <button className="underline" onClick={() => {
             if (!window.confirm(t('freshness.confirm'))) return;
@@ -763,13 +762,6 @@ export default function App() {
           }}>{t('freshness.reload')}</button>
         </div>}
         {error && <div role="alert" className="border-b border-destructive/30 bg-destructive/10 px-4 py-2 text-sm text-destructive">{error}</div>}
-
-        {dirty && changesCount > 0 && !solving && (
-          <button type="button" onClick={() => setChangesOpen(true)}
-            className="flex shrink-0 items-center justify-center gap-2 border-b border-warning/40 bg-warning/10 px-4 py-1.5 text-xs font-medium text-warning hover:bg-warning/15">
-            {t('edits.pending', { n: changesCount })}
-          </button>
-        )}
 
         <div ref={workspace.containerRef} className="flex min-h-0 flex-1">
           {leftOpen && (

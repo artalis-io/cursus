@@ -1,6 +1,6 @@
 # A clearer Cursus planning workspace
 
-Status: design approved; milestone 1 implementation on `feature/labeled-workspace-navigation`. No production change.  
+Status: milestone 1 shipped in PR #46; milestone 2 implemented on `feature/compact-workspace-status`, pending validation/review. This milestone does not change production.  
 Reviewed source: `b69712f22fbc3d15b261821a5bb45f071137415a`.  
 Date: 30 October 2026.
 
@@ -169,3 +169,15 @@ Prepare, Plan, Review & release, and Library are labeled command menus in the ex
 Menu commands reuse existing handlers, feature flags, disabled states and permission checks. This milestone adds no backend route, persisted stage, customer-data change or solver behavior. A shared menu supports keyboard navigation, outside dismissal without swallowing Optimize, viewport-clamped positioning and focus return. Controlled dialogs restore their opener when it still exists, while preserving explicit autofocus overrides.
 
 Browser regression tests navigate through these menus and retain their existing business assertions. Additional checks cover navigation without API writes, keyboard paths and dialog focus, EN/HU at 375/600/1440 pixels for Admin/Planner/Reviewer, approval acknowledgement continuity, and the existing exact-image two-replica native workflow. Prototype checks remain separate from application acceptance. Production activation requires a subsequent release decision.
+
+## Milestone 2 implementation: compact status
+
+One native, keyboard-operable disclosure replaces the separate readiness and approval rows and the duplicate staged-edits bar. Its collapsed summary keeps three independent facts visible: coverage/constraints (including unassigned counts and unknown or failed checks), freshness, and approval. These are not a single green dispatch authorization. Loading, saving, running, unresolved candidates, stale or archived input, and required revalidation cannot be labeled Current.
+
+Opening the disclosure reveals the existing readiness sections and approval controls. The approval controller owns the summary and detailed controls together; there is no parallel cached approval state or second polling loop. Closing details keeps the controller and checkbox mounted. Review & release → Plan approval opens the disclosure and focuses the existing approval section. Pending-change review is available in the details and the Plan menu.
+
+Candidate decisions, policy/revalidation banners, stale-source recovery, errors and archive navigation remain outside the disclosure. No solver, dataset, export, permissions, API or database behavior is added. Approval/export authorization remains server-side.
+
+Approval evidence is bound to the displayed plan/revision. Missing, failed, malformed or backward-moving responses show Unknown, with a read-only Retry action; a last-known Approved response cannot supply a fresh confirmation after a failed read. Pending work labels a previously approved snapshot as such, without claiming its approval authorizes the edited workspace. Acknowledgement persists across disclosure/menu changes, but evidence, revision, permission or read-failure changes require acknowledgement again. Late responses cannot certify another plan.
+
+Regression coverage includes existing native solve/manual/KPI/permission/export/handoff/input-update flows, EN/HU responsive disclosure and keyboard checks for all roles, no planning writes from disclosure/retry, failure/retry and overlapping-read guards, old-plan response isolation, and cross-replica review with acknowledgement invalidation. Release evidence and production activation remain separate.

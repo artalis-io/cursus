@@ -1,3 +1,4 @@
+import type {ReactNode} from 'react';
 import { ChevronDown, ClipboardCheck } from 'lucide-react';
 import { useT } from '@/i18n';
 import { km, money } from '@/lib/format';
@@ -6,22 +7,34 @@ import type { Plan, Scenario } from '@/types';
 
 /** No mutations, fetching, permissions or optimistic solver previews here.
  * Every value belongs to the displayed committed plan snapshot. */
-export function ReadinessPanel({ plan, baseline, scenario, pending }: { plan: Plan; baseline: Plan; scenario: Scenario; pending: boolean }) {
+export function ReadinessPanel({ plan, baseline, scenario, pending, freshness, approval, children, onOpenChanges, changesCount=0 }: { plan: Plan; baseline: Plan; scenario: Scenario; pending: boolean; freshness?: ReactNode; approval?: ReactNode; children?: ReactNode; onOpenChanges?:()=>void; changesCount?:number }) {
   const t = useT();
   const review = reviewReadiness(plan, scenario, pending);
   const comparison = reviewComparison(baseline, plan);
   const tone = review.status === 'passed' ? 'text-primary' : 'text-warning';
   return (
-    <details className="group shrink-0 border-b border-divider bg-card" aria-label={t('readiness.title')}>
+    <details id="cursus-status-details" className="group shrink-0 border-b border-divider bg-card" aria-label={t('readiness.title')}>
       <summary className="flex cursor-pointer flex-wrap items-center gap-x-3 gap-y-1 px-4 py-2 text-xs focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary">
-        <ClipboardCheck className="h-4 w-4 shrink-0" />
-        <span className="font-semibold">{t('readiness.title')}</span>
-        <span className={`font-medium ${tone}`}>{t(`readiness.${review.status}`)}</span>
-        <span className="text-muted-foreground">{t('readiness.coverageCount', { served: plan.stats.servedOrders, total: plan.stats.totalOrders })} · {t(review.fresh ? 'readiness.current' : 'readiness.stale')}</span>
-        <span className="ml-auto text-muted-foreground">{t('readiness.details')}</span>
+        <ClipboardCheck aria-hidden className="h-4 w-4 shrink-0" />
+        <span className="sr-only">{t('readiness.title')}</span>
+        <span data-testid="status-coverage" className="min-w-0 flex-1 basis-64">
+          <span className="font-semibold">{t('status.coverage')}</span>
+          <span className={`ml-2 font-medium ${tone}`}>{t(`readiness.${review.status}`)}</span>
+          <span className="mt-0.5 block text-muted-foreground">{t('readiness.coverageCount', { served: plan.stats.servedOrders, total: plan.stats.totalOrders })} · {t('kpi.unassignedN',{n:plan.unassigned.length})}
+            {review.checks.some(check=>check.state==='failed')||review.hardViolations>0 ? ` · ${t('status.failedConstraints')}` : review.checks.some(check=>check.state==='unknown')||plan.provenance?.validation?.valid!==true ? ` · ${t('status.unknownConstraints')}` : ''}
+          </span>
+        </span>
+        <span data-testid="status-freshness" className="min-w-0 flex-1 basis-56">
+          <span className="font-semibold">{t('readiness.freshness')}</span>
+          <span className={`mt-0.5 block ${review.fresh?'text-muted-foreground':'text-warning'}`}>{freshness??t(review.fresh?'readiness.current':'readiness.stale')}</span>
+        </span>
+        {approval}
+        <span className="ml-auto shrink-0 text-muted-foreground">{t('readiness.details')}</span>
         <ChevronDown aria-hidden className="h-3.5 w-3.5 shrink-0 transition-transform group-open:rotate-180" />
       </summary>
       <div className="max-h-[48vh] space-y-4 overflow-y-auto border-t border-divider px-4 py-3 text-xs">
+        {children}
+        {onOpenChanges&&changesCount>0&&<button type="button" className="text-warning underline" onClick={onOpenChanges}>{t('status.changes',{n:changesCount})}</button>}
         <p className="text-muted-foreground">{t('readiness.scope')}</p>
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
           <section aria-label={t('readiness.coverage')} className="min-w-0 space-y-2">
