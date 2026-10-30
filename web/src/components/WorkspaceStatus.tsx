@@ -13,7 +13,7 @@ export function WorkspaceStatus({plan,baseline,scenario,loading,saving,running,c
  const fresh=plan.scenarioId===scenario.id&&plan.scenarioRevision===scenario.revision;
  const freshness=workspaceFreshness({loading,saving,running,candidate,conflict,revalidate,archived:!!scenario.supersededBy,fresh});
  const pending=freshness!=='current';
- return <PlanApproval key={plan.id} planId={plan.id} revision={scenario.revision} pending={pending}>
+ return <PlanApproval planId={plan.id} revision={scenario.revision} pending={pending}>
   {(evidence,detail)=>{
    const approval=approvalSummary(evidence.workflow,evidence.phase,scenario.revision,pending);
    return <ReadinessPanel plan={plan} baseline={baseline} scenario={scenario} pending={pending}
