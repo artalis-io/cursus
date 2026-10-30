@@ -1,6 +1,6 @@
 # A clearer Cursus planning workspace
 
-Status: milestone 1 shipped in PR #46; milestone 2 implemented on `feature/compact-workspace-status`, pending validation/review. This milestone does not change production.  
+Status: milestone 1 shipped in PR #46; milestone 2 implemented on `feature/compact-workspace-status`, pending validation/review. This milestone does not change production.
 Reviewed source: `b69712f22fbc3d15b261821a5bb45f071137415a`.  
 Date: 30 October 2026.
 

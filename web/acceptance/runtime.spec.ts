@@ -1789,4 +1789,19 @@ test('compact status: another replica changes approval evidence and invalidates 
  await page.getByRole('button',{name:'View as Reviewer',exact:true}).click();await expect(page.getByRole('button',{name:'Return to Admin',exact:true})).toBeVisible();
  await expect(panel.getByRole('checkbox')).toHaveCount(0);await page.getByRole('button',{name:'Return to Admin',exact:true}).click();
  await expect(panel.getByRole('checkbox')).not.toBeChecked();await expect(panel.getByRole('button',{name:'Approve plan',exact:true})).toBeDisabled();
+ const heldReads=gate();let approvalWrites=0;
+ await page.route(`**/api/plans/${plan.id}/workflow`,async route=>{await heldReads.wait;await route.continue();});
+ await page.route(`**/api/plans/${plan.id}/approve`,async route=>{
+  approvalWrites++;const response=await route.fetch();expect(response.status()).toBe(200);
+  // The authoritative write succeeds, but the client receives an incomplete
+  // response. Retry is a GET of evidence, never a second approval submission.
+  await route.fulfill({json:{state:'approved'}});
+ });
+ try{
+  await panel.getByRole('checkbox').check();await panel.getByRole('button',{name:'Approve plan',exact:true}).click();
+  await expect(page.getByTestId('status-approval')).toContainText('Unknown');
+  expect((await get<Workflow>(page.request,`${peer}/api/plans/${plan.id}/workflow`)).state).toBe('approved');
+  await page.getByRole('button',{name:'Retry approval status',exact:true}).click();heldReads.release();
+  await expect(page.getByTestId('status-approval')).toContainText('Approved');expect(approvalWrites).toBe(1);
+ }finally{heldReads.release();}
 });

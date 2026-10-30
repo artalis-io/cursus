@@ -64,7 +64,7 @@ export function PlanApproval({ planId, revision, pending, children }: {
     if (!workflow || !actionable || !ack) return;
     const epoch = generation.current.value;
     setBusy(true); setError(null);
-    try { const next = await api.transitionPlan(planId, action, workflow.version, revision, ack); if (epoch === generation.current.value) { accept(next); setAck(false); } }
+    try { const next = await api.transitionPlan(planId, action, workflow.version, revision, ack); if (!isWorkflowEvidence(next)) throw Error('Invalid approval response.'); if (epoch === generation.current.value) { accept(next); setAck(false); } }
     catch (e) { if (epoch === generation.current.value) { setAck(false); setError((e as Error).message); } }
     finally { if (epoch === generation.current.value) setBusy(false); }
   };
