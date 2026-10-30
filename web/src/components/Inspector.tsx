@@ -494,6 +494,7 @@ export function Inspector({ plan, scenario, selection, onSelect, onBack, onForwa
             <Separator />
             <Badge variant="warning">{t('inspector.unassignedBadge')}</Badge>
             <p className="text-xs text-muted-foreground">{u.reasonCode?t(`unassigned.${u.reasonCode}`):u.reason ?? t('inspector.unassignedReason')}</p>
+            {u.reasonCode!=='MANUAL_UNASSIGNED'&&<p className="text-[10px] text-muted-foreground">{t('placement.reasonScope')}</p>}
             <ShipmentDetails plan={plan} requestId={u.requestId}/>
             {/* Assign by hand: pin this unassigned order to a chosen vehicle, applied on Replan. */}
             {manualActions??(canEdit && <div className="space-y-2 rounded-md border border-divider bg-muted/30 p-2.5">

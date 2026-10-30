@@ -10,6 +10,7 @@ import type { PoolClient } from 'pg';
 import { planDigest } from './plan-workflow.js';
 import { hasPermission } from '../roles.js';
 import { isDeepStrictEqual } from 'node:util';
+import { suggestPlacements, type PlacementSuggestions } from '../plan/manual-suggestions.js';
 
 export class ManualPublicationError extends Error {
   constructor(public status: number, message: string) { super(message); }
@@ -43,6 +44,34 @@ export function parseManualRequest(value: unknown): ManualPublicationRequest {
 /** Explicit opt-in loader: no node-local or cross-tenant dataset fallback. */
 export class ManualPlanPublisher {
   constructor(private store: StatefulStore, private tenantId: string, private load: ManualDatasetLoader) {}
+
+  async placements(scenarioId:string,revision:number,value:unknown,actor?:Principal):Promise<PlacementSuggestions>{
+    if(actor&&(actor.tenantId!==this.tenantId||!hasPermission(actor.role,'plan.evaluate')))
+      throw new ManualPublicationError(403,'Placement evaluation permission required.');
+    const body=value as Record<string,unknown>|null;
+    if(!Number.isSafeInteger(revision)||revision<0||!body||Array.isArray(body)||Object.keys(body).some(k=>!['parentPlanId','datasetSha256','requestId'].includes(k))||
+      typeof body.parentPlanId!=='string'||!body.parentPlanId||body.parentPlanId.length>128||typeof body.datasetSha256!=='string'||!/^[a-f0-9]{64}$/.test(body.datasetSha256)||
+      !Number.isSafeInteger(body.requestId)||Number(body.requestId)<0)throw new ManualPublicationError(400,'Plan, dataset and delivery identities are required.');
+    const [scenario,parent]=await Promise.all([this.store.getScenario(this.tenantId,scenarioId),this.store.getPlan(this.tenantId,body.parentPlanId)]);
+    if(!scenario||!parent||parent.scenarioId!==scenarioId)throw new ManualPublicationError(404,'Scenario or parent plan not found.');
+    if(scenario.revision!==revision||parent.scenarioRevision!==revision||scenario.manualPlanId&&scenario.manualPlanId!==parent.id||scenario.selectedPlanId&&scenario.selectedPlanId!==parent.id)
+      throw new ManualPublicationError(409,'Parent plan is stale; reload before planning.');
+    let result:PlacementSuggestions;
+    try{
+      const context=await this.load(parent,scenario),effective=withoutManualPins(scenario,context,[Number(body.requestId)]);
+      const input=prepareManualInput(parent,effective,context);
+      if(input.datasetSha256!==body.datasetSha256)throw new ManualPublicationError(409,'Dataset changed; reload before planning.');
+      if(!input.layout.unassigned.includes(Number(body.requestId)))throw new ManualPublicationError(409,'Delivery is not unassigned.');
+      result=await suggestPlacements(input,effective,Number(body.requestId),{parentPlanId:parent.id,newTripId:`suggested-${randomUUID()}`});
+    }catch(error){
+      if(error instanceof ManualPublicationError)throw error;
+      if(error instanceof ManualAdapterError||error instanceof ManualCommandError)throw new ManualPublicationError(409,error.message);
+      throw new ManualPublicationError(422,'Placements cannot be verified with the available planning evidence.');
+    }
+    const current=await this.store.getScenario(this.tenantId,scenarioId);
+    if(!current||planDigest(current)!==planDigest(scenario))throw new ManualPublicationError(409,'Scenario changed during evaluation; reload before planning.');
+    return result;
+  }
 
   private async receipt(client: PoolClient, operationId: string, payloadHash: string, actorId: string): Promise<Plan | null> {
     await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [`manual/${this.tenantId}/${operationId}`]);
@@ -78,15 +107,7 @@ export class ManualPlanPublisher {
     catch { throw new ManualPublicationError(422, 'Pinned admitted dataset or trusted planning settings are unavailable.'); }
     // A new explicit decision supersedes the old label-based pin. Remove it
     // before evaluation as well as publication; release must not revive it.
-    const tasks = new Map(context.day.request.tasks.map(task => [task.id, task.ref]));
-    const refs = new Map(context.day.request.requests.map(order => [order.id, tasks.get(order.delivery_task_id)]));
-    const editedRefs = new Set(intent.batch.commands.map(command => refs.get(command.requestId)));
-    const editedIds = new Set(intent.batch.commands.map(command => command.requestId));
-    if(scenario.pins.some(pin=>pin.requestId===undefined&&editedRefs.has(pin.orderNo)&&
-      [...refs.values()].filter(ref=>ref===pin.orderNo).length>1))
-      throw new ManualPublicationError(409,'Clear the ambiguous legacy pin explicitly before editing this delivery.');
-    let effectiveScenario: Scenario = { ...scenario, pins: scenario.pins.filter(pin =>
-      pin.requestId === undefined ? !editedRefs.has(pin.orderNo) : !editedIds.has(pin.requestId)) };
+    let effectiveScenario=withoutManualPins(scenario,context,intent.batch.commands.map(command=>command.requestId));
     if (intent.vehicle) {
       if (!context.day.request.vehicles.some(vehicle => vehicle.id === intent.vehicle!.id)) throw new ManualPublicationError(400,'Unknown vehicle.');
       if(context.unavailableVehicleIds?.includes(intent.vehicle.id)&&!intent.vehicle.excluded)
@@ -168,4 +189,15 @@ export class ManualPlanPublisher {
       return plan;
     });
   }
+}
+
+/** A manual choice explicitly replaces that delivery's old pin, in both the
+ * guided search and the authoritative publication. Forbids remain in force. */
+function withoutManualPins(scenario:Scenario,context:ManualDatasetContext,ids:number[]):Scenario{
+  const tasks=new Map(context.day.request.tasks.map(task=>[task.id,task.ref]));
+  const refs=new Map(context.day.request.requests.map(order=>[order.id,tasks.get(order.delivery_task_id)]));
+  const editedRefs=new Set(ids.map(id=>refs.get(id))),editedIds=new Set(ids);
+  if(scenario.pins.some(pin=>pin.requestId===undefined&&editedRefs.has(pin.orderNo)&&[...refs.values()].filter(ref=>ref===pin.orderNo).length>1))
+    throw new ManualPublicationError(409,'Clear the ambiguous legacy pin explicitly before editing this delivery.');
+  return {...scenario,pins:scenario.pins.filter(pin=>pin.requestId===undefined?!editedRefs.has(pin.orderNo):!editedIds.has(pin.requestId))};
 }

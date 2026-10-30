@@ -166,6 +166,16 @@ export type ManualCommand = {op:'assign';requestId:number;vehicleId:number;tripI
 export interface ManualIntent {parentPlanId:string;batch:{operationId:string;datasetSha256:string;commands:ManualCommand[]};vehicle?:{id:number;excluded:boolean};undo?:true}
 export interface ManualContext {enabled:boolean;reason?:'fresh_plan_required';requiresRevalidation?:boolean;datasetSha256?:string;fleet?:Vehicle[];canUndo?:boolean;actors?:Record<string,string>}
 export interface ManualPreview {stats:PlanStats;cost:PlanCost|null;validation:PlanProvenance['validation']}
+export interface PlacementSuggestion {
+  vehicleId:number;tripId:string;position:number;newTrip:boolean;serviceStartSec:number;tripEndSec:number;
+  delta:{distanceKm:number;cost:number;vehicles:number;trips:number;finishSec:number|null};
+}
+export interface PlacementSuggestions {
+  parentPlanId:string;revision:number;datasetSha256:string;requestId:number;currency:string;checked:number;complete:boolean;feasiblePositions:number;
+  baseline:{distanceKm:number;cost:number;served:number;vehicles:number;trips:number};
+  suggestions:PlacementSuggestion[];
+  vehicles:{vehicleId:number;checked:number;feasible:number;skipped?:'excluded'|'locked';blockers:(ValidationViolation&{vehicleId:number;requestId?:number})[]}[];
+}
 
 /* ---- API shapes ---- */
 export interface DaySummary {

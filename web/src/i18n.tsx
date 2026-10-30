@@ -10,6 +10,20 @@ export type Lang = 'en' | 'hu';
 type Dict = Record<string, string>;
 
 const en: Dict = {
+  'placement.title':'Find a place for this order','placement.find':'Find feasible placements','placement.checking':'Checking placements…',
+  'placement.reference':'Compared with the current layout recalculated using the same matrix and tariff: {distance} · {cost}. Historical displayed values may differ.',
+  'placement.scope':'Checks existing trips and a new trip on each available, unlocked vehicle. Shows the best found position per vehicle, ranked by added cost.',
+  'placement.reasonScope':'Surge reports unassigned deliveries, not individual causes. Any fleet-based explanation above is inferred; placement checks below test actual drafts.',
+  'placement.count':'{feasible} feasible position(s) among {checked} checked',
+  'placement.partial':'Search limit reached. These results are partial; other placements may exist.',
+  'placement.none':'No fully valid insertion found in the checked drafts. This does not prove the order cannot be served; review blockers or revise the plan.',
+  'placement.options':'Feasible placements','placement.delta':'Plan change','placement.timing':'Service {arrival} · trip ends {finish}',
+  'placement.delay':'Vehicle finish changes by {delay} min','placement.newVehicle':'Newly used vehicle',
+  'placement.resources':'Vehicle change: {vehicles} · trip change: {trips}',
+  'placement.use':'Use placement on {ref}','placement.blockers':'Checked vehicles and blockers',
+  'placement.blockerScope':'Blockers observed in rejected drafts can affect this order, other stops or later trips. They are not solver-confirmed causes of the original unassignment.',
+  'placement.excluded':'Excluded or unavailable — not searched','placement.locked':'Locked route — not searched',
+  'placement.previewRequired':'Selecting a position changes only this form. Calculate preview and review the complete draft before applying. Constraints and approved exceptions remain in force.',
   'manual.violation.SHIFT':'Vehicle shift exceeded','manual.violation.MAX_TRIPS':'Vehicle trip limit exceeded',
   'manual.violation.MAX_DISTANCE':'Vehicle distance limit exceeded','manual.violation.MAX_DURATION':'Vehicle duration limit exceeded',
   'manual.violation.EXCLUDED':'Work remains on an excluded vehicle','manual.violation.ASSIGNMENT':'Assignment conflicts with a retained decision or restriction',
@@ -294,6 +308,20 @@ const en: Dict = {
 };
 
 const hu: Dict = {
+  'placement.title':'Hely keresése a megrendelésnek','placement.find':'Megvalósítható besorolások keresése','placement.checking':'Besorolások ellenőrzése…',
+  'placement.reference':'Összehasonlítás az aktuális elrendezés azonos mátrixszal és díjszabással újraszámolt értékeivel: {distance} · {cost}. A történeti kijelzett értékek eltérhetnek.',
+  'placement.scope':'A rendelkezésre álló, nem zárolt járművek meglévő fordulóit és egy új fordulót ellenőriz. Járművenként a legjobb talált pozíciót mutatja, többletköltség szerint.',
+  'placement.reasonScope':'A Surge a ki nem szolgált megrendeléseket jelenti, egyedi okokat nem ad meg. A fenti flottamagyarázat következtetés; az alábbi besorolásvizsgálat tényleges tervváltozatokat ellenőriz.',
+  'placement.count':'{feasible} megvalósítható pozíció, {checked} ellenőrzött változatból',
+  'placement.partial':'A keresés elérte a korlátját. Az eredmény részleges; további besorolások is lehetségesek.',
+  'placement.none':'Az ellenőrzött változatokban nem találtunk teljesen érvényes besorolást. Ez nem bizonyítja, hogy a rendelés nem szolgálható ki; tekintse át az akadályokat vagy módosítsa a tervet.',
+  'placement.options':'Megvalósítható besorolások','placement.delta':'Terv változása','placement.timing':'Kiszolgálás: {arrival} · forduló vége: {finish}',
+  'placement.delay':'Jármű befejezésének változása: {delay} perc','placement.newVehicle':'Újonnan bevont jármű',
+  'placement.resources':'Járműszám változása: {vehicles} · fordulószám változása: {trips}',
+  'placement.use':'Besorolás ide: {ref}','placement.blockers':'Ellenőrzött járművek és akadályok',
+  'placement.blockerScope':'Az elutasított tervváltozatok akadályai más megállókat vagy későbbi fordulókat is érinthetnek. Nem a Surge által igazolt okai az eredeti kimaradásnak.',
+  'placement.excluded':'Kizárt vagy nem elérhető — nem vizsgált','placement.locked':'Zárolt útvonal — nem vizsgált',
+  'placement.previewRequired':'A pozíció kiválasztása csak az űrlapot módosítja. Alkalmazás előtt számítsa ki és ellenőrizze a teljes tervet. A korlátok és a jóváhagyott kivételek továbbra is érvényesek.',
   'manual.violation.SHIFT':'Jármű műszakideje túllépve','manual.violation.MAX_TRIPS':'Fordulókorlát túllépve',
   'manual.violation.MAX_DISTANCE':'Távolságkorlát túllépve','manual.violation.MAX_DURATION':'Időtartamkorlát túllépve',
   'manual.violation.EXCLUDED':'Kiosztott munka maradt egy kizárt járművön','manual.violation.ASSIGNMENT':'A kiosztás ütközik egy megőrzött döntéssel vagy korlátozással',

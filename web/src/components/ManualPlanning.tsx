@@ -5,10 +5,10 @@ import { Badge } from '@/components/ui/badge';
 import { useT, describeApiError } from '@/i18n';
 import { usePermission } from '@/permissions';
 import { api } from '@/lib/api';
-import { km, money } from '@/lib/format';
+import { km, money, hhmm } from '@/lib/format';
 import { violationDetail } from '@/lib/violations';
 import { manualAssignmentCommands } from '@/lib/manual-assignment';
-import type { ManualIntent, ManualPreview, Plan, Scenario, Vehicle } from '@/types';
+import type { ManualIntent, ManualPreview, Plan, Scenario, Vehicle, PlacementSuggestion, PlacementSuggestions } from '@/types';
 
 export type ManualAction = 'assign'|'deassign'|'release';
 export interface ManualRequest {requestIds:number[];action:ManualAction;targetVehicleId?:number;vehicle?:{id:number;excluded:boolean};undo?:true}
@@ -39,7 +39,8 @@ export function ManualPlanningDialog({plan,scenario,fleet,request,onClose,onAppl
   const t=useT(),canEdit=usePermission('scenario.edit'),canEvaluate=usePermission('plan.evaluate');
   const [vehicleId,setVehicleId]=useState(String(request.targetVehicleId??fleet.find(v=>!v.unavailable&&!scenario.removedVehicleIds.includes(v.id))?.id??''));
   const [tripId,setTripId]=useState(()=>{const v=fleet.find(v=>v.id===Number(request.targetVehicleId??fleet.find(v=>!v.unavailable&&!scenario.removedVehicleIds.includes(v.id))?.id));const tr=v?.trips.at(-1);return tr?(tr.manualTripId??`trip-${tr.index}`):'';}),[position,setPosition]=useState<string>('');
-  const [operationId]=useState(()=>crypto.randomUUID()),[newTripId]=useState(()=>`manual-${crypto.randomUUID()}`);
+  const [operationId]=useState(()=>crypto.randomUUID()),[newTripId,setNewTripId]=useState(()=>`manual-${crypto.randomUUID()}`);
+  const [guidance,setGuidance]=useState<PlacementSuggestions|null>(null),[finding,setFinding]=useState(false);
   const [preview,setPreview]=useState<ManualPreview|null>(null),[busy,setBusy]=useState(false),[error,setError]=useState<string|null>(null),[attempted,setAttempted]=useState(false);
   const generation=useRef(0),alive=useRef(true),inFlight=useRef(false);
   useEffect(()=>{alive.current=true;return()=>{alive.current=false;};},[]);
@@ -54,6 +55,26 @@ export function ManualPlanningDialog({plan,scenario,fleet,request,onClose,onAppl
   const intentKey=JSON.stringify(intent);
   useEffect(()=>{generation.current++;setPreview(null);setError(null);},[intentKey]);
   const valid=!!request.vehicle||!!request.undo||request.action!=='assign'||!!vehicle&&!vehicle.unavailable&&!scenario.removedVehicleIds.includes(vehicle.id);
+  const guidedOrder=plan.unassigned.find(o=>o.requestId===request.requestIds[0]);
+  const guided=!request.undo&&!request.vehicle&&request.action==='assign'&&request.requestIds.length===1&&!!guidedOrder;
+  const exceptions=plan.provenance.planningPolicy?.exceptions.filter(e=>e.orderNo===guidedOrder?.orderNo)??[];
+  async function findPlacements(){
+    if(inFlight.current||!canEvaluate||!canEdit||!guided||attempted)return;
+    inFlight.current=true;setBusy(true);setFinding(true);setError(null);setGuidance(null);setPreview(null);const token=++generation.current;
+    try{
+      const result=await api.placements(scenario.id,scenario.revision,{parentPlanId:plan.id,datasetSha256,requestId:request.requestIds[0]});
+      if(result.parentPlanId!==plan.id||result.revision!==scenario.revision||result.datasetSha256!==datasetSha256||result.requestId!==request.requestIds[0])throw new Error(t('freshness.changed'));
+      if(alive.current&&token===generation.current)setGuidance(result);
+    }catch(e){if(alive.current&&token===generation.current)setError(describeApiError(e,t));}
+    finally{inFlight.current=false;if(alive.current){setBusy(false);setFinding(false);}}
+  }
+  function choosePlacement(suggestion:PlacementSuggestion){
+    if(busy||attempted||!canEdit)return;
+    setVehicleId(String(suggestion.vehicleId));setTripId(suggestion.newTrip?'':suggestion.tripId);
+    if(suggestion.newTrip)setNewTripId(suggestion.tripId);
+    const target=fleet.find(v=>v.id===suggestion.vehicleId)?.trips.find(tr=>(tr.manualTripId??`trip-${tr.index}`)===suggestion.tripId);
+    setPosition(suggestion.position===(target?.stops.length??0)?'':String(suggestion.position));
+  }
   async function calculate(){
     if(inFlight.current||!canEvaluate||!valid)return;
     inFlight.current=true;setBusy(true);setError(null);const token=++generation.current;
@@ -71,6 +92,35 @@ export function ManualPlanningDialog({plan,scenario,fleet,request,onClose,onAppl
     <DialogHeader><DialogTitle>{t('manual.title')}</DialogTitle><DialogDescription>{t('manual.description')}</DialogDescription></DialogHeader>
     {request.undo?<p>{t('manual.undoConfirm')}</p>:request.vehicle?<p>{t(request.vehicle.excluded?'manual.excludeConfirm':'manual.restoreConfirm',{n:request.requestIds.length})}</p>
       :<p className="text-sm">{t(`manual.${request.action}`)} · {request.requestIds.length}</p>}
+    {guided&&<section aria-label={t('placement.title')} className="space-y-2 rounded border bg-muted/20 p-3 text-xs">
+      <div className="font-semibold">{t('placement.title')}</div><p className="text-muted-foreground">{t('placement.scope')}</p>
+      {!!exceptions.length&&<div className="rounded border border-warning/40 p-2"><div className="font-medium">{t('issues.approvedExceptions')}</div>
+        {exceptions.map((e,i)=><p key={i} className="break-words">{e.maxTonnage!=null&&`GVW ≤ ${e.maxTonnage} t · `}{e.requiresTailLift===false&&`${t('issues.tailLiftWaived')} · `}{e.reason}</p>)}
+      </div>}
+      <Button size="sm" variant="outline" disabled={busy||attempted||!canEvaluate||!canEdit} onClick={()=>void findPlacements()}>{t(finding?'placement.checking':'placement.find')}</Button>
+      {guidance&&<>
+        <p role="status">{t('placement.count',{checked:guidance.checked,feasible:guidance.feasiblePositions})}</p>
+        <p className="text-muted-foreground">{t('placement.reference',{distance:km(guidance.baseline.distanceKm,1),cost:money(guidance.baseline.cost,guidance.currency)})}</p>
+        {!guidance.complete&&<p className="text-warning">{t('placement.partial')}</p>}
+        {!guidance.suggestions.length?<p>{t('placement.none')}</p>:<ol aria-label={t('placement.options')} className="space-y-2">
+          {guidance.suggestions.map(s=>{const v=fleet.find(v=>v.id===s.vehicleId),tr=v?.trips.find(tr=>(tr.manualTripId??`trip-${tr.index}`)===s.tripId);
+            const position=s.newTrip?t('manual.newTrip'):`${t('fleet.tripLabel',{n:(tr?.index??0)+1})} · ${tr?.stops[s.position]?t('manual.before',{order:tr.stops[s.position].orderNo}):t('manual.append')}`;
+            return <li key={s.vehicleId} className="rounded border bg-card p-2" data-vehicle-id={s.vehicleId}>
+              <div className="font-medium">{v?.ref??`#${s.vehicleId}`} · {position}</div>
+              <p>{t('placement.delta')}: {s.delta.distanceKm>=0?'+':''}{km(s.delta.distanceKm,1)} · {s.delta.cost>=0?'+':''}{money(s.delta.cost,guidance.currency)}</p>
+              <p>{t('placement.timing',{arrival:hhmm(s.serviceStartSec),finish:hhmm(s.tripEndSec)})} · {s.delta.finishSec===null?t('placement.newVehicle'):t('placement.delay',{delay:Math.ceil(s.delta.finishSec/60)})}</p>
+              <p>{t('placement.resources',{vehicles:s.delta.vehicles,trips:s.delta.trips})}</p>
+              <Button size="sm" variant="outline" disabled={busy||attempted||!canEdit} onClick={()=>choosePlacement(s)}>{t('placement.use',{ref:v?.ref??`#${s.vehicleId}`})}</Button>
+            </li>;})}
+        </ol>}
+        <details><summary className="cursor-pointer">{t('placement.blockers')}</summary><p className="my-2 text-muted-foreground">{t('placement.blockerScope')}</p>
+          <ul className="space-y-2">{guidance.vehicles.map(row=><li key={row.vehicleId}>
+            <span className="font-medium">{fleet.find(v=>v.id===row.vehicleId)?.ref??`#${row.vehicleId}`}</span> · {row.skipped?t(`placement.${row.skipped}`):t('placement.count',{checked:row.checked,feasible:row.feasible})}
+            {!!row.blockers.length&&<ul className="list-inside list-disc">{row.blockers.map((v,i)=><li key={i}>{fleet.find(f=>f.id===v.vehicleId)?.ref??`#${v.vehicleId}`} · {violationDetail(v,t)}</li>)}</ul>}
+          </li>)}</ul>
+        </details><p className="text-muted-foreground">{t('placement.previewRequired')}</p>
+      </>}
+    </section>}
     {!request.vehicle&&!request.undo&&request.action==='assign'&&<fieldset disabled={busy||attempted||!canEdit} className="grid grid-cols-2 gap-3 text-sm">
       <label className="col-span-2">{t('manual.vehicle')}<select aria-label={t('manual.vehicle')} value={vehicleId} onChange={e=>{setVehicleId(e.target.value);setTripId('');setPosition('');}} className="mt-1 h-9 w-full rounded border bg-card px-2">
         {fleet.map(v=><option key={v.id} value={v.id} disabled={v.unavailable||scenario.removedVehicleIds.includes(v.id)}>{v.ref}{v.unavailable?` · ${t('manual.unavailable')}`:scenario.removedVehicleIds.includes(v.id)?` · ${t('manual.excluded')}`:''}</option>)}

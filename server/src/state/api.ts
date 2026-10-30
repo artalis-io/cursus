@@ -98,6 +98,20 @@ export async function createStatefulApi(options: StatefulApiOptions): Promise<Fa
     } catch(error) { return {enabled:false,requiresRevalidation:!!policyIssues?.(plan).length,
       ...(error instanceof ManualAdapterError&&error.message==='ambiguous or unknown parent delivery identity'?{reason:'fresh_plan_required'}:{})}; }
   });
+  // One bounded search per replica; no unbounded queue of matrix evaluations.
+  let placementSearchActive=false;
+  app.post<{Params:{id:string}}>('/api/scenarios/:id/placements',async(req,reply)=>{
+    reply.header('Cache-Control','private, no-store');
+    if(!options.manualPlanning)return reply.code(503).send({error:'Manual planning is not enabled.'});
+    if(req.headers['if-match']===undefined)return reply.code(428).send({error:'If-Match revision required.'});
+    const revision=expectedRevision(req.headers);
+    if(revision===null)return reply.code(400).send({error:'Quoted non-negative If-Match revision required.'});
+    if(placementSearchActive)return reply.header('Retry-After','2').code(429).send({error:'Placement evaluation is busy. Try again shortly.'});
+    placementSearchActive=true;
+    try{return await new ManualPlanPublisher(options.store,options.tenantId,options.manualPlanning).placements(req.params.id,revision,req.body,req.cursusPrincipal);}
+    catch(error){if(error instanceof ManualPublicationError)return reply.code(error.status).send({error:error.message});throw error;}
+    finally{placementSearchActive=false;}
+  });
   for (const suffix of ['manual-plan','manual-preview'] as const) app.post<{ Params: { id: string } }>(`/api/scenarios/:id/${suffix}`, async (req, reply) => {
     if (!options.manualPlanning) return reply.code(503).send({ error: 'Manual planning is not enabled.' });
     if (req.headers['if-match'] === undefined) return reply.code(428).send({ error: 'If-Match revision required.' });
