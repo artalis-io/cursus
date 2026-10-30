@@ -156,7 +156,6 @@ export default function App() {
   const canSolve = usePermission('optimization.submit') && !freshnessError && !workspaceLoading && !scenario?.supersededBy;
   const canCancel = usePermission('optimization.cancel');
   const canEvaluate = usePermission('plan.evaluate') && !freshnessError && !workspaceLoading && !scenario?.supersededBy;
-  useEffect(()=>{if(!canEdit)setInputUpdatesOpen(false);},[canEdit]);
   // Async callbacks can outlive the render that authorized them. Recheck at
   // dispatch, and invalidate queued intents across revocation/regrant cycles.
   const writeAccess = useRef({ edit: canEdit, solve: canSolve, cancel: canCancel, epoch: 0, mounted: true });
