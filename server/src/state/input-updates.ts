@@ -51,8 +51,10 @@ export class InputUpdates{
  }
  async options(id:string,planId:string,datasetId?:string,dayId?:string){
   const source=await this.source(id,planId),datasets=await this.store.listDatasets(this.tenant,true);
-  const choices=datasets.flatMap(row=>{const m=row.manifest as ConvertedManifest;return (m.days??[]).filter(d=>d.isoDate===source.plan.day&&m.artifacts?.request?.sha256!==source.plan.provenance.datasetSha256)
-   .map(d=>({datasetId:String(row.id),dayId:d.dayId,label:String((row.manifest as {name?:string;label?:string}).label??(row.manifest as {name?:string}).name??row.id),sha256:m.artifacts?.request?.sha256}));});
+  const choices=datasets.flatMap(row=>{const m=row.manifest as ConvertedManifest,sha=m.artifacts?.request?.sha256;
+   if(typeof sha!=='string'||!/^[a-f0-9]{64}$/.test(sha)||!m.artifacts?.geocoded)return [];
+   return (m.days??[]).filter(d=>d.isoDate===source.plan.day&&sha!==source.plan.provenance.datasetSha256)
+   .map(d=>({datasetId:String(row.id),dayId:d.dayId,label:String((row.manifest as {name?:string;label?:string}).label??(row.manifest as {name?:string}).name??row.id),sha256:sha}));});
   const scope=(await this.store.listScenarios(this.tenant,source.scenario.day)).map(s=>({id:s.id,label:s.label,revision:s.revision}));
   if(!datasetId||!dayId)return {choices,scope};
   const old=await this.load(source.plan,source.scenario),target=await this.target(source,datasetId,dayId,[]),before=updateRows(old.day),after=updateRows(target.day);
