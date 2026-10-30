@@ -23,6 +23,7 @@ routes('scenario.edit', 'POST', ['/api/scenarios/:id/edit', '/api/scenarios/:id/
 routes('scenario.edit', 'POST', ['/api/scenarios/:id/manual-plan']);
 routes('scenario.edit', 'POST', ['/api/scenarios/:id/select-plan']);
 routes('plan.evaluate', 'POST', ['/api/scenarios/:id/manual-preview']);
+routes('plan.evaluate', 'POST', ['/api/scenarios/:id/placements']);
 routes('workspace.read', 'GET', ['/api/plans/:id/manual-context']);
 routes('scenario.import', 'POST', ['/api/scenarios/import']);
 routes('scenario.delete', 'DELETE', ['/api/scenarios/:id']);

@@ -1,7 +1,7 @@
 import { test, expect, type Page, type APIRequestContext } from '@playwright/test';
 import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
-import type { DaySummary, Plan, Scenario } from '../src/types';
+import type { DaySummary, Plan, Scenario, PlacementSuggestions } from '../src/types';
 
 const peer = process.env.CURSUS_ACCEPTANCE_PEER!;
 const compose = JSON.parse(process.env.CURSUS_ACCEPTANCE_COMPOSE ?? 'null') as string[] | null;
@@ -162,8 +162,58 @@ test('manual: Reviewer can inspect groups but cannot preview or publish',async({
   await login(page,'reviewer@acceptance.example.test');const base=await baseline(page);
   await page.getByRole('button',{name:'Manual planning',exact:true}).click();await manualStop(page,base,'PUBLIC-2');
   await expect(page.getByRole('button',{name:'Move to vehicle…',exact:true})).toHaveCount(0);
-  for(const suffix of ['manual-preview','manual-plan'])expect((await page.request.post(`/api/scenarios/${base.scenarioId}/${suffix}`,{
+  await expect(page.getByRole('button',{name:'Find feasible placements',exact:true})).toHaveCount(0);
+  for(const suffix of ['manual-preview','manual-plan','placements'])expect((await page.request.post(`/api/scenarios/${base.scenarioId}/${suffix}`,{
     headers:{origin:new URL(page.url()).origin,'if-match':`"${base.scenarioRevision}"`},data:{}})).status()).toBe(403);
+});
+
+for(const role of ['admin','planner'] as const)test(`placements ${role}: unassigned order gets server-validated suggestions, preview and audited assignment`,async({page})=>{
+  await login(page,`${role}@acceptance.example.test`);const base=await baseline(page);
+  await page.getByRole('button',{name:'Manual planning',exact:true}).click();await manualStop(page,base,'PUBLIC-2');
+  await page.getByRole('button',{name:'Return to unassigned',exact:true}).click();const partial=await applyManualDialog(page);
+  const fleet=page.locator('aside').first(),order=fleet.getByRole('button').filter({hasText:'#PUBLIC-2'});
+  if(!await order.isVisible())await fleet.getByRole('button',{name:/Unassigned orders/i}).click();await order.click();
+  await page.getByRole('button',{name:'Assign to vehicle…',exact:true}).click();
+  const dialog=page.getByRole('dialog',{name:'Manual planning',exact:true}),section=dialog.getByRole('region',{name:'Find a place for this order',exact:true});
+  const before=(await get<Plan[]>(page.request,'/api/plans')).length;
+  const response=page.waitForResponse(r=>r.request().method()==='POST'&&r.url().endsWith('/placements'));
+  await section.getByRole('button',{name:'Find feasible placements',exact:true}).click();const search=await response;expect(search.status()).toBe(200);
+  const result=await search.json() as PlacementSuggestions;expect(result.suggestions.length).toBeGreaterThan(0);
+  expect(result.parentPlanId).toBe(partial.id);expect(result.suggestions.some(s=>s.vehicleId===99)).toBe(false);
+  await expect(section.getByRole('list',{name:'Feasible placements',exact:true})).toBeVisible();
+  await expect(section.locator('[data-vehicle-id="99"]')).toHaveCount(0);
+  expect((await get<Plan[]>(page.request,'/api/plans')).length).toBe(before);
+  expect((await get<Scenario>(page.request,`${peer}/api/scenarios/${partial.scenarioId}`)).revision).toBe(partial.scenarioRevision);
+  if(role==='admin'){await page.setViewportSize({width:600,height:800});expect(await dialog.evaluate(el=>el.scrollWidth<=el.clientWidth+1)).toBe(true);}
+  const best=result.suggestions[0],context=await get<{fleet:{id:number;ref:string}[]}>(page.request,`/api/plans/${partial.id}/manual-context`);
+  await section.getByRole('button',{name:`Use placement on ${context.fleet.find(v=>v.id===best.vehicleId)!.ref}`,exact:true}).click();
+  await expect(dialog.getByRole('button',{name:'Apply manual change',exact:true})).toBeDisabled();
+  const assigned=await applyManualDialog(page);independentManualKpis(assigned);
+  expect(assigned.stats.servedOrders).toBe(6);expect(assigned.provenance.validation.valid).toBe(true);
+  expect(assigned.stats.totalDistanceKm-partial.stats.totalDistanceKm).toBeCloseTo(best.delta.distanceKm,6);
+  expect(assigned.cost!.total-partial.cost!.total).toBeCloseTo(best.delta.cost,6);
+  expect(assigned.manual?.layout.history.at(-1)?.action).toBe('assign');
+  expect((await get<Plan>(page.request,`${peer}/api/plans/${assigned.id}?geometry=stored`)).stats).toEqual(assigned.stats);
+});
+
+test('placements chaos: a late search response cannot restore controls after demotion',async({page})=>{
+  await chaosLogin(page,'planner');const base=await baseline(page);const held=gate(),captured=gate();
+  try{
+    await page.getByRole('button',{name:'Manual planning',exact:true}).click();await manualStop(page,base,'PUBLIC-2');
+    await page.getByRole('button',{name:'Return to unassigned',exact:true}).click();const partial=await applyManualDialog(page);
+    const fleet=page.locator('aside').first(),order=fleet.getByRole('button').filter({hasText:'#PUBLIC-2'});
+    if(!await order.isVisible())await fleet.getByRole('button',{name:/Unassigned orders/i}).click();await order.click();
+    await page.getByRole('button',{name:'Assign to vehicle…',exact:true}).click();
+    const plans=(await get<Plan[]>(page.request,'/api/plans')).length;
+    await page.route('**/placements',async route=>{const result=await route.fetch();expect(result.status()).toBe(200);captured.release();await held.wait;await route.fulfill({response:result});});
+    await page.getByRole('button',{name:'Find feasible placements',exact:true}).click();await captured.wait;
+    chaosRole('reviewer');await page.evaluate(()=>window.dispatchEvent(new Event('focus')));
+    await expect(page.locator('footer').getByText('Reviewer',{exact:true})).toBeVisible();
+    await expect(page.getByRole('dialog',{name:'Manual planning',exact:true})).toHaveCount(0);held.release();
+    await expect(page.getByRole('button',{name:/Use placement on|Find feasible placements/})).toHaveCount(0);
+    expect((await get<Plan[]>(page.request,'/api/plans')).length).toBe(plans);
+    expect((await get<Scenario>(page.request,`${peer}/api/scenarios/${partial.scenarioId}`)).revision).toBe(partial.scenarioRevision);
+  }finally{held.release();chaosRole('planner');}
 });
 
 test('manual: exclusion, restore, bulk assignment and undo publish complete immutable drafts',async({page})=>{
