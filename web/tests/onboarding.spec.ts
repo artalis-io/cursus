@@ -1,3 +1,4 @@
+import {selectWorkspaceAction} from './workspace-navigation';
 import { test, expect } from '@playwright/test';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
@@ -9,7 +10,7 @@ const VEH = process.env.DISPATCH_SAMPLE_VEHICLES ?? join(homedir(), 'artalis.io/
 
 test('onboarding shows a progress stepper (upload -> admit)', async ({ page }) => {
   await loadApp(page);
-  await page.getByRole('button', { name: 'Data' }).click();
+  await selectWorkspaceAction(page,'Data');
   await page.getByRole('tab', { name: 'Upload' }).click();
   const steps = page.getByRole('navigation', { name: 'Onboarding progress' });
   await expect(steps).toBeVisible();
@@ -22,7 +23,7 @@ test('onboarding shows a progress stepper (upload -> admit)', async ({ page }) =
 
 test('provenance loads the canonical Gyermelyi audit and pipeline', async ({ page }) => {
   await loadApp(page);
-  await page.getByRole('button', { name: 'Data' }).click();
+  await selectWorkspaceAction(page,'Data');
   await page.getByRole('tab', { name: 'Provenance' }).click();
   await expect(page.getByText(/332\/332 accepted/).first()).toBeVisible();
   await expect(page.getByText('Nexus validate')).toBeVisible();
@@ -39,7 +40,7 @@ test('a full provenance checksum wraps inside its source card', async ({ page })
     body.sources[0].sha256 = sha;
     await route.fulfill({ response, json: body });
   });
-  await page.getByRole('button', { name: 'Data' }).click();
+  await selectWorkspaceAction(page,'Data');
   const checksum = page.getByText(new RegExp(`sha ${sha}`));
   await expect(checksum).toBeVisible();
   const textBox = await checksum.boundingBox();
@@ -51,7 +52,7 @@ test('a full provenance checksum wraps inside its source card', async ({ page })
 
 test('upload accepts a small CSV and renders its mapping without a runtime error', async ({ page }) => {
   await loadApp(page);
-  await page.getByRole('button', { name: 'Data' }).click();
+  await selectWorkspaceAction(page,'Data');
   await page.getByRole('tab', { name: 'Upload' }).click();
   await page.locator('input[type=file]').first().setInputFiles({
     name: 'playwright-orders.csv',
@@ -70,7 +71,7 @@ test.describe('data onboarding (M1)', () => {
   test('upload a CSV, auto-map columns, pass the reconcile gate', async ({ page }) => {
     test.setTimeout(90_000);
     await loadApp(page);
-    await page.getByRole('button', { name: 'Data' }).click();
+    await selectWorkspaceAction(page,'Data');
     await page.getByRole('tab', { name: 'Upload' }).click();
     await expect(page.getByText('Choose file')).toBeVisible();
 
@@ -91,7 +92,7 @@ test.describe('data onboarding (M1)', () => {
   test('geocode the mapped orders and preview tiers on a map', async ({ page }) => {
     test.setTimeout(120_000);
     await loadApp(page);
-    await page.getByRole('button', { name: 'Data' }).click();
+    await selectWorkspaceAction(page,'Data');
     await page.getByRole('tab', { name: 'Upload' }).click();
     await page.locator('input[type=file]').setInputFiles(RAW);
     await expect(page.getByText('Map columns')).toBeVisible();
@@ -108,7 +109,7 @@ test.describe('data onboarding (M1)', () => {
     test.setTimeout(120_000);
     test.skip(!existsSync(VEH), 'vehicles file not present');
     await loadApp(page);
-    await page.getByRole('button', { name: 'Data' }).click();
+    await selectWorkspaceAction(page,'Data');
     await page.getByRole('tab', { name: 'Upload' }).click();
     await page.locator('input[type=file]').setInputFiles(RAW);
     await expect(page.getByText('Map columns')).toBeVisible();

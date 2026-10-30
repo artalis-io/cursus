@@ -1,3 +1,4 @@
+import {selectWorkspaceAction} from './workspace-navigation';
 import { test, expect } from '@playwright/test';
 import type { Plan } from '../src/types';
 
@@ -18,7 +19,7 @@ test('hard access violations cannot be labelled Baseline OK in EN or HU', async 
   await page.goto('/');
   await expect(page.getByText('Baseline · Constraint violation', { exact: true })).toBeVisible();
   await expect(page.getByText('Baseline · OK', { exact: true })).toHaveCount(0);
-  await page.getByRole('button', { name: 'Issues', exact: true }).click();
+  await selectWorkspaceAction(page,'Issues');
   await expect(page.getByRole('dialog')).toContainText('Constraint violations');
   await expect(page.getByRole('dialog').getByText(/24t.*7.5t/)).toBeVisible();
   await page.keyboard.press('Escape');

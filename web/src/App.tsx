@@ -720,6 +720,7 @@ export default function App() {
           <Button size="sm" variant="outline" onClick={()=>void api.planSnapshot(scenario.supersededBy!.planId).then(openUpdatedInputs).catch(e=>setError(describeApiError(e,t)))}>{lang==='hu'?'Frissített adatok megnyitása':'Open updated inputs'}</Button>
         </div>}
         <TopBar
+          onOpenReview={()=>document.getElementById('cursus-plan-review')?.focus()}
           onOpenProfiles={features.planningProfiles?()=>setProfilesOpen(true):undefined}
           onOpenInputUpdates={features.inputUpdates&&canEdit&&!candidate&&!pendingEdits?()=>setInputUpdatesOpen(true):undefined}
           onOpenHandoff={features.acknowledgedHandoff?()=>setHandoffOpen(true):undefined}
@@ -751,7 +752,9 @@ export default function App() {
         {manualContext?.requiresRevalidation&&<div role="status" className="shrink-0 border-b border-warning/40 bg-warning/10 px-4 py-2 text-sm">{t('manual.policyChanged')}</div>}
         {manualContext?.reason==='fresh_plan_required'&&<div role="status" className="shrink-0 border-b border-warning/40 bg-warning/10 px-4 py-2 text-sm">{t('manual.freshPlanRequired')}</div>}
         <ReadinessPanel plan={plan} baseline={baseline} scenario={scenario} pending={pendingEdits > 0 || !!solving || !!freshnessError || workspaceLoading} />
+        <div id="cursus-plan-review" tabIndex={-1} className="shrink-0 focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary">
         <PlanApproval key={plan.id} planId={plan.id} revision={scenario.revision} pending={!!candidate || pendingEdits > 0 || !!solving || !!freshnessError || workspaceLoading || scenario.id !== plan.scenarioId} />
+        </div>
         {freshnessError && <div role="alert" className="border-b border-warning/40 bg-warning/10 px-4 py-2 text-sm">
           {t(freshnessError)} <button className="underline" onClick={() => {
             if (!window.confirm(t('freshness.confirm'))) return;

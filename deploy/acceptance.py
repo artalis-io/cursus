@@ -25,7 +25,8 @@ def run(argv, *, env=None, capture=False, timeout=900):
 
 def harness_digest():
     paths = [ROOT / 'compose.integration.yaml', ROOT / 'compose.acceptance.yaml', Path(__file__),
-             ROOT / 'web/playwright.acceptance.config.ts', ROOT / 'web/tsconfig.acceptance.json']
+             ROOT / 'web/playwright.acceptance.config.ts', ROOT / 'web/tsconfig.acceptance.json',
+             ROOT / 'web/tests/workspace-navigation.ts']
     paths += sorted((ROOT / 'tests/acceptance').glob('*.mjs'))
     paths += sorted((ROOT / 'web/acceptance').glob('*.ts'))
     digest = hashlib.sha256()
