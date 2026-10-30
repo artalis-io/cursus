@@ -1644,7 +1644,7 @@ test('workspace navigation: keyboard and dialog focus preserve state without wri
   await selectWorkspaceAction(page,action);await expect(page.getByRole('dialog')).toBeVisible();await page.keyboard.press('Escape');await expect(page.getByRole('dialog')).toHaveCount(0);await expect(nav.getByRole('button',{name:group,exact:true})).toBeFocused();
  }
  await selectWorkspaceAction(page,'Plan approval');await expect(page.locator('#cursus-plan-review')).toBeFocused();
- await prepare.click();await page.getByText('Served / Total',{exact:true}).click();await expect(page.getByRole('menu')).toHaveCount(0);
+ await prepare.click();await page.locator('header').getByText('Cursus',{exact:true}).click();await expect(page.getByRole('menu')).toHaveCount(0);
  expect(await get<Scenario[]>(page.request,'/api/scenarios')).toEqual(before);expect(await page.evaluate(()=>localStorage.getItem('cursus.manual-workspace.v1:acceptance'))).toBe(selected);expect(writes).toEqual([]);
  await page.screenshot({path:testInfo.outputPath('workspace-desktop.png')});
 });
