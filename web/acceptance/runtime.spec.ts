@@ -1739,8 +1739,25 @@ async function statusScenario(page:Page,label:string){
  return {plan:await get<Plan>(page.request,`${peer}/api/plans/${job!.planId}`),scenario,headers};
 }
 async function reopenStatusPlan(page:Page,id:string){
- await selectWorkspaceAction(page,'Plans');await page.getByRole('dialog').locator(`[data-plan-id="${id}"]`).getByRole('button',{name:'Reopen',exact:true}).click();
- await expect(page.getByRole('dialog')).toHaveCount(0);await expect(page.locator('section[aria-label="Plan approval"]')).toHaveAttribute('data-plan-id',id);
+ await selectWorkspaceAction(page,'Plans');
+ const dialog=page.getByRole('dialog'),target=dialog.locator(`[data-plan-id="${id}"]`).getByRole('button',{name:'Reopen',exact:true});
+ await expect(target).toBeVisible();
+ // Exercise the actual CSS entrance at both intermediate points. Its center
+ // must stay anchored even while a long list changes the dialog's height.
+ const geometry=await dialog.evaluate(element=>{
+  const animation=element.getAnimations().find(a=>a instanceof CSSAnimation&&a.animationName==='enter');
+  if(!animation||!animation.effect)throw Error('Expected the real dialog entrance animation');
+  const duration=Number(animation.effect.getTiming().duration),samples=[];
+  animation.pause();
+  try{for(const progress of [0.25,0.75]){animation.currentTime=duration*progress;const r=element.getBoundingClientRect();samples.push({x:r.x+r.width/2,y:r.y+r.height/2,width:innerWidth,height:innerHeight});}}
+  finally{animation.finish();}
+  const viewport=element.querySelector('[data-radix-scroll-area-viewport]')!;
+  return {samples,listHeight:viewport.getBoundingClientRect().height,maxListHeight:innerHeight*0.6};
+ });
+ for(const sample of geometry.samples){expect(Math.abs(sample.x-sample.width/2)).toBeLessThan(2);expect(Math.abs(sample.y-sample.height/2)).toBeLessThan(2);}
+ expect(geometry.listHeight).toBeLessThanOrEqual(geometry.maxListHeight+1);
+ await target.scrollIntoViewIfNeeded();await expect(target).toBeInViewport({ratio:1});await target.click();
+ await expect(dialog).toHaveCount(0);await expect(page.locator('section[aria-label="Plan approval"]')).toHaveAttribute('data-plan-id',id);
 }
 
 test('compact status: unavailable or corrupt approval stays Unknown, retry is read-only and old responses cannot certify another plan',async({page})=>{
@@ -1832,4 +1849,17 @@ test('compact status: manual eligibility warnings stay visible without changing 
  await selectWorkspaceAction(page,'Plan approval');await expect(page.getByRole('region',{name:'Plan approval',exact:true}).getByRole('checkbox')).toBeVisible();
  await details.locator('summary').click();
  await expect(page.getByText('This historical plan has no unambiguous delivery identities. Replan to create a fresh plan before manual editing.',{exact:true})).toBeVisible();
+});
+
+
+test('compact status: long history stays centered and its last plan reopens by pointer',async({page})=>{
+ await login(page);const {plan}=await statusScenario(page,'Last plan in long history');
+ const response=await page.request.get('/api/plans?day=acceptance-day');expect(response.status()).toBe(200);
+ const plans=await response.json() as {id:string;label:string}[],target=plans.find(p=>p.id===plan.id)!;
+ expect(target).toBeTruthy();
+ // A layout fixture supplies many cards, while the target remains a real
+ // native plan and Reopen still goes through the real scenario/plan handlers.
+ await page.route('**/api/plans?day=*',route=>route.fulfill({json:[...Array.from({length:60},(_,i)=>({...target,id:`layout-only-${i}`,label:`History card ${i+1}`})),target]}));
+ await reopenStatusPlan(page,plan.id);
+ await expect(page.getByTestId('status-approval')).toContainText('Draft');
 });

@@ -43,7 +43,7 @@ and two replicas of the production image. It uses the real entrypoint, enables
 magic-link authentication, disables provider delivery and never reads `.env`.
 The browser obtains its link from the isolated transactional outbox and follows
 the real GET/confirmation-form POST flow. Successful workflow checks use the real
-HTTP handlers, shared persistence and native executables. Failure-path tests also
+HTTP handlers, shared persistence and native executables. Layout and failure-path tests can supply long lists,
 hold requests or inject malformed/error responses in the browser; those injections
 do not replace the native end-to-end checks. The immediate-click test holds and
 releases a real edit request to expose races.
@@ -93,7 +93,7 @@ validation, before it can receive a passing report.
 
 ## Enforced deployment gate
 
-The current suite contains 94 checks. Its browser command has a 20-minute aggregate budget, with 25 minutes for the CI job including image preparation. Individual browser tests retain their 120-second limit, assertions, and zero-retry policy; skips and flaky results still block acceptance.
+The current suite contains 95 checks. Its browser command has a 20-minute aggregate budget, with 25 minutes for the CI job including image preparation. Individual browser tests retain their 120-second limit, assertions, and zero-retry policy; skips and flaky results still block acceptance.
 
 Use a clean checkout for release evidence. Development runs record a dirty
 checkout, but the deployment gate rejects such reports. A stale passing report
