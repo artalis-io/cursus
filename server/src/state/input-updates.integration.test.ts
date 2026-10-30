@@ -20,6 +20,8 @@ import {createHash} from 'node:crypto';
 import {TransferRepository} from './transfers.js';
 import {parseDestinations} from './handoff-sender.js';
 import {ScenarioRepository} from './scenarios.js';
+import {ProfileRepository} from './profiles.js';
+import type {ProfileRef} from '../planning-profile-contract.js';
 
 const enabled=!!process.env.CURSUS_TEST_DATABASE_URL&&!!process.env.CURSUS_TEST_S3_ENDPOINT;
 
@@ -39,7 +41,7 @@ test('snapshot replacement through two APIs is atomic, idempotent, tenant-scoped
   if(changed){request.requests=request.requests.map(r=>({...r,id:r.id+1000}));request.tasks[1]!.demand[0]=weight;
    request.tasks.push({...structuredClone(request.tasks[0]!),id:3,ref:'ORDER-3'});request.requests.push({id:1093,delivery_task_id:3});}
   const bundle={schemaVersion:1,days:[{dayId:changed?'revised-day':f.scenario.day,isoDate:'2026-10-26',label:changed?'Revised day':'Original day'}],surgeRequest:request,
-   geocoded:request.requests.map(r=>({request_id:r.id,order_no:request.tasks.find(t=>t.id===r.delivery_task_id)!.ref,delivery_date:'2026-10-26',requires_tail_lift:false,max_gross_weight_kg:null,customer:'Public fixture'}))};
+   geocoded:request.requests.map(r=>({request_id:r.id,order_no:request.tasks.find(t=>t.id===r.delivery_task_id)!.ref,delivery_date:'2026-10-26',requires_tail_lift:r.delivery_task_id===1,max_gross_weight_kg:null,customer:'Public fixture'}))};
   const form=new FormData();form.set('file',new Blob([JSON.stringify(bundle)],{type:'application/json'}),'prepared.json');
   const upload=await fetch(origins[i]+'/api/import/upload',{method:'POST',body:form});assert.equal(upload.status,201);
   const {datasetId}=await upload.json() as {datasetId:string};
@@ -49,10 +51,20 @@ test('snapshot replacement through two APIs is atomic, idempotent, tenant-scoped
  }
  try{
   await a.migrate();await a.ensureTenant(tenant,'Public input update tests');await s3.send(new CreateBucketCommand({Bucket:bucket}));
-  for(const store of stores){const app=await createStatefulApi({store,tenantId:tenant,tenantName:'Inputs',objects,fleetSettings:f.context,manualPlanning:admittedManualDatasetLoader(store,objects,tenant,f.context)});apps.push(app);origins.push(await app.listen({host:'127.0.0.1',port:0}));}
+  for(const store of stores){const app=await createStatefulApi({store,tenantId:tenant,tenantName:'Inputs',objects,inputUpdatesEnabled:true,fleetSettings:f.context,manualPlanning:admittedManualDatasetLoader(store,objects,tenant,f.context)});apps.push(app);origins.push(await app.listen({host:'127.0.0.1',port:0}));}
   const old=await admit(0),next=await admit(1,true);
-  const base={...f.scenario,id:'source-base',kind:'base' as const};await a.createScenario(tenant,base.id,base);
-  const day=await loadConvertedDay(objects,tenant,old.manifest,base);
+  async function fleetProfile(manifest:ConvertedManifest):Promise<ProfileRef>{
+   const sha=manifest.artifacts!.request!.sha256;
+   const p=await post<ProfileRef&{version:number}>(0,'/api/profiles',{content:{schemaVersion:1,kind:'fleet',datasetSha256:sha,label:'Reviewed synthetic fleet',reason:'Verified unchanged inventory',settings:{datasetSha256:sha,tariff:f.context.tariff,
+    vehicles:f.context.day.request.vehicles.map(v=>({id:v.id,ref:v.ref,vehicleClass:null,isSubcontractor:false,tonnage:12,hasTailLift:true,reloadSec:120,available:true,capacityKg:1000,capacityPallets:10}))}}},0);
+   await post(1,`/api/profiles/${p.id}/activate`,{revision:p.revision},p.version);
+   return {id:p.id,kind:'fleet',revision:p.revision,sha256:p.sha256};
+  }
+  const oldFleet=await fleetProfile(old.manifest),nextFleet=await fleetProfile(next.manifest);
+  const base:Scenario={...f.scenario,id:'source-base',kind:'base',planningProfiles:[oldFleet],planningPolicy:{version:1,id:'approved-test-exception',date:'2026-10-26',datasetRequestSha256:old.manifest.artifacts!.request!.sha256,
+   approvedAt:new Date().toISOString(),approvedBy:'test-admin',exceptions:[{orderNo:'ORDER-1',reason:'Verified synthetic unloading',originalRequiresTailLift:true,requiresTailLift:false}]}};
+  await a.createScenario(tenant,base.id,base);
+  const day=await loadConvertedDay(objects,tenant,old.manifest,base,await new ProfileRepository(a,tenant).resolve([oldFleet]));
   const parent=mapSolutionToPlan({day,request:day.request,solution:f.context.day.solution,enrichment:day.enrichment,vehicleInfo:f.context.vehicleInfo,tariff:f.context.tariff,
    scenarioId:base.id,scenarioRevision:base.revision,planId:'source-plan',source:'live',createdAt:new Date().toISOString()});
   await a.pool.query('INSERT INTO plans(tenant_id,id,scenario_id,scenario_revision,body) VALUES($1,$2,$3,1,$4)',[tenant,parent.id,base.id,parent]);
@@ -62,16 +74,19 @@ test('snapshot replacement through two APIs is atomic, idempotent, tenant-scoped
   await workflow.transition(source.id,'plan.review',0,scenario.revision,true);
   await workflow.transition(source.id,'plan.approve',1,scenario.revision,true);
   const intent:InputUpdateIntent={operationId:'revision-one',parentPlanId:source.id,datasetId:next.datasetId,dayId:'revised-day',reason:'Reviewed revised orders',matches:[{from:91,to:1091},{from:92,to:1092}],
-   releaseRequestIds:[],unlockVehicleIds:[],profiles:[],identityReviewed:true,carryExceptions:false,acknowledgeInvalid:true};
+   releaseRequestIds:[],unlockVehicleIds:[],profiles:[nextFleet],identityReviewed:true,carryExceptions:true,acknowledgeInvalid:true};
   const path=`/api/scenarios/${scenario.id}/input-update-`;
   const options=await apps[1]!.inject({url:`/api/scenarios/${scenario.id}/input-update-options?planId=${source.id}&datasetId=${next.datasetId}&dayId=revised-day`});
   assert.equal(options.statusCode,200);assert.deepEqual(options.json().suggested,intent.matches);
   assert.deepEqual(options.json().manualRequestIds,[91]);
+  assert.deepEqual(options.json().requiredProfiles,['fleet']);assert.equal(options.json().exceptions.length,1);
+  assert.equal((await apps[0]!.inject({method:'POST',url:path+'preview',headers:{'if-match':`"${scenario.revision}"`},payload:{...intent,profiles:[]}})).statusCode,409);
+  assert.equal((await apps[0]!.inject({method:'POST',url:path+'preview',headers:{'if-match':`"${scenario.revision}"`},payload:{...intent,carryExceptions:false}})).statusCode,409);
   let preview=await post<{previewSha256:string;diff:{added:unknown[];changed:unknown[];retainedDecisions:number;conflicts:unknown[]};stats:Plan['stats']}>(0,path+'preview',intent,scenario.revision);
   assert.equal(preview.diff.added.length,1);assert.equal(preview.diff.changed.length,1);assert.equal(preview.diff.retainedDecisions,1);assert.deepEqual(preview.diff.conflicts,[]);
   assert.equal(preview.stats.totalOrders,3);assert.equal(preview.stats.servedOrders,2);
   const invalidTarget=await admit(1,true,2000);
-  const unsafe={...intent,datasetId:invalidTarget.datasetId,operationId:'without-invalid-ack',acknowledgeInvalid:false};
+  const unsafe={...intent,datasetId:invalidTarget.datasetId,profiles:[await fleetProfile(invalidTarget.manifest)],operationId:'without-invalid-ack',acknowledgeInvalid:false};
   const unsafePreview=await post<{previewSha256:string}>(0,path+'preview',unsafe,scenario.revision);
   assert.equal((await apps[1]!.inject({method:'POST',url:path+'apply',headers:{'if-match':`"${scenario.revision}"`},payload:{intent:unsafe,previewSha256:unsafePreview.previewSha256,acknowledgeSupersession:true}})).statusCode,409);
   const alternative=await new ScenarioRepository(b,tenant).edit(base.id,[{op:'removeVehicle',vehicleId:42}],base.revision);
@@ -96,7 +111,8 @@ test('snapshot replacement through two APIs is atomic, idempotent, tenant-scoped
   const userId=randomUUID();await a.pool.query('INSERT INTO users(id,email) VALUES($1,$2)',[userId,`${userId}@example.test`]);
   await a.pool.query("INSERT INTO memberships(tenant_id,user_id,role) VALUES($1,$2,'reviewer')",[tenant,userId]);
   const service=new InputUpdates(a,objects,tenant,admittedManualDatasetLoader(a,objects,tenant,f.context));
-  await assert.rejects(()=>service.apply(scenario.id,scenario.revision,intent,preview.previewSha256,{userId,tenantId:tenant,email:'public@example.test',role:'planner'},true),/permission changed/);
+  await assert.rejects(()=>service.apply(scenario.id,scenario.revision,intent,preview.previewSha256,{userId,tenantId:tenant,email:'public@example.test',role:'admin'},true),/permission changed/);
+  await assert.rejects(()=>service.preview(scenario.id,scenario.revision,intent,{userId,tenantId:tenant,email:'public@example.test',role:'planner'}),/Only Admin/);
   // A foreign tenant cannot resolve either source or replacement object identity.
   const foreign='inputs-foreign-'+randomUUID();await a.ensureTenant(foreign,'Foreign');
   await assert.rejects(()=>new InputUpdates(a,objects,foreign,admittedManualDatasetLoader(a,objects,foreign,f.context)).preview(scenario.id,scenario.revision,intent),/not found/);
@@ -142,7 +158,7 @@ test('snapshot replacement through two APIs is atomic, idempotent, tenant-scoped
   // Native HGS on the new alias must use its bound admitted day and retained assignment.
   if(process.env.CURSUS_TEST_SURGE_BIN){
    (config as {surgeBin:string}).surgeBin=process.env.CURSUS_TEST_SURGE_BIN;
-   const solved=await solveConvertedDataset(objects,tenant,next.manifest,current,1,'vehicles',AbortSignal.timeout(30000),false,f.context);
+   const solved=await solveConvertedDataset(objects,tenant,next.manifest,current,1,'vehicles',AbortSignal.timeout(30000),false,f.context,undefined,await new ProfileRepository(b,tenant).resolve(current.planningProfiles??[]));
    assert.equal(solved.stats.servedOrders,3);assert.equal(solved.provenance.validation.valid,true);
    assert.ok(solved.vehicles.find(v=>v.id===7)?.trips.some(t=>t.stops.some(s=>s.requestId===1091)));
    assert.equal(solved.provenance.inputUpdate?.operationId,updated.provenance.inputUpdate?.operationId);
@@ -155,13 +171,16 @@ test('input-update routes enforce Reviewer and View-as restrictions before readi
  let role:'admin'|'planner'|'reviewer'='reviewer',loads=0;
  const auth={initialize:async()=>{},authenticate:async()=>({userId:randomUUID(),tenantId:tenant,email:'public@example.test',role}),recordAccessAudit:async()=>{}} as unknown as StatefulAuthService;
  const objects=new ObjectStore('unused',{endpoint:process.env.CURSUS_TEST_S3_ENDPOINT,accessKeyId:'integration',secretAccessKey:'integration'});
- const app=await createStatefulApi({store,tenantId:tenant,tenantName:'Roles',objects,auth,publicOrigin:'https://fixture.test',manualPlanning:async()=>{loads++;return manualFixture().context;}});
+ const app=await createStatefulApi({store,tenantId:tenant,tenantName:'Roles',objects,inputUpdatesEnabled:true,auth,publicOrigin:'https://fixture.test',manualPlanning:async()=>{loads++;return manualFixture().context;}});
+ const disabled=await createStatefulApi({store,tenantId:tenant,tenantName:'Roles',objects,manualPlanning:async()=>{loads++;return manualFixture().context;}});
  try{
+  assert.equal((await disabled.inject({url:'/api/auth/me'})).json().features.inputUpdates,false);
+  assert.equal((await disabled.inject({method:'POST',url:'/api/scenarios/unknown/input-update-preview',headers:{'if-match':'"1"'},payload:{}})).statusCode,503);
   const headers={origin:'https://fixture.test',cookie:'cursus_session=fixture','if-match':'"1"'};
   for(const action of ['preview','apply'])assert.equal((await app.inject({method:'POST',url:`/api/scenarios/unknown/input-update-${action}`,headers,payload:{}})).statusCode,403);
   role='admin';const token=createHash('sha256').update('fixture').digest('hex');
   assert.equal((await app.inject({method:'POST',url:'/api/scenarios/unknown/input-update-preview',headers:{...headers,cookie:`cursus_session=fixture; cursus_view_as=reviewer.${token}`},payload:{}})).statusCode,403);
   role='planner';assert.equal((await app.inject({method:'POST',url:'/api/scenarios/unknown/input-update-preview',headers,payload:{}})).statusCode,400);
   assert.equal(loads,0);
- }finally{await app.close();await store.close();}
+ }finally{await app.close();await disabled.close();await store.close();}
 });

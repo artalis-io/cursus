@@ -13,6 +13,7 @@ x-app: &app
     - ./tests/acceptance:/acceptance:ro
   environment: &environment
     CURSUS_RUNTIME_MODE: stateful
+    CURSUS_INPUT_UPDATES_ENABLED: "1"
     CURSUS_DATABASE_URL_FILE: /acceptance-config/database-url
     CURSUS_R2_ENDPOINT: http://s3-test:8333
     CURSUS_R2_BUCKET: cursus-acceptance

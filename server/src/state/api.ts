@@ -51,7 +51,7 @@ function statefulPermissions(role: string) {
   return isRole(role) ? rolePermissions[role].filter(p => p !== 'optimization.cancel' && p !== 'analysis.generate' && p !== 'dataset.delete') : [];
 }
 
-export interface StatefulApiOptions { store: StatefulStore; tenantId: string; tenantName: string; auth?: StatefulAuthService; publicOrigin?: string; objects?: ObjectStore; maxUploadBytes?: number; manualPlanning?: ManualDatasetLoader;fleetSettings?:Omit<ManualDatasetContext,'day'>;handoffDestinations?:Destination[];geometryLoader?:typeof fillPlanGeometry }
+export interface StatefulApiOptions { store: StatefulStore; tenantId: string; tenantName: string; auth?: StatefulAuthService; publicOrigin?: string; objects?: ObjectStore; maxUploadBytes?: number; manualPlanning?: ManualDatasetLoader;fleetSettings?:Omit<ManualDatasetContext,'day'>;handoffDestinations?:Destination[];geometryLoader?:typeof fillPlanGeometry;inputUpdatesEnabled?:boolean }
 
 /** Stateful HTTP surface used by the runtime integration tests and, after
  * cutover, by the production entry point. Every repository is tenant-bound. */
@@ -67,7 +67,7 @@ export async function createStatefulApi(options: StatefulApiOptions): Promise<Fa
   const scenarios = new ScenarioRepository(options.store, options.tenantId);
   registerScenarioPreconditions(app, id => scenarios.get(id));
   registerProfileApi(app,options.store,options.tenantId,options.manualPlanning);
-  registerInputUpdates(app,options.store,options.tenantId,options.objects,options.manualPlanning);
+  registerInputUpdates(app,options.store,options.tenantId,options.inputUpdatesEnabled?options.objects:undefined,options.manualPlanning);
   const policyIssues=options.fleetSettings?(plan:Plan)=>plan.provenance.planningProfiles?.some(p=>p.kind==='fleet')?[]:fleetPolicyBlockers(plan,options.fleetSettings!):undefined;
   const workflow = new PlanWorkflow(options.store, options.tenantId,policyIssues);
   registerTransferApi(app,options.store,options.tenantId,options.handoffDestinations??[],workflow);
@@ -173,11 +173,11 @@ export async function createStatefulApi(options: StatefulApiOptions): Promise<Fa
   });
   app.get('/api/auth/me', async (req, reply) => {
     reply.header('Cache-Control', 'private, no-store');
-    if (!options.auth) return { email: 'local@cursus', tenantId: options.tenantId, tenantName: options.tenantName, role: 'admin', permissions: statefulPermissions('admin').filter(p => p !== 'role.preview'), build: buildInfo,features:{planningProfiles:true,acknowledgedHandoff:true,inputUpdates:!!options.objects&&!!options.manualPlanning} };
+    if (!options.auth) return { email: 'local@cursus', tenantId: options.tenantId, tenantName: options.tenantName, role: 'admin', permissions: statefulPermissions('admin').filter(p => p !== 'role.preview'), build: buildInfo,features:{planningProfiles:true,acknowledgedHandoff:true,inputUpdates:!!options.inputUpdatesEnabled&&!!options.objects&&!!options.manualPlanning} };
     const principal = await options.auth.authenticate(cookieValue(req.headers.cookie, 'cursus_session'));
     if (!principal || principal.tenantId !== options.tenantId) return reply.code(401).send({ error: 'authentication required' });
     const identity = viewIdentity(principal, req.headers.cookie);
-    return { ...identity, permissions: statefulPermissions(identity.effectiveRole), tenantName: await options.store.getTenantName(principal.tenantId), build: buildInfo,features:{planningProfiles:true,acknowledgedHandoff:true,inputUpdates:!!options.objects&&!!options.manualPlanning} };
+    return { ...identity, permissions: statefulPermissions(identity.effectiveRole), tenantName: await options.store.getTenantName(principal.tenantId), build: buildInfo,features:{planningProfiles:true,acknowledgedHandoff:true,inputUpdates:!!options.inputUpdatesEnabled&&!!options.objects&&!!options.manualPlanning} };
   });
   app.post('/api/auth/logout', async (req, reply) => {
     if (options.auth && req.headers.origin !== options.publicOrigin) return reply.code(403).send({ error: 'invalid request origin' });

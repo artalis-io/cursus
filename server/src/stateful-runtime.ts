@@ -50,7 +50,7 @@ const manualPlanning = admittedManualDatasetLoader(store,objects,config.authTena
 const handoffDestinations=process.env.CURSUS_HANDOFF_CONFIG_FILE?parseDestinations(JSON.parse(await readFile(process.env.CURSUS_HANDOFF_CONFIG_FILE,'utf8')),process.env.CURSUS_HANDOFF_TEST_HTTP==='1'):[];
 if(handoffDestinations.some(d=>d.tenantId!==config.authTenantId))throw new Error('Handoff configuration must belong to this deployment tenant.');
 const handoffSender=handoffDestinations.length?await HttpHandoffSender.create(handoffDestinations):undefined;
-const app = await createStatefulApi({ store, objects, auth, manualPlanning,fleetSettings, tenantId: config.authTenantId,
+const app = await createStatefulApi({ store, objects, auth, manualPlanning,fleetSettings,inputUpdatesEnabled:config.inputUpdatesEnabled, tenantId: config.authTenantId,
   tenantName: config.authTenantName, publicOrigin: config.authPublicOrigin, maxUploadBytes: config.maxUploadMB * 1024 * 1024,handoffDestinations });
 await app.register(fastifyStatic, { root: config.webDist, wildcard: false });
 app.setNotFoundHandler((req, reply) => req.method === 'GET' && !req.url.startsWith('/api/') && !req.url.startsWith('/health/')

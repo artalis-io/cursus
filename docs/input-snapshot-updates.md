@@ -43,6 +43,20 @@ fail closed. Expensive reads/evaluation happen outside database transactions.
 
 ## Operator flow and limits
 
+Deployment is opt-in: leave `CURSUS_INPUT_UPDATES_ENABLED=0` while upgrading both
+replicas. Verify identical feature-capable images and readiness first, then set
+it to `1` on both nodes using the normal deployment procedure. Disabled replicas
+hide the UI and reject update endpoints with 503; they still understand and
+enforce already archived input cycles. The isolated acceptance stack enables it
+explicitly. This change does not activate the feature in production.
+
+**Rollback compatibility:** after the first snapshot update, do not roll back
+to an image predating this feature. Such an image does not enforce archived-cycle
+read-only state or resolve logical dataset bindings. Disabling the feature stops
+new replacements, but does not make older application code compatible with
+existing replacements. Preserve production writes; use a reviewed compatible
+application rollback or backport, never an automatic database restore.
+
 In **Data**, upload, convert, validate and admit the revised input using the
 existing workflow. Admission alone does not replace an active plan. Open the
 current selected plan and choose **Update input snapshot** in the toolbar.
