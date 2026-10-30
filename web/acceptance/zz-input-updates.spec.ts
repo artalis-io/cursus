@@ -84,6 +84,10 @@ test('reviewed snapshot update preserves manual delivery identity, recalculates 
  const solved=await (await page.request.get(`/api/plans/${job.planId}?geometry=stored`)).json() as Plan;
  expect(solved.stats.servedOrders).toBe(2);expect(solved.provenance.validation.valid).toBe(true);
  expect(solved.vehicles.find(vehicle=>vehicle.id===v.id)?.trips.flatMap(t=>t.stops).some(s=>s.requestId===1130)).toBe(true);
+ const beforeAdoption=await (await page.request.get(`/api/scenarios/${scenario.id}`)).json() as Scenario;
+ expect(beforeAdoption.selectedPlanId).toBe(updated.id,'completing HGS does not automatically adopt its candidate');
+ const adoption=await page.request.post(`/api/scenarios/${scenario.id}/select-plan`,{headers:{origin,'if-match':`"${beforeAdoption.revision}"`},data:{planId:job.planId,selectionVersion:beforeAdoption.selectionVersion??0,acknowledgeIncomplete:false}});
+ expect(adoption.status(),await adoption.text()).toBe(200);
  // Archived workspace has no write controls, but its original plan remains readable.
  await page.evaluate(({planId,day})=>localStorage.setItem('cursus.manual-workspace.v1:acceptance',JSON.stringify({planId,day})),{planId:source.id,day:oldDay.id});await page.reload();
  await expect(page.getByRole('button',{name:'Open updated inputs',exact:true})).toBeVisible();
