@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { ChevronRight, Search, Ban, RotateCcw, GripVertical } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { ScrollArea } from '@/components/ui/scroll-area';
@@ -141,21 +141,29 @@ export function FleetPanel({
   const selectedRequestId=context&&(context.kind==='stop'||context.kind==='unassigned')?context.order.requestId:undefined;
   const selectedUnassignedKey=context?.kind==='unassigned'?context.order.orderNo:undefined;
   const contextKey=JSON.stringify([plan.id,context?.kind,selectedVehicleId,selectedTripIndex,selectedRequestId,context?.kind==='stop'?context.order.seq:selectedUnassignedKey]);
-  useEffect(()=>{
-    if(selectedVehicleId!==undefined&&selectedTripIndex!==undefined)setExpanded(prev=>prev.has(selectedVehicleId)?prev:new Set([...prev,selectedVehicleId]));
-    if(selectedUnassignedKey!==undefined)setUnassignedOpen(true);
-  },[plan.id,selectedVehicleId,selectedTripIndex,selectedRequestId,selectedUnassignedKey]);
   const canEdit = usePermission('scenario.edit');
   const [query, setQuery] = useState('');
   // Bulk-select of unassigned orders -> assign many to one vehicle at once.
   const [bulkSel, setBulkSel] = useState<Set<string>>(new Set());
   const [bulkVeh, setBulkVeh] = useState('');
-  useEffect(() => { setBulkSel(new Set()); setBulkVeh(''); setUnassignedOpen(plan.unassigned.length>0); }, [plan.id,plan.unassigned.length]);
+  useEffect(() => { setBulkSel(new Set()); setBulkVeh(''); }, [plan.id]);
   const toggleBulk = (orderNo: string) => setBulkSel((prev) => { const n = new Set(prev); if (n.has(orderNo)) n.delete(orderNo); else n.add(orderNo); return n; });
   const [expanded, setExpanded] = useState<Set<number>>(new Set());
-  const [unassignedOpen, setUnassignedOpen] = useState(plan.unassigned.length > 0);
+  // Derive the initial disclosure in the new plan's render, not in a later
+  // effect that could race with the user's expand/collapse click.
+  const [unassignedView,setUnassignedView]=useState({planId:plan.id,open:plan.unassigned.length>0});
+  const unassignedOpen=unassignedView.planId===plan.id?unassignedView.open:plan.unassigned.length>0;
+  const setUnassignedOpen=useCallback((value:boolean|((open:boolean)=>boolean))=>setUnassignedView(previous=>{
+    const open=previous.planId===plan.id?previous.open:plan.unassigned.length>0;
+    return {planId:plan.id,open:typeof value==='function'?value(open):value};
+  }),[plan.id,plan.unassigned.length]);
   const [onlyTailLift, setOnlyTailLift] = useState(false);
   const [onlyAdvisories, setOnlyAdvisories] = useState(false);
+  useEffect(()=>{
+    if(selectedVehicleId!==undefined&&selectedTripIndex!==undefined)setExpanded(prev=>prev.has(selectedVehicleId)?prev:new Set([...prev,selectedVehicleId]));
+    if(selectedUnassignedKey!==undefined)setUnassignedOpen(true);
+  },[plan.id,selectedVehicleId,selectedTripIndex,selectedRequestId,selectedUnassignedKey,setUnassignedOpen]);
+
 
   const advisoryIds = new Set<number>();
   for (const v of plan.provenance.validation.violations as { soft?: boolean; vehicle_id?: number }[]) if (v.soft && v.vehicle_id != null) advisoryIds.add(v.vehicle_id);
