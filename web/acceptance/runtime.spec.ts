@@ -16,6 +16,12 @@ async function expectPlanTotals(page:Page,plan:Plan){
  for(const [key,value] of Object.entries(expected))await expect(pane.locator(`[data-kpi="${key}"] [data-kpi-value]`)).toHaveText(value);
 }
 
+async function openUnassigned(page:Page){
+ const toggle=page.locator('[data-unassigned-toggle]');
+ if(await toggle.getAttribute('aria-expanded')!=='true')await toggle.click();
+ await expect(toggle).toHaveAttribute('aria-expanded','true');
+}
+
 async function manualStop(page:Page,plan:Plan,orderNo:string){
   const vehicle=plan.vehicles.find(v=>v.trips.some(tr=>tr.stops.some(s=>s.orderNo===orderNo)))!;
   const trip=vehicle.trips.find(tr=>tr.stops.some(s=>s.orderNo===orderNo))!;
@@ -142,7 +148,7 @@ test(`manual ${role}: keyboard move, deassign, reload, release and native replan
   await page.reload();await expect(page.getByText('5 / 6',{exact:true})).toBeVisible();
   const fleet=page.locator('aside').first();
   const unassignedOrder=fleet.getByRole('button').filter({hasText:'#PUBLIC-2'});
-  if(!(await unassignedOrder.isVisible()))await fleet.getByRole('button',{name:/Unassigned orders/i}).click();
+  await openUnassigned(page);
   await unassignedOrder.click();
   await page.getByRole('button',{name:'Let optimizer decide',exact:true}).click();
   const released=await applyManualDialog(page);expect(released.manual?.layout.history.length).toBe(3);
@@ -185,7 +191,7 @@ for(const role of ['admin','planner'] as const)test(`placements ${role}: unassig
   await page.getByRole('button',{name:'Manual planning',exact:true}).click();await manualStop(page,base,'PUBLIC-2');
   await page.getByRole('button',{name:'Return to unassigned',exact:true}).click();const partial=await applyManualDialog(page);
   const fleet=page.locator('aside').first(),order=fleet.getByRole('button').filter({hasText:'#PUBLIC-2'});
-  if(!await order.isVisible())await fleet.getByRole('button',{name:/Unassigned orders/i}).click();await order.click();
+  await openUnassigned(page);await order.click();
   await page.getByRole('button',{name:'Assign to vehicle…',exact:true}).click();
   const dialog=page.getByRole('dialog',{name:'Manual planning',exact:true}),section=dialog.getByRole('region',{name:'Find a place for this order',exact:true});
   const before=(await get<Plan[]>(page.request,'/api/plans')).length;
@@ -217,7 +223,7 @@ test('placements chaos: a late search response cannot restore controls after dem
     await page.getByRole('button',{name:'Manual planning',exact:true}).click();await manualStop(page,base,'PUBLIC-2');
     await page.getByRole('button',{name:'Return to unassigned',exact:true}).click();const partial=await applyManualDialog(page);
     const fleet=page.locator('aside').first(),order=fleet.getByRole('button').filter({hasText:'#PUBLIC-2'});
-    if(!await order.isVisible())await fleet.getByRole('button',{name:/Unassigned orders/i}).click();await order.click();
+    await openUnassigned(page);await order.click();
     await page.getByRole('button',{name:'Assign to vehicle…',exact:true}).click();
     const plans=(await get<Plan[]>(page.request,'/api/plans')).length;
     await page.route('**/placements',async route=>{const result=await route.fetch();expect(result.status()).toBe(200);captured.release();await held.wait;await route.fulfill({response:result});});
@@ -240,10 +246,19 @@ test('manual: exclusion, restore, bulk assignment and undo publish complete immu
   const region=page.getByRole('region',{name:'Excluded',exact:true});
   await region.getByRole('button',{name:'Expand trips',exact:true}).click();
   await region.getByRole('button',{name:'Restore',exact:true}).click();
-  const restored=await applyManualDialog(page);expect(restored.stats.servedOrders).toBe(excluded.stats.servedOrders);
+  const held=gate(),captured=gate(),finished=gate(),contextPath='**/api/plans/*/manual-context';let contextCaptured=false;
+  await page.route(contextPath,async route=>{contextCaptured=true;captured.release();try{await held.wait;await route.continue();}finally{finished.release();}},{times:1});
+  let restored:Plan;
+  try{
+    restored=await applyManualDialog(page);expect(restored.stats.servedOrders).toBe(excluded.stats.servedOrders);
+    await captured.wait;
+    const toggle=page.locator('[data-unassigned-toggle]');await expect(toggle).toHaveAttribute('aria-expanded','true');
+    await expect(page.getByRole('button',{name:'Select all',exact:true})).toHaveCount(0);
+    await toggle.click();await expect(toggle).toHaveAttribute('aria-expanded','false');await toggle.click();await expect(toggle).toHaveAttribute('aria-expanded','true');
+  }finally{held.release();if(contextCaptured)await finished.wait;await page.unroute(contextPath);}
+
   const unassigned=restored.unassigned;
-  const header=page.locator('aside').first().getByRole('button',{name:/Unassigned orders/i});
-  if(!(await page.getByRole('checkbox').count()))await header.click();
+  await openUnassigned(page);
   await page.getByRole('button',{name:'Select all',exact:true}).click();
   await page.getByRole('combobox',{name:'Assign to vehicle…',exact:true}).selectOption(String(vehicle.id));
   await page.getByRole('button',{name:'Assign',exact:true}).click();
@@ -1612,7 +1627,7 @@ test('duplicate display references survive keyboard reordering, native replannin
  }
  expect(current.unassigned.map(o=>o.requestId).sort()).toEqual([130,170]);
  const target=page.getByRole('checkbox',{name:'Select order PUBLIC-REPEAT · 170',exact:true});
- if(!(await target.count()))await page.locator('aside').first().getByRole('button',{name:/Unassigned orders/i}).click();
+ await openUnassigned(page);
  await target.check();await expect(page.getByRole('checkbox',{name:'Select order PUBLIC-REPEAT · 130',exact:true})).not.toBeChecked();
  await page.getByRole('combobox',{name:'Assign to vehicle…',exact:true}).selectOption('10');await page.getByRole('button',{name:'Assign',exact:true}).click();
  const assigned=await applyManualDialog(page);expect(assigned.unassigned.map(o=>o.requestId)).toEqual([130]);

@@ -245,14 +245,14 @@ export function FleetPanel({
       </ScrollArea>
       <Separator />
       <div className="shrink-0">
-        <button type="button" onClick={() => setUnassignedOpen((o) => !o)}
+        <button type="button" data-unassigned-toggle aria-expanded={unassignedOpen} aria-controls={unassignedOpen?'cursus-unassigned-list':undefined} onClick={() => setUnassignedOpen((o) => !o)}
           className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-muted-foreground hover:bg-accent/40">
           <ChevronRight className={`h-3.5 w-3.5 transition-transform ${unassignedOpen ? 'rotate-90' : ''}`} />
           {t('fleet.unassigned')}
           <span className={`tnum ml-auto rounded px-1.5 ${plan.unassigned.length ? 'bg-warning/15 text-warning' : 'bg-muted text-muted-foreground'}`}>{plan.unassigned.length}</span>
         </button>
         {unassignedOpen && (
-          <div className="px-2 pb-2">
+          <div id="cursus-unassigned-list" className="px-2 pb-2">
             {canEdit && onBulkAssign && plan.unassigned.length > 0 && (
               <div className="flex items-center gap-2 py-1 text-[10px] text-muted-foreground">
                 <button type="button" onClick={() => setBulkSel((prev) => prev.size === plan.unassigned.length ? new Set() : new Set(plan.unassigned.map((u) => deliveryToken(u.orderNo,u.requestId))))}
