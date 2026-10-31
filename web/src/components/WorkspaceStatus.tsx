@@ -17,11 +17,11 @@ export function WorkspaceStatus({plan,baseline,scenario,loading,saving,running,c
   {(evidence,detail)=>{
    const approval=approvalSummary(evidence.workflow,evidence.phase,scenario.revision,pending);
    return <ReadinessPanel plan={plan} baseline={baseline} scenario={scenario} pending={pending}
-    freshness={<>{freshness==='current'?t('readiness.current'):t(`status.freshness.${freshness}`)}{freshness==='stale'&&changesCount>0&&!conflict&&<span className="block">{t('edits.pending',{n:changesCount})}</span>}</>}
+    freshness={<>{freshness==='current'?t('readiness.current'):t(`status.freshness.${freshness}`)}{freshness==='stale'&&changesCount>0&&!conflict&&<span className="ml-1">{t('edits.pending',{n:changesCount})}</span>}</>}
     changesCount={freshness==='stale'&&!conflict&&!fresh?changesCount:0} onOpenChanges={onOpenChanges}
-    approval={<span data-testid="status-approval" className="min-w-0 flex-1 basis-32">
+    approval={<span data-testid="status-approval" className="min-w-0">
      <span className="font-semibold">{t('status.approval')}</span>
-     <span className={`mt-0.5 block ${approval.confirmed?'text-primary':approval.state==='loading'?'text-muted-foreground':'text-warning'}`}>{t(`status.approval.${approval.state}`)}{approval.savedSnapshot?` · ${t('status.savedSnapshot')}`:''}</span>
+     <span className={`ml-1 ${approval.confirmed?'text-primary':approval.state==='loading'?'text-muted-foreground':'text-warning'}`}>{t(`status.approval.${approval.state}`)}{approval.savedSnapshot?` · ${t('status.savedSnapshot')}`:''}</span>
     </span>}>
      <div id="cursus-plan-review" tabIndex={-1} className="focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary">{detail}</div>
    </ReadinessPanel>;

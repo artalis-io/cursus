@@ -3,6 +3,7 @@ import { DEFAULT_LAYOUT, LAYOUT_KEY, LIMITS, clamp, fitLayout, parseLayout, type
 import { DEFAULT_VISIBILITY, VISIBILITY_KEY, parseVisibility } from '@/lib/workspace-layout';
 
 export function useWorkspaceLayout(fleetOpen: boolean, inspectorOpen: boolean) {
+  // Historical kpis=false means compact detail now; core totals are never hidden.
   const [visibility, setVisibility] = useState(() => {
     try { return parseVisibility(localStorage.getItem(VISIBILITY_KEY)); } catch { return { ...DEFAULT_VISIBILITY }; }
   });
