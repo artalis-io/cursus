@@ -1739,8 +1739,11 @@ async function statusScenario(page:Page,label:string){
  return {plan:await get<Plan>(page.request,`${peer}/api/plans/${job!.planId}`),scenario,headers};
 }
 async function reopenStatusPlan(page:Page,id:string){
+ const refreshed=page.waitForResponse(response=>new URL(response.url()).pathname==='/api/plans'&&response.request().method()==='GET');
  await selectWorkspaceAction(page,'Plans');
+ await (await refreshed).finished();
  const dialog=page.getByRole('dialog'),target=dialog.locator(`[data-plan-id="${id}"]`).getByRole('button',{name:'Reopen',exact:true});
+ await expect(dialog.locator('[data-radix-scroll-area-viewport]')).toBeVisible();
  await expect(target).toBeVisible();
  // Exercise the actual CSS entrance at both intermediate points. Its center
  // must stay anchored even while a long list changes the dialog's height.
