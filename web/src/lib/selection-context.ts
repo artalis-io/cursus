@@ -1,4 +1,4 @@
-import type {Plan,Selection,Stop,Vehicle,Trip} from '@/types';
+import type {Plan,Selection,Stop,Vehicle,Trip} from '../types';
 import {selectedStop} from './stop-selection';
 import {selectedUnassigned} from './unassigned-selection';
 
