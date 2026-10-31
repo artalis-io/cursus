@@ -180,7 +180,10 @@ export function TopBar({
       </div>
       <div className="flex min-h-11 min-w-0 flex-wrap items-center justify-between gap-2 border-t border-white/10 py-1.5">
         <WorkspaceNavigation prepare={prepare} planning={planning} library={library} review={review} contextKey={`${plan.id}/${scenario.id}/${role}/${permissions?.join(',')}/${exportPending}`} pending={exportPending} issuesCount={issuesCount}/>
-        <div className="ml-auto flex shrink-0 items-center gap-1.5">
+        <div className="ml-auto flex max-w-full shrink-0 flex-wrap items-center justify-end gap-1.5">
+        {changesCount>0&&<Button type="button" variant="graphite" size="sm" className="max-w-[120px] border border-warning/60 text-warning" title={t('status.changes',{n:changesCount})} onClick={onOpenChanges}>
+          <span className="truncate">{t('topbar.changes')} ({changesCount})</span>
+        </Button>}
         {/* Solve settings (objective + time budget) */}
         {canEdit && <div className="relative">
           <Button variant="graphite" size="icon" className="h-8 w-8 border border-white/15" title={t('topbar.settings')} aria-label={t('topbar.settings')}

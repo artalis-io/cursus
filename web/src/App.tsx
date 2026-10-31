@@ -744,9 +744,10 @@ export default function App() {
           onOpenHelp={() => setHelpOpen(true)}
         />
         {candidate&&<CandidatePanel key={candidate.plan.id} {...candidate} busy={candidateBusy} canAdopt={canEdit} onAdopt={ack=>void chooseCandidate(true,ack)} onKeep={()=>void chooseCandidate(false)} onCompare={()=>setCompareOpen(true)}/>}
-        <div id="cursus-kpi-pane" className="shrink-0" hidden={!workspace.visibility.kpis}>
+        <div id="cursus-kpi-pane" className="shrink-0">
           <KpiStrip plan={plan} baseline={baseline} compare={isReplan} job={job}
-            previewDistanceKm={previewTotals?.distanceKm} previewCostTotal={previewTotals?.costTotal} />
+            previewDistanceKm={previewTotals?.distanceKm} previewCostTotal={previewTotals?.costTotal}
+            compact={!workspace.visibility.kpis} onToggleDetails={()=>workspace.toggleVisibility('kpis')} />
         </div>
         {manualContext?.requiresRevalidation&&<div role="status" className="shrink-0 border-b border-warning/40 bg-warning/10 px-4 py-2 text-sm">{t('manual.policyChanged')}</div>}
         {manualContext?.reason==='fresh_plan_required'&&<div role="status" className="shrink-0 border-b border-warning/40 bg-warning/10 px-4 py-2 text-sm">{t('manual.freshPlanRequired')}</div>}
@@ -784,7 +785,7 @@ export default function App() {
           <main className="flex min-w-0 flex-1 flex-col">
             <div id="cursus-map-pane" className="relative min-h-0 flex-1">
               <div data-panel-controls role="group" aria-label={t('layout.controls')} className="pointer-events-none absolute left-3 top-3 z-10 grid grid-cols-[repeat(3,2rem)] grid-rows-[repeat(3,2rem)] gap-1 [&>button]:pointer-events-auto">
-                <Button variant="graphite" size="icon" className="col-start-2 row-start-1 h-8 w-8 opacity-90" aria-label={t(workspace.visibility.kpis ? 'layout.collapseKpis' : 'layout.openKpis')} title={t(workspace.visibility.kpis ? 'layout.collapseKpis' : 'layout.openKpis')} aria-expanded={workspace.visibility.kpis} aria-controls="cursus-kpi-pane" onClick={() => workspace.toggleVisibility('kpis')}>
+                <Button variant="graphite" size="icon" className="col-start-2 row-start-1 h-8 w-8 opacity-90" aria-label={t(workspace.visibility.kpis ? 'layout.compactKpis' : 'layout.expandKpis')} title={t(workspace.visibility.kpis ? 'layout.compactKpis' : 'layout.expandKpis')} aria-expanded={workspace.visibility.kpis} aria-controls="cursus-kpi-pane" onClick={() => workspace.toggleVisibility('kpis')}>
                   {workspace.visibility.kpis ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
                 </Button>
                 <Button variant="graphite" size="icon" className="col-start-1 row-start-2 h-8 w-8 opacity-90" aria-label={leftOpen ? 'Collapse fleet panel' : 'Open fleet panel'} title={leftOpen ? 'Collapse fleet panel' : 'Open fleet panel'} aria-expanded={leftOpen} aria-controls="cursus-fleet-pane" onClick={() => setLeftOpen((o) => !o)}>

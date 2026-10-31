@@ -14,19 +14,19 @@ export function ReadinessPanel({ plan, baseline, scenario, pending, freshness, a
   const tone = review.status === 'passed' ? 'text-primary' : 'text-warning';
   return (
     <details id="cursus-status-details" className="group shrink-0 border-b border-divider bg-card" aria-label={t('readiness.title')}>
-      <summary className="flex cursor-pointer flex-wrap items-center gap-x-3 gap-y-1 px-4 py-2 text-xs focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary">
+      <summary className="flex cursor-pointer flex-wrap items-center gap-x-4 gap-y-1 px-3 py-1.5 text-[11px] focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary">
         <ClipboardCheck aria-hidden className="h-4 w-4 shrink-0" />
         <span className="sr-only">{t('readiness.title')}</span>
-        <span data-testid="status-coverage" className="min-w-0 flex-1 basis-64">
+        <span data-testid="status-coverage" className="min-w-0">
           <span className="font-semibold">{t('status.coverage')}</span>
           <span className={`ml-2 font-medium ${tone}`}>{t(`readiness.${review.status}`)}</span>
-          <span className="mt-0.5 block text-muted-foreground">{t('readiness.coverageCount', { served: plan.stats.servedOrders, total: plan.stats.totalOrders })} · {t('kpi.unassignedN',{n:plan.unassigned.length})}
+          <span className="ml-1 text-muted-foreground">{plan.unassigned.length>0?` · ${t('kpi.unassignedN',{n:plan.unassigned.length})}`:''}
             {review.checks.some(check=>check.state==='failed')||review.hardViolations>0 ? ` · ${t('status.failedConstraints')}` : review.checks.some(check=>check.state==='unknown')||plan.provenance?.validation?.valid!==true ? ` · ${t('status.unknownConstraints')}` : ''}
           </span>
         </span>
-        <span data-testid="status-freshness" className="min-w-0 flex-1 basis-56">
+        <span data-testid="status-freshness" className="min-w-0">
           <span className="font-semibold">{t('readiness.freshness')}</span>
-          <span className={`mt-0.5 block ${review.fresh?'text-muted-foreground':'text-warning'}`}>{freshness??t(review.fresh?'readiness.current':'readiness.stale')}</span>
+          <span className={`ml-1 ${review.fresh?'text-muted-foreground':'text-warning'}`}>{freshness??t(review.fresh?'readiness.current':'readiness.stale')}</span>
         </span>
         {approval}
         <span className="ml-auto shrink-0 text-muted-foreground">{t('readiness.details')}</span>
