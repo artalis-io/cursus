@@ -37,8 +37,8 @@ test('small screens retain fixed sizes; resizing a window never rewrites the des
 });
 
 test('timeline fits the real remaining workspace after readiness expands, even at very small heights', () => {
-  for (const height of [0, 80, 120, 200, 300, 700]) {
-    const layout = fitLayout(DEFAULT_LAYOUT, 1440, height, true, true);
+  for(const width of [375,600,1440]) for (const height of [0, 80, 120, 200, 300, 700]) {
+    const layout = fitLayout(DEFAULT_LAYOUT, width, height, true, true);
     expect(layout.timeline).toBeGreaterThanOrEqual(0);
     expect(layout.timeline).toBeLessThanOrEqual(Math.max(0, height - 120 - HANDLE_SIZE));
     expect(layout.timelineMin).toBeLessThanOrEqual(layout.timelineMax);

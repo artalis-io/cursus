@@ -1983,6 +1983,14 @@ for(const role of ['admin','planner','reviewer'] as const)test(`interaction ${ro
  await page.screenshot({path:testInfo.outputPath(`selection-${role}-hu.png`)});
  await page.getByRole('button',{name:'Kijelölés törlése',exact:true}).click();await expect(page.locator('[data-map-selection]')).toHaveCount(0);
  await expect(fleet.locator('[data-selected="true"]')).toHaveCount(0);
+ await page.setViewportSize({width:375,height:780});
+ await page.getByRole('button',{name:'Flottapanel bezárása',exact:true}).click();
+ await page.getByRole('button',{name:'Részletező bezárása',exact:true}).click();
+ await page.getByRole('button',{name:'Open fleet panel',exact:true}).click();
+ const mobileVehicle=page.locator(`#cursus-fleet-pane [data-vehicle-id="${vehicle.id}"] [data-inspect-vehicle]`);
+ await mobileVehicle.focus();await page.keyboard.press('Enter');
+ await expect(page.locator('#cursus-fleet-pane')).toHaveCount(0);await expect(page.locator('[data-inspector-heading]')).toBeFocused();
+ await page.getByRole('button',{name:'Részletező bezárása',exact:true}).click();await expect(page.locator('#cursus-map-pane canvas')).toBeFocused();
  expect(writes).toEqual([]);expect(await baseline(page)).toEqual(originalBaseline);expect(await get<Plan>(page.request,`${peer}/api/plans/${base.id}`)).toEqual(base);await expectPlanTotals(page,base);
 });
 

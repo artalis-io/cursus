@@ -38,7 +38,10 @@ solver parameters, constraints, publication, or API/persistence contracts.
   instead of intercepting inspector actions when the map column is narrow. Both
   panels have their own Close control, reachable even when the map is too narrow
   for floating controls. A deliberate selection opens the inspector; on narrow
-  screens it closes the fleet to make room, and clearing selection returns to the map.
+  screens it closes the fleet to make room and focuses the inspector heading.
+  Closing the inspector returns keyboard focus to the map; clearing selection
+  also returns to the map. Short mobile windows clamp the timeline to the
+  available height, preserving space for the map without rewriting saved sizes.
 
 ## Validation
 

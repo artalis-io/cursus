@@ -188,7 +188,7 @@ export default function App() {
   const [nav, setNav] = useState<{ stack: Selection[]; idx: number }>({ stack: [null], idx: 0 });
   const selection = nav.stack[nav.idx] ?? null;
   const navigate = useCallback((sel: Selection) => {
-    if(sel){setRightOpen(true);if(window.innerWidth<1024)setLeftOpen(false);}
+    if(sel){setRightOpen(true);if(window.innerWidth<1024){setLeftOpen(false);requestAnimationFrame(()=>document.querySelector<HTMLElement>('#cursus-inspector-pane [data-inspector-heading]')?.focus({preventScroll:true}));}}
     else if(window.innerWidth<1024)setRightOpen(false);
     setNav((n) => {
       if (sameSel(n.stack[n.idx] ?? null, sel)) return n;
@@ -222,6 +222,7 @@ export default function App() {
   const closeHelp = useCallback(() => { setHelpOpen(false); try { localStorage.setItem('otto.helpSeen', '1'); } catch { /* ignore */ } }, []);
   const [leftOpen, setLeftOpen] = useState(true);
   const [rightOpen, setRightOpen] = useState(true);
+  const closeInspector=()=>{setRightOpen(false);if(window.innerWidth<1024)requestAnimationFrame(()=>document.querySelector<HTMLElement>('#cursus-map-pane canvas')?.focus({preventScroll:true}));};
   const workspace = useWorkspaceLayout(leftOpen, rightOpen);
   // Fleet-panel filter (tail-lift / advisories / search) -> the map shows only
   // the matching vehicles' routes. null = no filter (show all).
@@ -815,7 +816,7 @@ export default function App() {
 
           {rightOpen && (
             <aside id="cursus-inspector-pane" className="w-[340px] shrink-0 overflow-hidden border-l border-divider" style={{ width: workspace.layout.inspector }}>
-              <Inspector plan={plan} baseline={baseline} scenario={scenario} selection={selection} onSelect={navigate} solving={!!solving||manualBusy} manualActions={manualActions} onClose={()=>setRightOpen(false)} fleet={manualMode&&manualContext?.enabled?manualContext.fleet:undefined}
+              <Inspector plan={plan} baseline={baseline} scenario={scenario} selection={selection} onSelect={navigate} solving={!!solving||manualBusy} manualActions={manualActions} onClose={closeInspector} fleet={manualMode&&manualContext?.enabled?manualContext.fleet:undefined}
                 onBack={goBack} onForward={goForward} canGoBack={canGoBack} canGoForward={canGoForward}
                 onMarkUnavailable={(id) => changeVehicle(id,true)}
                 onRestoreVehicle={(id) => changeVehicle(id,false)}

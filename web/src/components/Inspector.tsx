@@ -641,7 +641,7 @@ function Panel({ children, nav }: { children: React.ReactNode; nav: { onBack: ()
           className="flex h-6 w-6 items-center justify-center rounded text-muted-foreground hover:bg-accent hover:text-foreground disabled:opacity-30 disabled:hover:bg-transparent">
           <ArrowRight className="h-4 w-4" />
         </button>
-        <h2 className="ml-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">{t('inspector.title')}</h2>
+        <h2 data-inspector-heading tabIndex={-1} className="ml-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary">{t('inspector.title')}</h2>
         {nav.onClose&&<button type="button" aria-label={t('interaction.closeInspector')} title={t('interaction.closeInspector')} onClick={nav.onClose} className="ml-auto flex h-6 w-6 shrink-0 items-center justify-center rounded text-muted-foreground hover:bg-accent"><X aria-hidden className="h-4 w-4"/></button>}
       </div>
       <Separator />
