@@ -1745,6 +1745,13 @@ async function reopenStatusPlan(page:Page,id:string){
  // Exercise the actual CSS entrance at both intermediate points. Its center
  // must stay anchored even while a long list changes the dialog's height.
  const geometry=await dialog.evaluate(element=>{
+  // CI may finish the short entrance before Playwright reaches evaluate.
+  // Replay the element's real stylesheet animation synchronously, then sample
+  // its actual keyframes without depending on runner scheduling.
+  const inlineAnimation=(element as HTMLElement).style.animation;
+  (element as HTMLElement).style.animation='none';
+  void (element as HTMLElement).offsetWidth;
+  (element as HTMLElement).style.animation=inlineAnimation;
   const animation=element.getAnimations().find(a=>a instanceof CSSAnimation&&a.animationName==='enter');
   if(!animation||!animation.effect)throw Error('Expected the real dialog entrance animation');
   const duration=Number(animation.effect.getTiming().duration),samples=[];
