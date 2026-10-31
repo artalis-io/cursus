@@ -183,3 +183,12 @@ Approval evidence is bound to the displayed plan/revision. Missing, failed, malf
 Regression coverage includes existing native solve/manual/KPI/permission/export/handoff/input-update flows, EN/HU responsive disclosure and keyboard checks for all roles, no planning writes from disclosure/retry, failure/retry and overlapping-read guards, old-plan response isolation, and cross-replica review with acknowledgement invalidation. Release evidence and production activation remain separate.
 
 Workspace menus are disabled while a workspace navigation is loading. Their invalidation key follows plan/scenario and actual identity/permission changes; a background manual-capability refresh within the same authorized workspace does not dismiss an open menu. The snapshot-update regression holds that refresh to verify the distinction.
+
+
+## KPI visibility correction (local preview)
+
+Core plan totals always remain visible: served/total orders, unassigned orders, vehicles, trips, distance and estimated cost. The old persisted `kpis=false` preference selects a compact display; it cannot hide the totals. A labeled control beside the totals and the existing map control toggle detail density. Reset restores the detailed display. All six metrics wrap into a three-column grid on narrow screens rather than requiring horizontal scrolling. Unknown cost is shown as a dash.
+
+Displayed primary totals belong to the saved plan. Uncommitted route previews appear separately, explicitly labeled Preview and Replan to apply, even in compact mode. Comparison deltas and solver metadata are secondary detail. Existing service-loss safeguards remain in force. Coverage/constraint, freshness and approval evidence remain independent in a slim secondary line, with existing detailed review controls and persistent warnings unchanged. Pending changes also have a direct affordance beside the planning action.
+
+This corrects the earlier assumption that hiding all KPIs was a useful way to reclaim workspace space. It changes presentation only; no API, optimizer, authorization, approval or persistence contract changes. Real-data screenshots are kept outside the repository. Production is not changed by the preview.

@@ -1,3 +1,4 @@
+import {km,money} from '../src/lib/format';
 import type {Workflow} from '../../server/src/workflow-contract';
 import {selectWorkspaceAction,openWorkspaceMenu} from '../tests/workspace-navigation';
 import { test, expect, type Page, type APIRequestContext } from '@playwright/test';
@@ -8,6 +9,12 @@ import type { DaySummary, Plan, Scenario, PlacementSuggestions } from '../src/ty
 const peer = process.env.CURSUS_ACCEPTANCE_PEER!;
 const compose = JSON.parse(process.env.CURSUS_ACCEPTANCE_COMPOSE ?? 'null') as string[] | null;
 const expectedOrders = ['PUBLIC-1', 'PUBLIC-2', 'PUBLIC-3', 'PUBLIC-5', 'PUBLIC-6', 'PUBLIC-7'];
+
+async function expectPlanTotals(page:Page,plan:Plan){
+ const pane=page.locator('#cursus-kpi-pane');await expect(pane).toBeVisible();
+ const expected={served:`${plan.stats.servedOrders} / ${plan.stats.totalOrders}`,unassigned:String(plan.unassigned.length),vehicles:String(plan.stats.vehiclesUsed),trips:String(plan.stats.trips),distance:km(plan.stats.totalDistanceKm),cost:plan.cost?money(plan.cost.total,plan.cost.currency,true):'—'};
+ for(const [key,value] of Object.entries(expected))await expect(pane.locator(`[data-kpi="${key}"] [data-kpi-value]`)).toHaveText(value);
+}
 
 async function manualStop(page:Page,plan:Plan,orderNo:string){
   const vehicle=plan.vehicles.find(v=>v.trips.some(tr=>tr.stops.some(s=>s.orderNo===orderNo)))!;
@@ -969,6 +976,7 @@ test(`${role}: reorder requires recomputed preview and a correct native replan w
   await inspector.locator('ol li').first().locator('button[data-move$=":1"]').click();
   expect((await evaluated).status()).toBe(200);
   await expect(inspector.getByText('Preview of this order (recomputed). Apply it with Replan.')).toBeVisible();
+  await expectPlanTotals(page,base); // A staged preview must not replace saved totals.
   const plan = await finishSolve(page, () => page.getByRole('button', { name: 'Replan', exact: true }).click());
   const stops = plan.vehicles.find(v => v.id === vehicle.id)!.trips.flatMap(t => t.stops.map(s => s.orderNo));
   const original = vehicle.trips[0]!.stops.map(s => s.orderNo);
@@ -1050,7 +1058,7 @@ test('Reviewer can review snapshot readiness, baseline metrics and Hungarian det
   }
 });
 
-test('timeline and KPI collapse persist, preserve dimensions, restore and never submit planning writes', async ({ page }) => {
+test('timeline collapse and KPI detail persist without ever hiding plan totals or submitting writes', async ({ page }) => {
   await login(page, 'reviewer@acceptance.example.test');
   async function expectControlCross() {
     const boxes = await page.locator('[data-panel-controls]').evaluate(el => Array.from(el.querySelectorAll('button')).map(button => {
@@ -1073,12 +1081,14 @@ test('timeline and KPI collapse persist, preserve dimensions, restore and never 
   await expect(page.getByRole('group', { name: 'Panel controls', exact: true })).toBeVisible();
   await expectControlCross();
   const original = await baseline(page);
+  await expectPlanTotals(page,original);
   const writes: string[] = [];
   page.on('request', r => { if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(r.method())) writes.push(r.url()); });
   const timeline = page.locator('#cursus-timeline-pane'), kpis = page.locator('#cursus-kpi-pane');
   const handle = page.getByRole('separator', { name: 'Resize timeline', exact: true });
   await handle.focus(); await page.keyboard.press('ArrowUp');
   const height = await handle.getAttribute('aria-valuenow');
+  const values=await kpis.locator('[data-kpi-value]').allTextContents();expect(values).toHaveLength(6);
   const mapBefore = (await page.locator('#cursus-map-pane').boundingBox())!.height;
   await timeline.getByRole('button', { name: 'Play', exact: true }).click();
   await expect(timeline.getByRole('button', { name: 'Pause', exact: true })).toBeVisible();
@@ -1090,18 +1100,18 @@ test('timeline and KPI collapse persist, preserve dimensions, restore and never 
   await expect(timeline.getByRole('button', { name: 'Play', exact: true })).toBeVisible();
   await expect(timeline.getByRole('button', { name: 'Stop', exact: true })).toBeDisabled();
   await page.getByRole('button', { name: 'Collapse timeline', exact: true }).click();
-  await page.getByRole('button', { name: 'Collapse KPI bar', exact: true }).click();
-  await expect(kpis).toBeHidden();
+  await page.getByRole('button', { name: 'Compact KPI bar', exact: true }).click();
+  await expect(kpis).toBeVisible(); await expect(kpis.locator('[data-compact]')).toHaveAttribute('data-compact','true');
   expect((await page.locator('#cursus-map-pane').boundingBox())!.height).toBeGreaterThan(mapBefore);
   await page.reload();
   await expect(page.getByRole('button', { name: 'Open timeline', exact: true })).toHaveAttribute('aria-expanded', 'false');
-  await expect(timeline).toBeHidden(); await expect(kpis).toBeHidden();
+  await expect(timeline).toBeHidden(); await expect(kpis).toBeVisible(); await expect(kpis.locator('[data-compact]')).toHaveAttribute('data-compact','true');
   await expectControlCross();
   await page.getByRole('button', { name: 'Open timeline', exact: true }).click();
   await expect(handle).toHaveAttribute('aria-valuenow', height!);
   await expect(timeline.getByRole('button', { name: 'Play', exact: true })).toBeVisible();
   await expect(timeline.getByRole('button', { name: 'Stop', exact: true })).toBeDisabled();
-  await expect(kpis).toBeHidden();
+  await expect(kpis).toBeVisible(); await expect(kpis.locator('[data-compact]')).toHaveAttribute('data-compact','true');
   await page.getByRole('button', { name: 'Collapse timeline', exact: true }).click();
   await page.getByRole('button', { name: 'Reset layout', exact: true }).click();
   await expect(timeline).toBeVisible(); await expect(kpis).toBeVisible();
@@ -1114,11 +1124,13 @@ test('timeline and KPI collapse persist, preserve dimensions, restore and never 
   await expectControlCross();
   await expect(page.getByRole('button', { name: 'Elrendezés alaphelyzetbe', exact: true })).toBeVisible();
   await page.getByRole('button', { name: 'Idővonal összecsukása', exact: true }).click();
-  await page.getByRole('button', { name: 'Mutatósáv összecsukása', exact: true }).click();
-  await expect(timeline).toBeHidden(); await expect(kpis).toBeHidden();
+  await page.getByRole('button', { name: 'Kompakt mutatósáv', exact: true }).click();
+  await expect(timeline).toBeHidden(); await expect(kpis).toBeVisible(); await expect(kpis.locator('[data-compact]')).toHaveAttribute('data-compact','true');
   await page.getByRole('button', { name: 'Idővonal megnyitása', exact: true }).click();
-  await page.getByRole('button', { name: 'Mutatósáv megnyitása', exact: true }).click();
+  await page.getByRole('button', { name: 'Részletes mutatósáv', exact: true }).click();
   await expect(timeline).toBeVisible(); await expect(kpis).toBeVisible();
+  expect(await kpis.locator('[data-kpi-value]').allTextContents()).toEqual(values);
+  for(const cell of await kpis.locator('[data-kpi]').all()){await expect(cell).toBeVisible();expect((await cell.boundingBox())!.width).toBeGreaterThan(60);}
   expect(writes).toEqual([]); expect(await baseline(page)).toEqual(original);
 });
 
@@ -1872,4 +1884,26 @@ test('compact status: long history stays centered and its last plan reopens by p
  await page.route('**/api/plans?day=*',route=>route.fulfill({json:[...Array.from({length:60},(_,i)=>({...target,id:`layout-only-${i}`,label:`History card ${i+1}`})),target]}));
  await reopenStatusPlan(page,plan.id);
  await expect(page.getByTestId('status-approval')).toContainText('Draft');
+});
+
+
+test('plan totals: old hidden preference keeps all six saved totals visible in EN/HU at desktop and mobile widths',async({page},testInfo)=>{
+ await login(page,'reviewer@acceptance.example.test');
+ await page.evaluate(()=>localStorage.setItem('cursus.workspace-visibility.v1',JSON.stringify({version:1,kpis:false,timeline:false})));
+ await page.reload();const plan=await baseline(page),writes:string[]=[];
+ page.on('request',r=>{if(new URL(r.url()).pathname.startsWith('/api/')&&!['GET','HEAD','OPTIONS'].includes(r.method()))writes.push(r.url());});
+ for(const width of [375,600,1440])for(const hu of [false,true]){
+  await page.setViewportSize({width,height:1000});await page.getByRole('button',{name:hu?'HU':'EN',exact:true}).click();
+  await expectPlanTotals(page,plan);await expect(page.locator('#cursus-kpi-details')).toBeHidden();
+  const pane=page.locator('#cursus-kpi-pane');expect(await pane.evaluate(el=>el.scrollWidth<=el.clientWidth+1)).toBe(true);
+  for(const metric of await pane.locator('[data-kpi]').all())await expect(metric).toBeInViewport({ratio:1});
+  const toggle=page.getByRole('button',{name:hu?'Több mutatórészlet':'More KPI detail',exact:true});
+  await toggle.focus();await page.keyboard.press('Enter');await expect(page.locator('#cursus-kpi-details')).toBeVisible();await expectPlanTotals(page,plan);
+  await page.getByRole('button',{name:hu?'Kevesebb mutatórészlet':'Less KPI detail',exact:true}).click();await expectPlanTotals(page,plan);
+  await page.screenshot({path:testInfo.outputPath(`plan-totals-${hu?'hu':'en'}-${width}.png`)});
+ }
+ await page.route('**/api/plans/*',async route=>{const response=await route.fetch();if(response.ok()){const body=await response.json();delete body.cost;await route.fulfill({response,json:body});}else await route.fulfill({response});});
+ await page.reload();await expect(page.locator('[data-kpi="cost"] [data-kpi-value]')).toHaveText('—');
+ await expect(page.locator('#cursus-kpi-pane [data-kpi]')).toHaveCount(6);
+ expect(writes).toEqual([]);expect(await baseline(page)).toEqual(plan);
 });
