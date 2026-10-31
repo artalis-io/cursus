@@ -1036,9 +1036,10 @@ test('Reviewer can review snapshot readiness, baseline metrics and Hungarian det
   await login(page, 'reviewer@acceptance.example.test');
   const plan = await baseline(page);
   const panel = page.locator('details[aria-label="Dispatch readiness"]');
-  await expect(panel.locator('summary')).toContainText(`${plan.stats.servedOrders}/${plan.stats.totalOrders} orders served`);
+  await expectPlanTotals(page,plan);
+  await expect(panel.getByTestId('status-coverage')).toBeVisible();
   await panel.locator('summary').click();
-  await expect(panel.getByRole('region', { name: 'Coverage', exact: true })).toBeVisible();
+  await expect(panel.getByRole('region', { name: 'Coverage', exact: true })).toContainText(`${plan.stats.servedOrders}/${plan.stats.totalOrders} orders served`);
   const constraints = panel.getByRole('region', { name: 'Constraints', exact: true });
   for (const label of ['Gross vehicle weight (GVW)', 'Tail-lift', 'Payload / pallet capacity', 'Time windows', 'Locked routes'])
     await expect(constraints.getByText(label, { exact: true })).toBeVisible();
