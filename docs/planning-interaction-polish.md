@@ -32,6 +32,12 @@ solver parameters, constraints, publication, or API/persistence contracts.
   remains governed by existing permissions in the UI and API.
 - Reveal requests belong to the current plan/selection and cannot focus a later selection.
 - Resizing, timeline controls and all six persistent KPIs remain available.
+- The inspector body scrolls as a whole when viewport height is limited; Back/Forward
+  and Close remain outside that scroll area. Map overlays are clipped to the map
+  instead of intercepting inspector actions when the map column is narrow. Both
+  panels have their own Close control, reachable even when the map is too narrow
+  for floating controls. A deliberate selection opens the inspector; on narrow
+  screens it closes the fleet to make room, and clearing selection returns to the map.
 
 ## Validation
 

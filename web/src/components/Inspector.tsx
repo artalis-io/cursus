@@ -462,8 +462,8 @@ function LoadTab({ vehicle }: { vehicle: Vehicle }) {
   );
 }
 
-export function Inspector({ plan, scenario, selection, onSelect, onBack, onForward, canGoBack, canGoForward, onMarkUnavailable, onRestoreVehicle, onSetConstraint, onClearConstraint, solving, onPin, onUnpin, onForbid, onClearOverrides, onSetSequence, onClearSequence, manualActions, fleet }: {
-  manualActions?:React.ReactNode;fleet?:Vehicle[];
+export function Inspector({ plan, scenario, selection, onSelect, onBack, onForward, canGoBack, canGoForward, onMarkUnavailable, onRestoreVehicle, onSetConstraint, onClearConstraint, solving, onPin, onUnpin, onForbid, onClearOverrides, onSetSequence, onClearSequence, manualActions, fleet, onClose }: {
+  manualActions?:React.ReactNode;fleet?:Vehicle[];onClose?:()=>void;
   plan: Plan; baseline: Plan; scenario: Scenario; selection: Selection; onSelect: (s: Selection) => void; onMarkUnavailable: (id: number) => void; solving: boolean;
   onBack: () => void; onForward: () => void; canGoBack: boolean; canGoForward: boolean;
   onRestoreVehicle: (id: number) => void;
@@ -480,7 +480,7 @@ export function Inspector({ plan, scenario, selection, onSelect, onBack, onForwa
   const canEdit = usePermission('scenario.edit');
   const overrideCount = scenario.pins.length + scenario.forbids.length;
   const currency = plan.cost?.currency ?? 'HUF';
-  const nav = { onBack, onForward, canGoBack, canGoForward };
+  const nav = { onBack, onForward, canGoBack, canGoForward, onClose };
   // Unassigned order context.
   if (selection?.kind === 'unassigned') {
     const u = selectedUnassigned(plan.unassigned,selection);
@@ -538,7 +538,7 @@ export function Inspector({ plan, scenario, selection, onSelect, onBack, onForwa
 
   return (
     <Panel nav={nav}>
-      <Tabs key={JSON.stringify([plan.id,vehicle.id,selection?.kind,trip?.index,stop?.requestId??stop?.seq])} defaultValue="details" className="flex min-h-0 flex-1 flex-col">
+      <Tabs key={JSON.stringify([plan.id,vehicle.id,selection?.kind,trip?.index,stop?.requestId??stop?.seq])} defaultValue="details" className="min-w-0">
         <div className="px-3 pt-3">
           <div className="mb-2 flex flex-wrap items-center gap-x-2 gap-y-1">
             <span className="h-3 w-3 shrink-0 rounded-sm" style={{ backgroundColor: vehicle.color }} />
@@ -555,7 +555,7 @@ export function Inspector({ plan, scenario, selection, onSelect, onBack, onForwa
             <TabsTrigger value="load" className="flex-1">{t('inspector.tabLoad')}</TabsTrigger>
           </TabsList>
         </div>
-        <ScrollArea className="min-h-0 flex-1">
+        <div className="min-w-0">
           <div className="space-y-3 p-3">
             <TabsContent value="details" className="mt-0 space-y-3">
               {manualActions??(canEdit && stop && (
@@ -622,13 +622,13 @@ export function Inspector({ plan, scenario, selection, onSelect, onBack, onForwa
               <LoadTab vehicle={vehicle} />
             </TabsContent>
           </div>
-        </ScrollArea>
+        </div>
       </Tabs>
     </Panel>
   );
 }
 
-function Panel({ children, nav }: { children: React.ReactNode; nav: { onBack: () => void; onForward: () => void; canGoBack: boolean; canGoForward: boolean } }) {
+function Panel({ children, nav }: { children: React.ReactNode; nav: { onBack: () => void; onForward: () => void; canGoBack: boolean; canGoForward: boolean;onClose?:()=>void } }) {
   const t = useT();
   return (
     <div className="flex h-full flex-col bg-card">
@@ -642,9 +642,10 @@ function Panel({ children, nav }: { children: React.ReactNode; nav: { onBack: ()
           <ArrowRight className="h-4 w-4" />
         </button>
         <h2 className="ml-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">{t('inspector.title')}</h2>
+        {nav.onClose&&<button type="button" aria-label={t('interaction.closeInspector')} title={t('interaction.closeInspector')} onClick={nav.onClose} className="ml-auto flex h-6 w-6 shrink-0 items-center justify-center rounded text-muted-foreground hover:bg-accent"><X aria-hidden className="h-4 w-4"/></button>}
       </div>
       <Separator />
-      {children}
+      <ScrollArea className="min-h-0 flex-1">{children}</ScrollArea>
     </div>
   );
 }

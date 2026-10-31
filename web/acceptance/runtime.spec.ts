@@ -273,7 +273,7 @@ test('manual: Hungarian narrow-screen dialog is accessible and a cancelled previ
   await page.getByRole('button',{name:'Manual planning',exact:true}).click();await manualStop(page,base,'PUBLIC-2');
   await page.getByRole('group',{name:'Language',exact:true}).getByRole('button',{name:'HU',exact:true}).click();
   await page.setViewportSize({width:375,height:780});
-  await page.getByRole('button',{name:'Collapse fleet panel',exact:true}).click();
+  await page.getByRole('button',{name:'Flottapanel bezárása',exact:true}).click();
   await page.getByRole('button',{name:'Áthelyezés másik járműre…',exact:true}).click();
   const dialog=page.getByRole('dialog',{name:'Kézi tervezés',exact:true});
   await expect(dialog.getByRole('combobox',{name:'Jármű',exact:true})).toBeVisible();
@@ -284,6 +284,8 @@ test('manual: Hungarian narrow-screen dialog is accessible and a cancelled previ
   expect(await dialog.evaluate(el=>el.getBoundingClientRect().width<=innerWidth)).toBe(true);
   await dialog.getByRole('button',{name:'Mégse',exact:true}).click();
   expect((await get<unknown[]>(page.request,'/api/plans')).length).toBe(before.length);
+  await page.getByRole('button',{name:'Részletező bezárása',exact:true}).click();await expect(page.locator('#cursus-inspector-pane')).toHaveCount(0);
+  expect((await page.locator('#cursus-map-pane').boundingBox())!.width).toBeGreaterThan(300);
 });
 
 test('manual: permission revocation while preview is in flight cannot expose Apply or publish',async({page})=>{

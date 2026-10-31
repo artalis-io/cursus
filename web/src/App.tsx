@@ -188,6 +188,8 @@ export default function App() {
   const [nav, setNav] = useState<{ stack: Selection[]; idx: number }>({ stack: [null], idx: 0 });
   const selection = nav.stack[nav.idx] ?? null;
   const navigate = useCallback((sel: Selection) => {
+    if(sel){setRightOpen(true);if(window.innerWidth<1024)setLeftOpen(false);}
+    else if(window.innerWidth<1024)setRightOpen(false);
     setNav((n) => {
       if (sameSel(n.stack[n.idx] ?? null, sel)) return n;
       const stack = [...n.stack.slice(0, n.idx + 1), sel].slice(-50);
@@ -761,7 +763,7 @@ export default function App() {
         <div ref={workspace.containerRef} className="flex min-h-0 flex-1">
           {leftOpen && (
             <aside id="cursus-fleet-pane" className="w-[310px] shrink-0 overflow-hidden border-r border-divider" style={{ width: workspace.layout.fleet }}>
-              <FleetPanel plan={plan} scenario={scenario} selection={selection} onSelect={navigate}
+              <FleetPanel onClose={()=>setLeftOpen(false)} plan={plan} scenario={scenario} selection={selection} onSelect={navigate}
                 fleet={manualMode&&manualContext?.enabled?manualContext.fleet:undefined}
                 manualMode={manualMode} onToggleManual={manualContext?.enabled&&!workspaceLoading?()=>setManualOptIn(value=>!value):undefined}
                 onUndoManual={manualMode&&manualContext?.canUndo?()=>openManual({undo:true,action:'release',requestIds:[]}):undefined}
@@ -777,7 +779,7 @@ export default function App() {
             onChange={n => workspace.setSize('fleet', n)} onReset={() => workspace.resetSize('fleet')} />}
 
           <main className="flex min-w-0 flex-1 flex-col">
-            <div id="cursus-map-pane" className="relative min-h-0 flex-1">
+            <div id="cursus-map-pane" className="relative min-h-0 flex-1 overflow-hidden">
               <div data-panel-controls role="group" aria-label={t('layout.controls')} className="pointer-events-none absolute left-3 top-3 z-10 grid grid-cols-[repeat(3,2rem)] grid-rows-[repeat(3,2rem)] gap-1 [&>button]:pointer-events-auto">
                 <Button variant="graphite" size="icon" className="col-start-2 row-start-1 h-8 w-8 opacity-90" aria-label={t(workspace.visibility.kpis ? 'layout.compactKpis' : 'layout.expandKpis')} title={t(workspace.visibility.kpis ? 'layout.compactKpis' : 'layout.expandKpis')} aria-expanded={workspace.visibility.kpis} aria-controls="cursus-kpi-pane" onClick={() => workspace.toggleVisibility('kpis')}>
                   {workspace.visibility.kpis ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
@@ -813,7 +815,7 @@ export default function App() {
 
           {rightOpen && (
             <aside id="cursus-inspector-pane" className="w-[340px] shrink-0 overflow-hidden border-l border-divider" style={{ width: workspace.layout.inspector }}>
-              <Inspector plan={plan} baseline={baseline} scenario={scenario} selection={selection} onSelect={navigate} solving={!!solving||manualBusy} manualActions={manualActions} fleet={manualMode&&manualContext?.enabled?manualContext.fleet:undefined}
+              <Inspector plan={plan} baseline={baseline} scenario={scenario} selection={selection} onSelect={navigate} solving={!!solving||manualBusy} manualActions={manualActions} onClose={()=>setRightOpen(false)} fleet={manualMode&&manualContext?.enabled?manualContext.fleet:undefined}
                 onBack={goBack} onForward={goForward} canGoBack={canGoBack} canGoForward={canGoForward}
                 onMarkUnavailable={(id) => changeVehicle(id,true)}
                 onRestoreVehicle={(id) => changeVehicle(id,false)}

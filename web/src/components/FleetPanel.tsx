@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { ChevronRight, Search, Ban, RotateCcw, GripVertical } from 'lucide-react';
+import { ChevronRight, Search, Ban, RotateCcw, GripVertical, X } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Separator } from '@/components/ui/separator';
@@ -121,12 +121,12 @@ function VehicleCard({
 /* Left fleet panel: search, vehicle cards (expandable to trips + mark-unavailable),
  * and a collapsible unassigned-orders section. Selection is lifted to App. */
 export function FleetPanel({
-  plan, scenario, selection, onSelect, onMarkUnavailable, onRestoreVehicle, solving, onFilterChange, onAssignOrder, onBulkAssign, fleet, onToggleManual, manualMode, onUndoManual,
+  plan, scenario, selection, onSelect, onMarkUnavailable, onRestoreVehicle, solving, onFilterChange, onAssignOrder, onBulkAssign, fleet, onToggleManual, manualMode, onUndoManual, onClose,
 }: {
   plan: Plan; scenario: Scenario; selection: Selection; onSelect: (s: Selection) => void;
   fleet?:Vehicle[];
   onToggleManual?:()=>void;manualMode?:boolean;
-  onUndoManual?:()=>void;
+  onUndoManual?:()=>void;onClose?:()=>void;
   onMarkUnavailable: (id: number) => void; onRestoreVehicle: (id: number) => void; solving: boolean;
   onFilterChange?: (visibleVehicleIds: number[] | null) => void;
   onAssignOrder?: (orderNo: string, vehicleId: number) => void;
@@ -207,7 +207,9 @@ export function FleetPanel({
   return (
     <div ref={root} className="flex h-full flex-col bg-card">
       <div className="shrink-0 p-3">
-        <h2 className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">{t('fleet.title')} · {(fleet??plan.vehicles).length}</h2>
+        <div className="mb-2 flex items-center justify-between gap-2"><h2 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">{t('fleet.title')} · {(fleet??plan.vehicles).length}</h2>
+          {onClose&&<button type="button" onClick={onClose} aria-label={t('interaction.closeFleet')} title={t('interaction.closeFleet')} className="flex h-6 w-6 shrink-0 items-center justify-center rounded text-muted-foreground hover:bg-accent"><X aria-hidden className="h-4 w-4"/></button>}
+        </div>
         {context&&<div className="mb-2 space-y-1 rounded border border-divider bg-muted/30 p-2" data-fleet-selection>
           <SelectionTrail plan={plan} selection={selection} fleet={fleet}/>
           {filterActive&&selectedVehicleId!==undefined&&!vehicles.some(v=>v.id===selectedVehicleId)&&<p className="text-[11px] text-warning">{t('interaction.hiddenSelection')}</p>}
