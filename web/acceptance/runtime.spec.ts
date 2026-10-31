@@ -1954,8 +1954,11 @@ for(const role of ['admin','planner','reviewer'] as const)test(`interaction ${ro
   await expect(scope.locator('[data-selection-kind]')).toHaveAttribute('data-selection-vehicle-id',String(vehicle.id));
  }
  await expect(card.locator('[data-selection-target="true"]')).toHaveAttribute('data-request-id',String(stop.requestId));
+ await inspector.locator('[data-radix-scroll-area-viewport]').evaluate(el=>{el.scrollTop=el.scrollHeight;});
  await card.locator('[data-selection-target="true"]').click();
  await inspector.getByRole('button',{name:'Back',exact:true}).click();await expect(inspector.locator('[data-selection-kind]')).toHaveAttribute('data-selection-kind','trip');
+ await expect(inspector.locator('[data-radix-scroll-area-viewport]')).toHaveJSProperty('scrollTop',0);
+ await expect(inspector.getByRole('button',{name:'Back',exact:true})).toBeFocused();
  await inspector.getByRole('button',{name:'Forward',exact:true}).click();await expect(inspector.locator('[data-selection-kind]')).toHaveAttribute('data-selection-request-id',String(stop.requestId));
  await inspector.getByRole('tab',{name:'Load',exact:true}).click();await card.locator(`[data-trip-index="${trip.index}"]`).click();
  await expect(inspector.getByRole('tab',{name:'Details',exact:true})).toHaveAttribute('aria-selected','true');

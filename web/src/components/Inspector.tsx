@@ -480,7 +480,7 @@ export function Inspector({ plan, scenario, selection, onSelect, onBack, onForwa
   const canEdit = usePermission('scenario.edit');
   const overrideCount = scenario.pins.length + scenario.forbids.length;
   const currency = plan.cost?.currency ?? 'HUF';
-  const nav = { onBack, onForward, canGoBack, canGoForward, onClose };
+  const nav = { onBack, onForward, canGoBack, canGoForward, onClose, contextKey:JSON.stringify([plan.id,selection]) };
   // Unassigned order context.
   if (selection?.kind === 'unassigned') {
     const u = selectedUnassigned(plan.unassigned,selection);
@@ -628,7 +628,7 @@ export function Inspector({ plan, scenario, selection, onSelect, onBack, onForwa
   );
 }
 
-function Panel({ children, nav }: { children: React.ReactNode; nav: { onBack: () => void; onForward: () => void; canGoBack: boolean; canGoForward: boolean;onClose?:()=>void } }) {
+function Panel({ children, nav }: { children: React.ReactNode; nav: { onBack: () => void; onForward: () => void; canGoBack: boolean; canGoForward: boolean;onClose?:()=>void;contextKey:string } }) {
   const t = useT();
   return (
     <div className="flex h-full flex-col bg-card">
@@ -645,7 +645,7 @@ function Panel({ children, nav }: { children: React.ReactNode; nav: { onBack: ()
         {nav.onClose&&<button type="button" aria-label={t('interaction.closeInspector')} title={t('interaction.closeInspector')} onClick={nav.onClose} className="ml-auto flex h-6 w-6 shrink-0 items-center justify-center rounded text-muted-foreground hover:bg-accent"><X aria-hidden className="h-4 w-4"/></button>}
       </div>
       <Separator />
-      <ScrollArea className="min-h-0 flex-1">{children}</ScrollArea>
+      <ScrollArea key={nav.contextKey} className="min-h-0 flex-1">{children}</ScrollArea>
     </div>
   );
 }
