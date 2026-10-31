@@ -1746,10 +1746,11 @@ for(const role of ['admin','planner','reviewer'] as const)test(`compact status: 
  }finally{chaosRole('planner');}
 });
 
-async function statusScenario(page:Page,label:string){
+async function statusScenario(page:Page,label:string,pins:{op:'pin';orderNo:string;requestId:number;vehicleId:number}[]=[]){
  const base=await baseline(page),headers={origin:new URL(page.url()).origin};
  const response=await page.request.post('/api/scenarios',{headers,data:{from:base.scenarioId,label}});expect(response.status()).toBe(201);
- const scenario=await response.json() as Scenario;
+ let scenario=await response.json() as Scenario;
+ if(pins.length){const edited=await page.request.post(`/api/scenarios/${scenario.id}/edits`,{headers:{...headers,'if-match':`"${scenario.revision}"`},data:{edits:pins.map(edit=>({...edit,datasetSha256:base.provenance.datasetSha256}))}});expect(edited.status(),await edited.text()).toBe(200);scenario=await edited.json() as Scenario;}
  const submitted=await page.request.post(`/api/scenarios/${scenario.id}/solve`,{headers:{...headers,'if-match':`"${scenario.revision}"`},data:{budgetSec:1}});expect(submitted.status()).toBe(202);
  const {jobId}=await submitted.json() as {jobId:string};let job:Job;
  await expect.poll(async()=>{job=await get<Job>(page.request,`${peer}/api/jobs/${jobId}`);return job.status;},{timeout:60000}).toBe('completed');
@@ -1914,8 +1915,12 @@ test('plan totals: old hidden preference keeps all six saved totals visible in E
 });
 
 for(const role of ['admin','planner','reviewer'] as const)test(`interaction ${role}: selection stays coherent across fleet, map and inspector and filter recovery never writes`,async({page},testInfo)=>{
- await login(page,`${role}@acceptance.example.test`);await page.emulateMedia({reducedMotion:'reduce'});
- const base=await baseline(page),vehicle=base.vehicles.find(v=>v.trips.some(tr=>tr.stops.length>=2))!,trip=vehicle.trips.find(tr=>tr.stops.length>=2)!,stop=trip.stops[0]!;
+ await login(page,`${role}@acceptance.example.test`);
+ const originalBaseline=await baseline(page);
+ const setup=await page.context().browser()!.newPage({baseURL:new URL(page.url()).origin});let base:Plan;
+ try{await login(setup);base=(await statusScenario(setup,`Selection ${role}`,[{op:'pin',orderNo:'PUBLIC-2',requestId:110,vehicleId:10},{op:'pin',orderNo:'PUBLIC-3',requestId:120,vehicleId:30}])).plan;}finally{await setup.close();}
+ await reopenStatusPlan(page,base.id);await page.emulateMedia({reducedMotion:'reduce'});
+ const vehicle=base.vehicles.find(v=>v.trips.some(tr=>tr.stops.length>=2))!,trip=vehicle.trips.find(tr=>tr.stops.length>=2)!,stop=trip.stops[0]!;
  const other=base.vehicles.find(v=>v.id!==vehicle.id&&v.trips.some(tr=>tr.index===trip.index))!;expect(other).toBeTruthy();
  const writes:string[]=[];page.on('request',r=>{if(new URL(r.url()).pathname.startsWith('/api/')&&!['GET','HEAD','OPTIONS'].includes(r.method()))writes.push(r.url());});
  const fleet=page.locator('aside').first(),inspector=page.locator('aside').last(),card=fleet.locator(`[data-vehicle-id="${vehicle.id}"]`),otherCard=fleet.locator(`[data-vehicle-id="${other.id}"]`);
@@ -1932,6 +1937,9 @@ for(const role of ['admin','planner','reviewer'] as const)test(`interaction ${ro
   await expect(scope.locator('[data-selection-kind]')).toHaveAttribute('data-selection-vehicle-id',String(vehicle.id));
  }
  await expect(card.locator('[data-selection-target="true"]')).toHaveAttribute('data-request-id',String(stop.requestId));
+ await card.locator('[data-selection-target="true"]').click();
+ await inspector.getByRole('button',{name:'Back',exact:true}).click();await expect(inspector.locator('[data-selection-kind]')).toHaveAttribute('data-selection-kind','trip');
+ await inspector.getByRole('button',{name:'Forward',exact:true}).click();await expect(inspector.locator('[data-selection-kind]')).toHaveAttribute('data-selection-request-id',String(stop.requestId));
  await inspector.getByRole('tab',{name:'Load',exact:true}).click();await card.locator(`[data-trip-index="${trip.index}"]`).click();
  await expect(inspector.getByRole('tab',{name:'Details',exact:true})).toHaveAttribute('aria-selected','true');
  await inspector.locator(`ol button[data-request-id="${stop.requestId}"]`).click();
@@ -1955,15 +1963,15 @@ for(const role of ['admin','planner','reviewer'] as const)test(`interaction ${ro
  await page.screenshot({path:testInfo.outputPath(`selection-${role}-hu.png`)});
  await page.getByRole('button',{name:'Kijelölés törlése',exact:true}).click();await expect(page.locator('[data-map-selection]')).toHaveCount(0);
  await expect(fleet.locator('[data-selected="true"]')).toHaveCount(0);
- expect(writes).toEqual([]);expect(await baseline(page)).toEqual(base);await expectPlanTotals(page,base);
+ expect(writes).toEqual([]);expect(await baseline(page)).toEqual(originalBaseline);expect(await get<Plan>(page.request,`${peer}/api/plans/${base.id}`)).toEqual(base);await expectPlanTotals(page,base);
 });
 
 test('interaction: preview does not save, manual save publishes a draft without a solve and unassigned selection remains coherent',async({page},testInfo)=>{
- await login(page);await page.emulateMedia({reducedMotion:'reduce'});
+ await login(page);
  const {plan}=await statusScenario(page,'Interaction preview and save');
  const current=await get<Scenario>(page.request,`/api/scenarios/${plan.scenarioId}`);
  if(current.selectedPlanId!==plan.id){const response=await page.request.post(`/api/scenarios/${current.id}/select-plan`,{headers:{origin:new URL(page.url()).origin,'if-match':`"${current.revision}"`},data:{planId:plan.id,selectionVersion:current.selectionVersion??0}});expect(response.status()).toBe(200);}
- await reopenStatusPlan(page,plan.id);
+ await reopenStatusPlan(page,plan.id);await page.emulateMedia({reducedMotion:'reduce'});
  const fleet=page.locator('aside').first(),toggle=fleet.getByRole('button',{name:'Manual planning',exact:true});
  if(await toggle.getAttribute('aria-pressed')!=='true')await toggle.click();
  const order=plan.vehicles.flatMap(v=>v.trips.flatMap(tr=>tr.stops)).find(s=>s.orderNo==='PUBLIC-2')!;

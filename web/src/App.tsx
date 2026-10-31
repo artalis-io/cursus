@@ -2,6 +2,7 @@ import { useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, u
 import { WorkspaceTenantContext,WorkspaceFeaturesContext } from '@/workspace';
 import { selectedUnassigned } from '@/lib/unassigned-selection';
 import {selectedStop} from '@/lib/stop-selection';
+import {sameSelection as sameSel} from '@/lib/selection-context';
 import { ChevronLeft, ChevronRight, ChevronUp, ChevronDown, RotateCcw } from 'lucide-react';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import { Button } from '@/components/ui/button';
@@ -129,13 +130,6 @@ function editMessage(edit: ScenarioEdit, t: (k: string, p?: Record<string, strin
     case 'clearOverrides': return t('toast.cleared');
     default: return t('toast.staged');
   }
-}
-
-/** Structural equality for selection history de-duplication. */
-function sameSel(a: Selection, b: Selection): boolean {
-  if (a === b) return true;
-  if (!a || !b) return false;
-  return JSON.stringify(a) === JSON.stringify(b);
 }
 
 export default function App() {

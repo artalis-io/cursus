@@ -19,6 +19,7 @@ solver parameters, constraints, publication, or API/persistence contracts.
 
 - Fleet, map caption/ring and inspector refer to the same selected delivery.
 - Inspector breadcrumbs navigate to vehicle/trip parents; Back/Forward remain available.
+  Re-selecting the same delivery through another surface does not add a duplicate history entry.
   Selecting a different item opens its Details tab instead of leaving its actions hidden behind Load.
 - Saved plan metrics remain authoritative while scenario instructions are staged.
   The inspector labels **Saved plan** and **Instructions staged for Replan** separately.

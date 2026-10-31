@@ -93,7 +93,7 @@ validation, before it can receive a passing report.
 
 ## Enforced deployment gate
 
-The current suite contains 103 checks. Its browser command has a 20-minute aggregate budget, with 25 minutes for the CI job including image preparation. Individual browser tests retain their 120-second limit, assertions, and zero-retry policy; skips and flaky results still block acceptance.
+The current suite contains 104 checks. Its browser command has a 20-minute aggregate budget, with 25 minutes for the CI job including image preparation. Individual browser tests retain their 120-second limit, assertions, and zero-retry policy; skips and flaky results still block acceptance.
 
 Use a clean checkout for release evidence. Development runs record a dirty
 checkout, but the deployment gate rejects such reports. A stale passing report

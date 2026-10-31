@@ -203,6 +203,7 @@ export function MapView({ plan, scenario, selection, onSelect, clockSec, visible
   const mapRef = useRef<MapRef | null>(null);
   // Respect reduced-motion: snap the camera instead of animating.
   const reduced = useRef(typeof window !== 'undefined' && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+  useEffect(()=>{const media=window.matchMedia('(prefers-reduced-motion: reduce)');const update=()=>{reduced.current=media.matches;};update();media.addEventListener('change',update);return()=>media.removeEventListener('change',update);},[]);
   const dur = (ms: number) => (reduced.current ? 0 : ms);
   const style = useMemo(() => cartaStyle(), []);
   const routes = useMemo(() => routesFC(plan), [plan]);

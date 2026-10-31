@@ -23,3 +23,15 @@ export function selectionContext(plan:Plan,selection:Selection,fleet:Vehicle[]=p
  const order=selectedStop(trip.stops,selection,plan.id);
  return order?{kind:'stop',vehicle,trip,order}:null;
 }
+
+/** History de-duplicates semantic selection, independent of object key order.
+ * Once a request identity is present, its old display position is irrelevant. */
+export function sameSelection(a:Selection,b:Selection):boolean{
+ if(a===b)return true;if(!a||!b||a.kind!==b.kind)return false;
+ if(a.kind==='vehicle'&&b.kind==='vehicle')return a.vehicleId===b.vehicleId;
+ if(a.kind==='trip'&&b.kind==='trip')return a.vehicleId===b.vehicleId&&a.tripIndex===b.tripIndex;
+ if(a.kind==='unassigned'&&b.kind==='unassigned')return a.orderNo===b.orderNo&&a.requestId===b.requestId;
+ if(a.kind==='stop'&&b.kind==='stop')return a.vehicleId===b.vehicleId&&a.tripIndex===b.tripIndex&&a.planId===b.planId&&
+  (a.requestId!==undefined||b.requestId!==undefined?a.requestId===b.requestId:a.seq===b.seq);
+ return false;
+}
