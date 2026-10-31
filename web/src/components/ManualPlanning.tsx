@@ -135,7 +135,7 @@ export function ManualPlanningDialog({plan,scenario,fleet,request,onClose,onAppl
     </fieldset>}
     <p className="text-xs text-muted-foreground">{t('manual.retentionHint')}</p>
     {preview&&<section aria-label={t('manual.preview')} className="space-y-2 rounded border p-3 text-sm" data-testid="manual-preview">
-      <div className="font-semibold">{t('manual.preview')}</div>
+      <div className="font-semibold">{t('manual.preview')}</div><p className="text-xs text-muted-foreground">{t('interaction.previewOnly')}</p>
       <dl className="grid grid-cols-2 gap-2"><dt>{t('manual.coverage')}</dt><dd>{plan.stats.servedOrders}/{plan.stats.totalOrders} → {preview.stats.servedOrders}/{preview.stats.totalOrders}</dd>
         <dt>{t('inspector.distance')}</dt><dd>{km(plan.stats.totalDistanceKm)} → {km(preview.stats.totalDistanceKm)}</dd>
         <dt>{t('inspector.cost')}</dt><dd>{plan.cost?money(plan.cost.total,plan.cost.currency):'—'} → {preview.cost?money(preview.cost.total,preview.cost.currency):'—'}</dd>

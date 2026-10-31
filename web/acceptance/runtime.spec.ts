@@ -20,7 +20,7 @@ async function manualStop(page:Page,plan:Plan,orderNo:string){
   const vehicle=plan.vehicles.find(v=>v.trips.some(tr=>tr.stops.some(s=>s.orderNo===orderNo)))!;
   const trip=vehicle.trips.find(tr=>tr.stops.some(s=>s.orderNo===orderNo))!;
   const stop=trip.stops.find(s=>s.orderNo===orderNo)!;
-  await page.locator('aside').first().getByText(vehicle.ref,{exact:true}).click();
+  await page.locator('aside').first().locator('[data-inspect-vehicle]').getByText(vehicle.ref,{exact:true}).click();
   const inspector=page.locator('aside').last();
   await inspector.getByRole('button',{name:new RegExp(`Trip ${trip.index+1} ·`)}).click();
   await inspector.locator('ol li > button').filter({hasText:stop.customer!}).click();
@@ -32,7 +32,7 @@ async function applyManualDialog(page:Page):Promise<Plan>{
   await expect(dialog.getByTestId('manual-preview')).toBeVisible();
   expect((await get<Plan[]>(page.request,'/api/plans')).length).toBe(before.length);
   const response=page.waitForResponse(r=>r.request().method()==='POST'&&r.url().endsWith('/manual-plan'));
-  await dialog.getByRole('button',{name:/^(Apply manual change|Save invalid draft)$/}).click();
+  await dialog.getByRole('button',{name:/^(Save manual change|Save invalid draft)$/}).click();
   const result=await response;expect(result.status()).toBe(201);
   const plan=await result.json() as Plan;
   await expect(dialog).toHaveCount(0);
@@ -92,6 +92,10 @@ test('manual: unverified fleet entries have no restore, assign or drop path and 
   await page.getByRole('button',{name:'Manual planning',exact:true}).click();
   const unavailable=page.getByRole('region',{name:'Unavailable',exact:true});
   await expect(unavailable.getByText('ACCEPT-99',{exact:true})).toBeVisible();
+  await unavailable.locator('[data-inspect-vehicle]').click();
+  await expect(page.locator('aside').last().locator('[data-selection-vehicle-id]')).toHaveAttribute('data-selection-vehicle-id','99');
+  await expect(page.locator('aside').last().getByRole('button',{name:/Mark .* unavailable|Lock route|Restore/})).toHaveCount(0);
+  await expect(page.locator('aside').last().locator('input[type=number]')).toHaveCount(0);
   await unavailable.getByRole('button',{name:'Expand trips',exact:true}).click();
   await expect(unavailable.getByRole('button',{name:'Restore',exact:true})).toHaveCount(0);
   await expect(unavailable.getByText('Fleet identity or capabilities need verification before assignment.',{exact:true})).toBeVisible();
@@ -104,7 +108,7 @@ test('manual: unverified fleet entries have no restore, assign or drop path and 
   await option.evaluate(el=>{(el as HTMLOptionElement).disabled=false;});
   await picker.selectOption('99');
   await expect(dialog.getByRole('button',{name:'Calculate preview',exact:true})).toBeDisabled();
-  await expect(dialog.getByRole('button',{name:'Apply manual change',exact:true})).toBeDisabled();
+  await expect(dialog.getByRole('button',{name:'Save manual change',exact:true})).toBeDisabled();
   await dialog.getByRole('button',{name:'Cancel',exact:true}).click();
   for(const suffix of ['manual-preview','manual-plan']){
     const response=await page.request.post(`/api/scenarios/${base.scenarioId}/${suffix}`,{headers:{origin:new URL(page.url()).origin,'if-match':`"${base.scenarioRevision}"`},
@@ -198,7 +202,7 @@ for(const role of ['admin','planner'] as const)test(`placements ${role}: unassig
   if(role==='admin'){await page.setViewportSize({width:600,height:800});expect(await dialog.evaluate(el=>el.scrollWidth<=el.clientWidth+1)).toBe(true);}
   const best=result.suggestions[0],context=await get<{fleet:{id:number;ref:string}[]}>(page.request,`/api/plans/${partial.id}/manual-context`);
   await section.getByRole('button',{name:`Use placement on ${context.fleet.find(v=>v.id===best.vehicleId)!.ref}`,exact:true}).click();
-  await expect(dialog.getByRole('button',{name:'Apply manual change',exact:true})).toBeDisabled();
+  await expect(dialog.getByRole('button',{name:'Save manual change',exact:true})).toBeDisabled();
   const assigned=await applyManualDialog(page);independentManualKpis(assigned);
   expect(assigned.stats.servedOrders).toBe(6);expect(assigned.provenance.validation.valid).toBe(true);
   expect(assigned.stats.totalDistanceKm-partial.stats.totalDistanceKm).toBeCloseTo(best.delta.distanceKm,6);
@@ -230,7 +234,7 @@ test('placements chaos: a late search response cannot restore controls after dem
 test('manual: exclusion, restore, bulk assignment and undo publish complete immutable drafts',async({page})=>{
   await login(page);const base=await baseline(page),vehicle=base.vehicles[0]!;
   await page.getByRole('button',{name:'Manual planning',exact:true}).click();
-  await page.locator('aside').first().getByText(vehicle.ref,{exact:true}).click();
+  await page.locator('aside').first().locator('[data-inspect-vehicle]').getByText(vehicle.ref,{exact:true}).click();
   await page.getByRole('button',{name:`Mark ${vehicle.ref} unavailable`,exact:true}).click();
   const excluded=await applyManualDialog(page);expect(excluded.vehicles.some(v=>v.id===vehicle.id)).toBe(false);independentManualKpis(excluded);
   const region=page.getByRole('region',{name:'Excluded',exact:true});
@@ -258,7 +262,7 @@ test('manual: Hungarian narrow-screen dialog is accessible and a cancelled previ
   await page.getByRole('button',{name:'Áthelyezés másik járműre…',exact:true}).click();
   const dialog=page.getByRole('dialog',{name:'Kézi tervezés',exact:true});
   await expect(dialog.getByRole('combobox',{name:'Jármű',exact:true})).toBeVisible();
-  await expect(dialog.getByRole('button',{name:'Kézi módosítás alkalmazása',exact:true})).toBeDisabled();
+  await expect(dialog.getByRole('button',{name:'Kézi módosítás mentése',exact:true})).toBeDisabled();
   const before=await get<unknown[]>(page.request,'/api/plans');
   await dialog.getByRole('button',{name:'Előnézet kiszámítása',exact:true}).click();
   await expect(dialog.getByTestId('manual-preview')).toBeVisible();
@@ -286,7 +290,7 @@ test('manual: permission revocation while preview is in flight cannot expose App
 test('manual: dragging a delivery to an available vehicle uses the same validated dialog',async({page})=>{
   await login(page);const base=await baseline(page),vehicle=base.vehicles.find(v=>v.trips.some(tr=>tr.stops.some(s=>s.orderNo==='PUBLIC-2')))!;
   await page.getByRole('button',{name:'Manual planning',exact:true}).click();
-  await page.locator('aside').first().getByText(vehicle.ref,{exact:true}).click();
+  await page.locator('aside').first().locator('[data-inspect-vehicle]').getByText(vehicle.ref,{exact:true}).click();
   await page.locator('aside').last().getByRole('button',{name:/Trip 1 ·/}).click();
   const source=page.locator('aside').last().locator('ol li > button').filter({hasText:'Public fixture 2'});
   await source.dragTo(page.locator('[data-vehicle-id="30"]'));
@@ -306,8 +310,8 @@ test('manual: lost Apply response retries the same operation without duplicate p
     keys.push((route.request().postDataJSON() as {batch:{operationId:string}}).batch.operationId);
     if(first){first=false;await route.fetch();await route.abort('failed');}else await route.continue();
   });
-  await dialog.getByRole('button',{name:'Apply manual change',exact:true}).click();await expect(dialog.getByRole('alert')).toBeVisible();
-  await dialog.getByRole('button',{name:'Apply manual change',exact:true}).click();await expect(dialog).toHaveCount(0);
+  await dialog.getByRole('button',{name:'Save manual change',exact:true}).click();await expect(dialog.getByRole('alert')).toBeVisible();
+  await dialog.getByRole('button',{name:'Save manual change',exact:true}).click();await expect(dialog).toHaveCount(0);
   expect((await get<unknown[]>(page.request,'/api/plans')).length).toBe(before+1);
   expect(keys).toHaveLength(2);expect(keys[0]).toBe(keys[1]);
 });
@@ -423,7 +427,7 @@ for (const transition of ['demoted', 'regranted', 'pending-replan'] as const) {
 test(`chaos: queued edits are dropped after permission transition (${transition}) even when the first real edit completes late`, async ({ page }) => {
   await chaosLogin(page);
   const vehicle = (await baseline(page)).vehicles[0]!;
-  await page.locator('aside').first().getByText(vehicle.ref, { exact: true }).click();
+  await page.locator('aside').first().locator('[data-inspect-vehicle]').getByText(vehicle.ref, { exact: true }).click();
   const held = gate(), captured = gate(); let edits = 0;
   let solves = 0;
   page.on('request', request => { if (request.method() === 'POST' && request.url().endsWith('/solve')) solves++; });
@@ -651,7 +655,7 @@ async function finishSolve(page: Page, start: () => Promise<unknown>, options:{k
 test('pending native candidates survive reload and keeping the previous plan preserves both results',async({page})=>{
   await login(page);await shortBudget(page);
   const base=await baseline(page),vehicle=base.vehicles[0]!;
-  await page.locator('aside').first().getByText(vehicle.ref,{exact:true}).click();
+  await page.locator('aside').first().locator('[data-inspect-vehicle]').getByText(vehicle.ref,{exact:true}).click();
   await page.getByRole('button',{name:`Mark ${vehicle.ref} unavailable`}).click();
   const candidate=await finishSolve(page,()=>page.getByRole('button',{name:'Replan',exact:true}).click(),{keep:true,reload:true});
   expect((await get<Scenario>(page.request,`${peer}/api/scenarios/${candidate.scenarioId}`)).selectedPlanId).toBeUndefined();
@@ -769,7 +773,7 @@ test('Reviewer can inspect and export but cannot edit, upload, compute or drag s
   page.on('request', request => { if (!['GET', 'HEAD', 'OPTIONS'].includes(request.method())) mutations.push(request.url()); });
   const plan = await baseline(page), vehicle = plan.vehicles[0]!;
   await expect(page.getByRole('button', { name: /^(Optimize|Replan|Solve settings|Generate|Cancel)$/ })).toHaveCount(0);
-  await page.locator('aside').first().getByText(vehicle.ref, { exact: true }).click();
+  await page.locator('aside').first().locator('[data-inspect-vehicle]').getByText(vehicle.ref, { exact: true }).click();
   await expect(page.getByRole('button', { name: /Mark .* unavailable|Lock route|Unlock route/ })).toHaveCount(0);
   await expect(page.locator('aside').last().locator('input[type=number]')).toHaveCount(0);
   await page.locator('aside').first().getByRole('button', { name: 'Expand trips' }).first().click();
@@ -969,7 +973,7 @@ test(`${role}: reorder requires recomputed preview and a correct native replan w
   await login(page, `${role}@acceptance.example.test`); await shortBudget(page);
   const base = await baseline(page);
   const vehicle = base.vehicles.find(v => v.trips[0]?.stops.length >= 2)!;
-  await page.locator('aside').first().getByText(vehicle.ref, { exact: true }).click();
+  await page.locator('aside').first().locator('[data-inspect-vehicle]').getByText(vehicle.ref, { exact: true }).click();
   const inspector = page.locator('aside').last();
   await inspector.getByRole('button', { name: /Trip 1/ }).click();
   const evaluated = page.waitForResponse(r => r.request().method() === 'POST' && r.url().endsWith('/evaluate'));
@@ -986,7 +990,7 @@ test(`${role}: reorder requires recomputed preview and a correct native replan w
 test(`${role}: excluding a vehicle preserves service and stable identities through the real worker`, async ({ page }) => {
   await login(page, `${role}@acceptance.example.test`); await shortBudget(page);
   const vehicle = (await baseline(page)).vehicles[0]!;
-  await page.locator('aside').first().getByText(vehicle.ref, { exact: true }).click();
+  await page.locator('aside').first().locator('[data-inspect-vehicle]').getByText(vehicle.ref, { exact: true }).click();
   await page.getByRole('button', { name: `Mark ${vehicle.ref} unavailable` }).click();
   const plan = await finishSolve(page, () => page.getByRole('button', { name: 'Replan', exact: true }).click());
   expect(plan.vehicles.some(v => v.id === vehicle.id || v.ref === vehicle.ref)).toBe(false);
@@ -996,7 +1000,7 @@ test(`${role}: locking a route preserves its vehicle and exact stop order`, asyn
   await login(page, `${role}@acceptance.example.test`); await shortBudget(page);
   const vehicle = (await baseline(page)).vehicles[0]!;
   const original = vehicle.trips.flatMap(t => t.stops.map(s => s.orderNo));
-  await page.locator('aside').first().getByText(vehicle.ref, { exact: true }).click();
+  await page.locator('aside').first().locator('[data-inspect-vehicle]').getByText(vehicle.ref, { exact: true }).click();
   await page.getByRole('button', { name: 'Lock route', exact: true }).click();
   const plan = await finishSolve(page, () => page.getByRole('button', { name: 'Replan', exact: true }).click());
   expect(plan.vehicles.find(v => v.id === vehicle.id)!.trips.flatMap(t => t.stops.map(s => s.orderNo))).toEqual(original);
@@ -1006,7 +1010,7 @@ test(`${role}: locking a route preserves its vehicle and exact stop order`, asyn
 test('an immediate Replan waits for a delayed real edit response', async ({ page }) => {
   await login(page); await shortBudget(page);
   const vehicle = (await baseline(page)).vehicles[0]!;
-  await page.locator('aside').first().getByText(vehicle.ref, { exact: true }).click();
+  await page.locator('aside').first().locator('[data-inspect-vehicle]').getByText(vehicle.ref, { exact: true }).click();
   const inspector = page.locator('aside').last();
   await inspector.getByRole('button', { name: /Trip 1/ }).click();
   let release!: () => void;
@@ -1559,7 +1563,7 @@ test('saved manual workspace survives failed metadata reads and slow road geomet
   await page.evaluate(()=>new Promise<void>(r=>requestAnimationFrame(()=>requestAnimationFrame(()=>r()))));
   await expect(page.getByText('5 / 6',{exact:true})).toBeVisible();await expect(dialog.getByTestId('manual-preview')).toBeVisible();
   const applied=page.waitForResponse(r=>r.request().method()==='POST'&&r.url().endsWith('/manual-plan'));
-  await dialog.getByRole('button',{name:'Apply manual change',exact:true}).click();const response=await applied;
+  await dialog.getByRole('button',{name:'Save manual change',exact:true}).click();const response=await applied;
   expect(response.status()).toBe(201);expect(response.request().postDataJSON().batch.operationId).toBe(intent.batch.operationId);
   await expect(page.getByText('6 / 6',{exact:true})).toBeVisible();
  }finally{roads.release();}
@@ -1573,7 +1577,7 @@ test('duplicate display references survive keyboard reordering, native replannin
  await expect(page.getByText('2 / 2',{exact:true})).toBeVisible();
  const vehicle=base.vehicles.find(v=>v.trips.some(t=>t.stops.length===2))!,trip=vehicle.trips.find(t=>t.stops.length===2)!;
  expect(new Set(trip.stops.map(s=>s.orderNo)).size).toBe(1);
- await page.locator('aside').first().getByText(vehicle.ref,{exact:true}).click();
+ await page.locator('aside').first().locator('[data-inspect-vehicle]').getByText(vehicle.ref,{exact:true}).click();
  const inspector=page.locator('aside').last();await inspector.getByRole('button',{name:/Trip 1 ·/}).click();
  const evaluated=page.waitForResponse(r=>r.request().method()==='POST'&&r.url().endsWith('/evaluate'));
  await inspector.locator('ol li').first().locator('button[data-move$=":1"]').click();expect((await evaluated).status()).toBe(200);
@@ -1598,7 +1602,7 @@ test('duplicate display references survive keyboard reordering, native replannin
  let current=base;
  for(const requestId of [170,130]){
   const v=current.vehicles.find(v=>v.trips.some(t=>t.stops.some(s=>s.requestId===requestId)))!,tr=v.trips.find(t=>t.stops.some(s=>s.requestId===requestId))!,s=tr.stops.find(s=>s.requestId===requestId)!;
-  await page.locator('aside').first().getByText(v.ref,{exact:true}).click();
+  await page.locator('aside').first().locator('[data-inspect-vehicle]').getByText(v.ref,{exact:true}).click();
   await inspector.getByRole('button',{name:new RegExp(`Trip ${tr.index+1} ·`)}).click();
   const target=inspector.locator('ol li > button').filter({hasText:s.customer!});
   await expect(target).toHaveAttribute('data-request-id',String(requestId));await target.click();
@@ -1907,4 +1911,93 @@ test('plan totals: old hidden preference keeps all six saved totals visible in E
  await page.reload();await expect(page.locator('[data-kpi="cost"] [data-kpi-value]')).toHaveText('—');
  await expect(page.locator('#cursus-kpi-pane [data-kpi]')).toHaveCount(6);
  expect(writes).toEqual([]);expect(await baseline(page)).toEqual(plan);
+});
+
+for(const role of ['admin','planner','reviewer'] as const)test(`interaction ${role}: selection stays coherent across fleet, map and inspector and filter recovery never writes`,async({page},testInfo)=>{
+ await login(page,`${role}@acceptance.example.test`);await page.emulateMedia({reducedMotion:'reduce'});
+ const base=await baseline(page),vehicle=base.vehicles.find(v=>v.trips.some(tr=>tr.stops.length>=2))!,trip=vehicle.trips.find(tr=>tr.stops.length>=2)!,stop=trip.stops[0]!;
+ const other=base.vehicles.find(v=>v.id!==vehicle.id&&v.trips.some(tr=>tr.index===trip.index))!;expect(other).toBeTruthy();
+ const writes:string[]=[];page.on('request',r=>{if(new URL(r.url()).pathname.startsWith('/api/')&&!['GET','HEAD','OPTIONS'].includes(r.method()))writes.push(r.url());});
+ const fleet=page.locator('aside').first(),inspector=page.locator('aside').last(),card=fleet.locator(`[data-vehicle-id="${vehicle.id}"]`),otherCard=fleet.locator(`[data-vehicle-id="${other.id}"]`);
+ await card.locator('[data-inspect-vehicle]').focus();await page.keyboard.press('Enter');
+ await expect(inspector.locator('[data-inspector-plan-state]')).toHaveText('Saved plan');
+ await otherCard.getByRole('button',{name:'Expand trips',exact:true}).click();
+ await inspector.getByRole('button',{name:new RegExp(`Trip ${trip.index+1} ·`)}).click();
+ await expect(card.locator(`[data-trip-index="${trip.index}"]`)).toHaveAttribute('aria-pressed','true');
+ await expect(otherCard.locator(`[data-trip-index="${trip.index}"]`)).toHaveAttribute('aria-pressed','false');
+ await inspector.locator(`ol button[data-request-id="${stop.requestId}"]`).click();
+ for(const scope of [fleet.locator('[data-fleet-selection]'),inspector,page.locator('[data-map-selection]')]){
+  await expect(scope.locator('[data-selection-kind]')).toHaveAttribute('data-selection-kind','stop');
+  await expect(scope.locator('[data-selection-kind]')).toHaveAttribute('data-selection-request-id',String(stop.requestId));
+  await expect(scope.locator('[data-selection-kind]')).toHaveAttribute('data-selection-vehicle-id',String(vehicle.id));
+ }
+ await expect(card.locator('[data-selection-target="true"]')).toHaveAttribute('data-request-id',String(stop.requestId));
+ await inspector.getByRole('tab',{name:'Load',exact:true}).click();await card.locator(`[data-trip-index="${trip.index}"]`).click();
+ await expect(inspector.getByRole('tab',{name:'Details',exact:true})).toHaveAttribute('aria-selected','true');
+ await inspector.locator(`ol button[data-request-id="${stop.requestId}"]`).click();
+ if(role!=='reviewer'){
+  const toggle=fleet.getByRole('button',{name:'Manual planning',exact:true});if(await toggle.getAttribute('aria-pressed')!=='true')await toggle.click();
+  const assignment=inspector.getByRole('region',{name:'Assignment decisions',exact:true});await expect(assignment.getByRole('button',{name:'Move to vehicle…',exact:true})).toBeVisible();
+  expect(await assignment.evaluate(el=>!!(el.compareDocumentPosition(el.parentElement!.querySelector('[aria-label="Shipment details"]')!)&Node.DOCUMENT_POSITION_FOLLOWING))).toBe(true);
+  await assignment.getByRole('button',{name:'Move to vehicle…',exact:true}).click();
+  const dialog=page.getByRole('dialog',{name:'Manual planning',exact:true});await expect(dialog).toContainText('Save creates a new draft plan without optimization.');
+  await expect(dialog.getByRole('button',{name:'Save manual change',exact:true})).toBeDisabled();await dialog.getByRole('button',{name:'Cancel',exact:true}).click();
+ }else await expect(inspector.getByRole('button',{name:/Move to vehicle|Return to unassigned|Lock route|Mark .* unavailable/})).toHaveCount(0);
+ await fleet.getByRole('textbox').fill('no-vehicle-can-match-this-filter');
+ await expect(fleet.getByText('Selected vehicle is hidden by filters.',{exact:true})).toBeVisible();await expect(card).toHaveCount(0);
+ await fleet.getByRole('button',{name:'Show in fleet',exact:true}).click();
+ await expect(fleet.getByRole('textbox')).toHaveValue('');await expect(card.locator('[data-selection-target="true"]')).toBeFocused();
+ await expect(page.locator('[data-map-selection] [data-selection-kind]')).toHaveAttribute('data-selection-request-id',String(stop.requestId));
+ await page.getByRole('button',{name:'HU',exact:true}).click();
+ await expect(inspector.getByRole('navigation',{name:'Kijelölt elem',exact:true})).toHaveAttribute('data-selection-request-id',String(stop.requestId));
+ await page.setViewportSize({width:1100,height:900});
+ for(const scope of [fleet,inspector,page.locator('[data-map-selection]')])expect(await scope.evaluate(el=>el.scrollWidth<=el.clientWidth+1)).toBe(true);
+ await page.screenshot({path:testInfo.outputPath(`selection-${role}-hu.png`)});
+ await page.getByRole('button',{name:'Kijelölés törlése',exact:true}).click();await expect(page.locator('[data-map-selection]')).toHaveCount(0);
+ await expect(fleet.locator('[data-selected="true"]')).toHaveCount(0);
+ expect(writes).toEqual([]);expect(await baseline(page)).toEqual(base);await expectPlanTotals(page,base);
+});
+
+test('interaction: preview does not save, manual save publishes a draft without a solve and unassigned selection remains coherent',async({page},testInfo)=>{
+ await login(page);await page.emulateMedia({reducedMotion:'reduce'});
+ const {plan}=await statusScenario(page,'Interaction preview and save');
+ const current=await get<Scenario>(page.request,`/api/scenarios/${plan.scenarioId}`);
+ if(current.selectedPlanId!==plan.id){const response=await page.request.post(`/api/scenarios/${current.id}/select-plan`,{headers:{origin:new URL(page.url()).origin,'if-match':`"${current.revision}"`},data:{planId:plan.id,selectionVersion:current.selectionVersion??0}});expect(response.status()).toBe(200);}
+ await reopenStatusPlan(page,plan.id);
+ const fleet=page.locator('aside').first(),toggle=fleet.getByRole('button',{name:'Manual planning',exact:true});
+ if(await toggle.getAttribute('aria-pressed')!=='true')await toggle.click();
+ const order=plan.vehicles.flatMap(v=>v.trips.flatMap(tr=>tr.stops)).find(s=>s.orderNo==='PUBLIC-2')!;
+ await manualStop(page,plan,order.orderNo);await page.getByRole('button',{name:'Return to unassigned',exact:true}).click();
+ const dialog=page.getByRole('dialog',{name:'Manual planning',exact:true});
+ const writes:string[]=[];page.on('request',r=>{if(new URL(r.url()).pathname.startsWith('/api/')&&!['GET','HEAD','OPTIONS'].includes(r.method()))writes.push(new URL(r.url()).pathname);});
+ await dialog.getByRole('button',{name:'Calculate preview',exact:true}).click();await expect(dialog.getByText('Preview — not saved',{exact:true})).toBeVisible();
+ expect(await get<Plan>(page.request,`${peer}/api/plans/${plan.id}`)).toEqual(plan);await expectPlanTotals(page,plan);
+ expect(writes.some(path=>path.endsWith('/solve')||path.endsWith('/manual-plan'))).toBe(false);
+ const published=page.waitForResponse(r=>r.request().method()==='POST'&&r.url().endsWith('/manual-plan'));
+ await dialog.getByRole('button',{name:'Save manual change',exact:true}).click();const response=await published;expect(response.status()).toBe(201);const saved=await response.json() as Plan;
+ await expect(dialog).toHaveCount(0);await expectPlanTotals(page,saved);expect(saved.id).not.toBe(plan.id);expect(saved.unassigned.some(u=>u.requestId===order.requestId)).toBe(true);
+ expect(writes.filter(path=>path.endsWith('/manual-plan'))).toHaveLength(1);expect(writes.some(path=>path.endsWith('/solve'))).toBe(false);
+ expect((await get<Plan>(page.request,`${peer}/api/plans/${saved.id}`)).stats).toEqual(saved.stats);
+ expect((await get<Workflow>(page.request,`${peer}/api/plans/${saved.id}/workflow`)).state).toBe('draft');
+ await fleet.getByRole('button').filter({hasText:`#${order.orderNo}`}).click();
+ for(const scope of [fleet.locator('[data-fleet-selection]'),page.locator('aside').last(),page.locator('[data-map-selection]')])await expect(scope.locator('[data-selection-kind]')).toHaveAttribute('data-selection-request-id',String(order.requestId));
+ await expect(page.locator('[data-map-selection] [data-selection-kind]')).toHaveAttribute('data-selection-kind','unassigned');
+ await expect(page.locator('aside').last().getByRole('button',{name:'Assign to vehicle…',exact:true})).toBeVisible();
+ await page.screenshot({path:testInfo.outputPath('saved-unassigned-context.png')});
+ // Hit the real MapLibre unassigned layer after clearing selection. The
+ // independent Web Mercator projection uses the public fixture's coordinates,
+ // without exposing map internals or injecting a React callback.
+ await page.getByRole('button',{name:'Clear selection',exact:true}).click();await expect(page.locator('[data-map-selection]')).toHaveCount(0);
+ await page.evaluate(()=>new Promise<void>(resolve=>requestAnimationFrame(()=>requestAnimationFrame(()=>resolve()))));
+ const coords:[[number,number],...[number,number][]]=[[saved.depot.lon,saved.depot.lat],...saved.vehicles.flatMap(v=>v.trips.flatMap(tr=>tr.geometry?.coordinates??[])).map(p=>p as [number,number]),...saved.unassigned.filter(u=>Number.isFinite(u.lon)&&Number.isFinite(u.lat)).map(u=>[u.lon!,u.lat!] as [number,number])];
+ const project=([lon,lat]:[number,number])=>[(lon+180)/360,(1-Math.log(Math.tan(Math.PI/4+lat*Math.PI/360))/Math.PI)/2];
+ const points=coords.map(project),minX=Math.min(...points.map(p=>p[0])),maxX=Math.max(...points.map(p=>p[0])),minY=Math.min(...points.map(p=>p[1])),maxY=Math.max(...points.map(p=>p[1]));
+ const canvas=(await page.locator('#cursus-map-pane canvas').boundingBox())!,target=saved.unassigned.find(u=>u.requestId===order.requestId)!;
+ const scale=Math.min((canvas.width-120)/(maxX-minX),(canvas.height-120)/(maxY-minY),512*2**15),point=project([target.lon!,target.lat!]);
+ const x=canvas.x+canvas.width/2+(point[0]-(minX+maxX)/2)*scale,y=canvas.y+canvas.height/2+(point[1]-(minY+maxY)/2)*scale;
+ expect(x).toBeGreaterThan(canvas.x);expect(x).toBeLessThan(canvas.x+canvas.width);expect(y).toBeGreaterThan(canvas.y);expect(y).toBeLessThan(canvas.y+canvas.height);
+ await page.mouse.click(x,y);
+ await expect(page.locator('[data-map-selection] [data-selection-kind]')).toHaveAttribute('data-selection-request-id',String(order.requestId));
+ await expect(page.locator('[data-map-selection] [data-selection-kind]')).toHaveAttribute('data-selection-kind','unassigned');
+ expect(writes.filter(path=>path.endsWith('/manual-plan'))).toHaveLength(1);expect(writes.some(path=>path.endsWith('/solve'))).toBe(false);
 });

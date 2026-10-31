@@ -7,6 +7,9 @@ import type { FeatureCollection, LineString } from 'geojson';
 import { Minus, Plus, Maximize2 } from 'lucide-react';
 import 'maplibre-gl/dist/maplibre-gl.css';
 import { cartaStyle } from './cartaStyle';
+import {SelectionTrail} from '@/components/SelectionTrail';
+import {selectionContext} from '@/lib/selection-context';
+import {X} from 'lucide-react';
 import { useT } from '@/i18n';
 import type { Plan, Scenario, Selection, Vehicle } from '@/types';
 import {selectedStop as resolveStop} from '@/lib/stop-selection';
@@ -196,7 +199,7 @@ function playheadFC(plan: Plan, clockSec: number | null, selVId: number | null, 
   return { type: 'FeatureCollection', features };
 }
 
-export function MapView({ plan, scenario, selection, onSelect, clockSec, visibleVehicleIds }: { plan: Plan; scenario?: Scenario | null; selection: Selection; onSelect: (s: Selection) => void; clockSec: number | null; visibleVehicleIds?: number[] | null }) {
+export function MapView({ plan, scenario, selection, onSelect, clockSec, visibleVehicleIds, fleet }: { plan: Plan; scenario?: Scenario | null; selection: Selection; onSelect: (s: Selection) => void; clockSec: number | null; visibleVehicleIds?: number[] | null;fleet?:Vehicle[] }) {
   const mapRef = useRef<MapRef | null>(null);
   // Respect reduced-motion: snap the camera instead of animating.
   const reduced = useRef(typeof window !== 'undefined' && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
@@ -266,7 +269,8 @@ export function MapView({ plan, scenario, selection, onSelect, clockSec, visible
   const depotLayer: LayerProps = { id: 'depot', type: 'circle', paint: { 'circle-radius': 7, 'circle-color': '#223a2e', 'circle-stroke-color': '#fbfaf5', 'circle-stroke-width': 2.5 } };
 
   // Selected stop highlight ring.
-  const selectedStop = useMemo(() => {
+  const selectedLocation = useMemo(() => {
+    if(selection?.kind==='unassigned'){const context=selectionContext(plan,selection);const order=context?.kind==='unassigned'?context.order:null;return order&&Number.isFinite(order.lon)&&Number.isFinite(order.lat)?pointFC(order.lon!,order.lat!,{color:'#b4572a'}):null;}
     if (!selection || selection.kind !== 'stop') return null;
     const v = plan.vehicles.find((x) => x.id === selection.vehicleId);
     const t = v?.trips.find((x) => x.index === selection.tripIndex);
@@ -278,10 +282,10 @@ export function MapView({ plan, scenario, selection, onSelect, clockSec, visible
   const unassignedFC = useMemo<FeatureCollection>(() => ({
     type: 'FeatureCollection',
     features: plan.unassigned
-      .filter((u) => typeof (u as { lon?: number }).lon === 'number')
-      .map((u) => ({ type: 'Feature', properties: { orderNo: u.orderNo,requestId:u.requestId },
+      .filter((u) => Number.isFinite(u.lon)&&Number.isFinite(u.lat))
+      .map((u) => ({ type: 'Feature', properties: { planId:plan.id,orderNo: u.orderNo,requestId:u.requestId },
         geometry: { type: 'Point', coordinates: [(u as { lon: number }).lon, (u as { lat: number }).lat] } })),
-  }), [plan.unassigned]);
+  }), [plan.unassigned,plan.id]);
 
   const fitTo = useCallback((coords: [number, number][], padding = 70) => {
     const map = mapRef.current; if (!map || coords.length === 0) return;
@@ -293,6 +297,7 @@ export function MapView({ plan, scenario, selection, onSelect, clockSec, visible
   const allCoords = useCallback((): [number, number][] => {
     const cs: [number, number][] = [[plan.depot.lon, plan.depot.lat]];
     for (const v of plan.vehicles) for (const t of v.trips) if (t.geometry) for (const c of t.geometry.coordinates) cs.push(c as [number, number]);
+    for(const u of plan.unassigned)if(Number.isFinite(u.lon)&&Number.isFinite(u.lat))cs.push([u.lon!,u.lat!]);
     return cs;
   }, [plan]);
 
@@ -302,7 +307,8 @@ export function MapView({ plan, scenario, selection, onSelect, clockSec, visible
   // new plan is loaded. Not re-run on background geometry fills (dep on plan.id).
   useEffect(() => {
     const map = mapRef.current; if (!map) return;
-    if (!selection || selection.kind === 'unassigned') { fitAll(); return; }
+    if (!selection) { fitAll(); return; }
+    if(selection.kind==='unassigned'){const context=selectionContext(plan,selection);const order=context?.kind==='unassigned'?context.order:null;if(order&&Number.isFinite(order.lon)&&Number.isFinite(order.lat))map.easeTo({center:[order.lon!,order.lat!],zoom:Math.max(map.getZoom(),13),duration:dur(500)});else fitAll();return;}
     const v = plan.vehicles.find((x) => x.id === selection.vehicleId);
     if (!v) return;
     if (selection.kind === 'vehicle') {
@@ -322,14 +328,15 @@ export function MapView({ plan, scenario, selection, onSelect, clockSec, visible
   const onClick = useCallback((e: MapLayerMouseEvent) => {
     const f = e.features?.[0];
     if (!f) { onSelect(null); return; }
-    const p = f.properties as { planId?:string;requestId?:number;vehicleId?: number; tripIndex?: number; seq?: number } | null;
+    const p = f.properties as { planId?:string;requestId?:number;vehicleId?: number; tripIndex?: number; seq?: number;orderNo?:string } | null;
     if(p?.planId!==plan.id)return;
-    if (f.layer.id === 'stops' && p?.vehicleId != null) {
+    if(f.layer.id==='unassigned'&&typeof p.orderNo==='string'){const next:Selection={kind:'unassigned',orderNo:p.orderNo,...(Number.isSafeInteger(p.requestId)?{requestId:p.requestId}:{})};if(selectionContext(plan,next))onSelect(next);}
+    else if (f.layer.id === 'stops' && p?.vehicleId != null) {
       onSelect({ kind: 'stop', vehicleId: p.vehicleId, tripIndex: p.tripIndex ?? 0, seq: p.seq ?? 1,planId:plan.id,...(Number.isSafeInteger(p.requestId)?{requestId:p.requestId}:{}) });
     } else if ((f.layer.id === 'route-line' || f.layer.id === 'route-hit') && p?.vehicleId != null) {
       onSelect({ kind: 'trip', vehicleId: p.vehicleId, tripIndex: p.tripIndex ?? 0 });
     }
-  }, [onSelect,plan.id]);
+  }, [onSelect,plan]);
 
   const zoomBy = (d: number) => { const m = mapRef.current; if (m) m.easeTo({ zoom: m.getZoom() + d, duration: dur(200) }); };
 
@@ -341,7 +348,7 @@ export function MapView({ plan, scenario, selection, onSelect, clockSec, visible
         mapStyle={style}
         transformRequest={transformRequest}
         attributionControl={false}
-        interactiveLayerIds={['stops', 'route-hit', 'route-line']}
+        interactiveLayerIds={['stops', 'unassigned', 'route-hit', 'route-line']}
         cursor={hovering ? 'pointer' : 'default'}
         onMouseEnter={() => setHovering(true)}
         onMouseLeave={() => setHovering(false)}
@@ -355,7 +362,11 @@ export function MapView({ plan, scenario, selection, onSelect, clockSec, visible
           <Layer {...routeCasing} />
           <Layer {...routeLine} />
         </Source>
-        {ghost.lines.features.length > 0 && (
+        {selectionContext(plan,selection,fleet)&&<div data-map-selection className={`absolute left-3 ${ghost.lines.features.length?'bottom-10':'bottom-3'} flex max-w-[calc(100%-1.5rem)] items-center gap-2 rounded-md border border-divider bg-card/95 px-2.5 py-1.5 shadow-sm`}>
+        <SelectionTrail plan={plan} selection={selection} fleet={fleet}/>
+        <button type="button" aria-label={t('interaction.clearSelection')} title={t('interaction.clearSelection')} onClick={()=>onSelect(null)} className="flex h-6 w-6 shrink-0 items-center justify-center rounded hover:bg-accent"><X aria-hidden className="h-3.5 w-3.5"/></button>
+      </div>}
+      {ghost.lines.features.length > 0 && (
           <Source id="ghost-lines" type="geojson" data={ghost.lines}>
             <Layer id="ghost-line" type="line" layout={{ 'line-cap': 'round', 'line-join': 'round' }}
               paint={{ 'line-color': ['get', 'color'], 'line-width': 2.5, 'line-opacity': 0.9, 'line-dasharray': [1.6, 1.4] }} />
@@ -375,8 +386,8 @@ export function MapView({ plan, scenario, selection, onSelect, clockSec, visible
         <Source id="stops" type="geojson" data={stops}>
           <Layer {...stopLayer} />
         </Source>
-        {selectedStop && (
-          <Source id="selstop" type="geojson" data={selectedStop}>
+        {selectedLocation && (
+          <Source id="selstop" type="geojson" data={selectedLocation}>
             <Layer id="selstop-ring" type="circle" paint={{ 'circle-radius': 9, 'circle-color': 'rgba(0,0,0,0)', 'circle-stroke-color': ['get', 'color'], 'circle-stroke-width': 2.5 }} />
           </Source>
         )}

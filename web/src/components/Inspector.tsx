@@ -8,6 +8,7 @@ import { setDraggedOrder, isOrderDrag, readDraggedOrder,deliveryToken,deliveryRe
 import { violationDetail } from '@/lib/violations';
 import { selectedUnassigned } from '@/lib/unassigned-selection';
 import { NarrationPanel } from '@/components/NarrationPanel';
+import {SelectionTrail} from './SelectionTrail';
 import {ShipmentDetails} from '@/components/ShipmentDetails';
 import {selectedStop} from '@/lib/stop-selection';
 import { api } from '@/lib/api';
@@ -461,8 +462,8 @@ function LoadTab({ vehicle }: { vehicle: Vehicle }) {
   );
 }
 
-export function Inspector({ plan, scenario, selection, onSelect, onBack, onForward, canGoBack, canGoForward, onMarkUnavailable, onRestoreVehicle, onSetConstraint, onClearConstraint, solving, onPin, onUnpin, onForbid, onClearOverrides, onSetSequence, onClearSequence, manualActions }: {
-  manualActions?:React.ReactNode;
+export function Inspector({ plan, scenario, selection, onSelect, onBack, onForward, canGoBack, canGoForward, onMarkUnavailable, onRestoreVehicle, onSetConstraint, onClearConstraint, solving, onPin, onUnpin, onForbid, onClearOverrides, onSetSequence, onClearSequence, manualActions, fleet }: {
+  manualActions?:React.ReactNode;fleet?:Vehicle[];
   plan: Plan; baseline: Plan; scenario: Scenario; selection: Selection; onSelect: (s: Selection) => void; onMarkUnavailable: (id: number) => void; solving: boolean;
   onBack: () => void; onForward: () => void; canGoBack: boolean; canGoForward: boolean;
   onRestoreVehicle: (id: number) => void;
@@ -489,13 +490,13 @@ export function Inspector({ plan, scenario, selection, onSelect, onBack, onForwa
       <Panel nav={nav}>
         {u ? (
           <div className="space-y-2 p-3">
+            <SelectionTrail plan={plan} selection={selection} fleet={fleet} onSelect={onSelect}/>
             <div className="text-sm font-semibold">{u.customer ?? `Order ${u.orderNo}`}</div>
             <div className="tnum text-xs text-muted-foreground">#{u.orderNo}{u.city ? ` · ${u.city}` : ''}</div>
             <Separator />
             <Badge variant="warning">{t('inspector.unassignedBadge')}</Badge>
             <p className="text-xs text-muted-foreground">{u.reasonCode?t(`unassigned.${u.reasonCode}`):u.reason ?? t('inspector.unassignedReason')}</p>
             {u.reasonCode!=='MANUAL_UNASSIGNED'&&<p className="text-[10px] text-muted-foreground">{t('placement.reasonScope')}</p>}
-            <ShipmentDetails plan={plan} requestId={u.requestId}/>
             {/* Assign by hand: pin this unassigned order to a chosen vehicle, applied on Replan. */}
             {manualActions??(canEdit && <div className="space-y-2 rounded-md border border-divider bg-muted/30 p-2.5">
               <div className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">{t('inspector.assignByHand')}</div>
@@ -513,6 +514,7 @@ export function Inspector({ plan, scenario, selection, onSelect, onBack, onForwa
               )}
               <p className="text-[10px] text-muted-foreground">{t('inspector.overrideHint')}</p>
             </div>)}
+            <ShipmentDetails plan={plan} requestId={u.requestId}/>
           </div>
         ) : <Empty planId={plan.id} />}
       </Panel>
@@ -520,12 +522,13 @@ export function Inspector({ plan, scenario, selection, onSelect, onBack, onForwa
   }
 
   const vehicleId = selection ? selection.vehicleId : null;
-  const vehicle = vehicleId != null ? plan.vehicles.find((v) => v.id === vehicleId) : undefined;
+  const vehicle = vehicleId != null ? (fleet??plan.vehicles).find((v) => v.id === vehicleId) : undefined;
   if (!vehicle) return <Panel nav={nav}><Empty planId={plan.id} /></Panel>;
 
   const trip = selection && (selection.kind === 'trip' || selection.kind === 'stop')
     ? vehicle.trips.find((t) => t.index === selection.tripIndex) : undefined;
   const stop = selection?.kind === 'stop' && trip ? selectedStop(trip.stops,selection,plan.id) : undefined;
+  if((selection?.kind==='stop'&&!stop)||(selection?.kind==='trip'&&!trip))return <Panel nav={nav}><Empty planId={plan.id}/></Panel>;
   // Reflect a staged reorder/lock in the stop list (the plan only updates on Replan).
   const stagedSeq = scenario.sequences.find((q) => q.vehicleId === vehicle.id);
   const displayTrip = canEdit && trip && stagedSeq ? reorderTripStops(trip, stagedSeq.orderNos,stagedSeq.requestIds) : trip;
@@ -535,21 +538,18 @@ export function Inspector({ plan, scenario, selection, onSelect, onBack, onForwa
 
   return (
     <Panel nav={nav}>
-      <Tabs defaultValue="details" className="flex min-h-0 flex-1 flex-col">
+      <Tabs key={JSON.stringify([plan.id,vehicle.id,selection?.kind,trip?.index,stop?.requestId??stop?.seq])} defaultValue="details" className="flex min-h-0 flex-1 flex-col">
         <div className="px-3 pt-3">
           <div className="mb-2 flex flex-wrap items-center gap-x-2 gap-y-1">
             <span className="h-3 w-3 shrink-0 rounded-sm" style={{ backgroundColor: vehicle.color }} />
-            <button type="button" onClick={() => onSelect({ kind: 'vehicle', vehicleId: vehicle.id })}
-              className={`font-semibold ${trip ? 'hover:underline' : ''}`} title={trip ? t('inspector.backToVehicle') : undefined}>{vehicle.ref}</button>
+            <SelectionTrail plan={plan} selection={selection} fleet={fleet} onSelect={onSelect}/>
             {vehicle.vehicleClass && <Badge variant="outline">{vehicle.vehicleClass.replace(/_/g, ' ')}</Badge>}
             {vehicle.tonnage != null && <Badge variant="outline" className="text-[10px]">{t('constraint.tonnage', { n: vehicle.tonnage })}</Badge>}
             {vehicle.hasTailLift && <Badge variant="outline" className="text-[10px]">{t('constraint.tailLift')}</Badge>}
             {vehicle.isSubcontractor && <Badge variant="warning">{t('inspector.subcontractor')}</Badge>}
-            {stop && trip ? (
-              <button type="button" onClick={() => onSelect({ kind: 'trip', vehicleId: vehicle.id, tripIndex: trip.index })}
-                className="tnum ml-auto text-xs text-muted-foreground hover:underline">{t('inspector.tripN', { n: trip.index + 1 })} · {t('inspector.stopN', { n: stop.seq })}</button>
-            ) : trip ? <span className="tnum ml-auto text-xs text-muted-foreground">{t('inspector.tripN', { n: trip.index + 1 })}</span> : null}
+
           </div>
+          <p data-inspector-plan-state className="mb-2 text-[11px] text-muted-foreground">{t(plan.scenarioId===scenario.id&&plan.scenarioRevision===scenario.revision?'interaction.savedPlan':'interaction.stagedPlan')}</p>
           <TabsList className="w-full">
             <TabsTrigger value="details" className="flex-1">{t('inspector.tabDetails')}</TabsTrigger>
             <TabsTrigger value="load" className="flex-1">{t('inspector.tabLoad')}</TabsTrigger>
@@ -558,32 +558,12 @@ export function Inspector({ plan, scenario, selection, onSelect, onBack, onForwa
         <ScrollArea className="min-h-0 flex-1">
           <div className="space-y-3 p-3">
             <TabsContent value="details" className="mt-0 space-y-3">
-              {stop ? <><StopDetail stop={stop} vehicle={vehicle} /><ShipmentDetails plan={plan} requestId={stop.requestId}/></>
-                : trip && displayTrip ? <TripView planId={plan.id} trip={trip} displayTrip={displayTrip} reorderPending={canEdit && reorderPending} vehicle={vehicle} currency={currency} canDrag={canEdit && !solving}
-                    previewAllowed={JSON.stringify(plan.provenance.planningProfiles??[])===JSON.stringify(scenario.planningProfiles??[])}
-                    onSelectStop={(seq,requestId) => onSelect({ kind: 'stop', vehicleId: vehicle.id, tripIndex: trip.index, seq,requestId,planId:plan.id })}
-                    onResequence={canEdit && onSetSequence ? (newOrderNos) => {
-                      // the vehicle's full manual order = each trip's stops (in their
-                      // displayed/staged order), with THIS trip set to the new order
-                      const full = vehicle.trips.flatMap((tr) => (tr.index === trip.index
-                        ? newOrderNos
-                        : (stagedSeq ? reorderTripStops(tr, stagedSeq.orderNos,stagedSeq.requestIds) : tr).stops.map((s) => deliveryToken(s.orderNo,s.requestId))));
-                      onSetSequence(vehicle.id, full);
-                    } : undefined} />
-                  : <VehicleSummary vehicle={vehicle} plan={plan} onSelectTrip={(i) => onSelect({ kind: 'trip', vehicleId: vehicle.id, tripIndex: i })} />}
               {manualActions??(canEdit && stop && (
                 <AssignmentSection plan={plan} scenario={scenario} orderNo={stop.orderNo} requestId={stop.requestId} currentVehicleId={vehicle.id}
                   onPin={onPin} onUnpin={onUnpin} onForbid={onForbid} disabled={solving} />
               ))}
-              <Separator />
-              <ValidationRow plan={plan} vehicle={vehicle} />
-              {canEdit && !stop && !trip && (
-                <ConstraintsEditor vehicle={vehicle}
-                  override={scenario.vehicleOverrides.find((o) => o.vehicleId === vehicle.id)}
-                  onSet={(patch) => onSetConstraint(vehicle.id, patch)} onClear={() => onClearConstraint(vehicle.id)} disabled={solving} />
-              )}
               {/* Lock-and-resolve: freeze this vehicle's route; the rest re-solves around it. */}
-              {canEdit && !stop && !trip && onSetSequence && onClearSequence && vehicle.trips.some((tr) => tr.stops.length > 0) && (
+              {canEdit && !vehicle.unavailable && !stop && !trip && onSetSequence && onClearSequence && vehicle.trips.some((tr) => tr.stops.length > 0) && (
                 scenario.sequences.some((q) => q.vehicleId === vehicle.id && q.locked) ? (
                   <button type="button" disabled={solving} onClick={() => onClearSequence(vehicle.id)}
                     className="flex w-full items-center justify-center gap-1.5 rounded border border-primary/50 bg-primary/5 px-2 py-1 text-[11px] font-medium text-primary hover:bg-primary/10 disabled:opacity-40">
@@ -597,13 +577,8 @@ export function Inspector({ plan, scenario, selection, onSelect, onBack, onForwa
                   </button>
                 )
               )}
-              {canEdit && overrideCount > 0 && (
-                <button type="button" onClick={onClearOverrides}
-                  className="flex w-full items-center justify-center gap-1.5 rounded border border-divider px-2 py-1 text-[11px] text-muted-foreground hover:bg-accent">
-                  <X className="h-3 w-3" /> {t('inspector.clearOverrides')} ({overrideCount})
-                </button>
-              )}
-              {canEdit && (scenario.removedVehicleIds.includes(vehicle.id) ? (
+
+              {canEdit && !vehicle.unavailable && !stop && !trip && (scenario.removedVehicleIds.includes(vehicle.id) ? (
                 <button type="button" disabled={solving} onClick={() => onRestoreVehicle(vehicle.id)}
                   className="flex w-full items-center justify-center gap-1.5 rounded border border-divider px-2 py-1.5 text-xs font-medium text-muted-foreground hover:bg-accent disabled:opacity-40">
                   <RotateCcw className="h-3.5 w-3.5" /> {t('fleet.restore')}
@@ -614,6 +589,34 @@ export function Inspector({ plan, scenario, selection, onSelect, onBack, onForwa
                   <Ban className="h-3.5 w-3.5" /> {t('inspector.markUnavailable', { ref: vehicle.ref })}
                 </button>
               ))}
+              {stop ? <><StopDetail stop={stop} vehicle={vehicle} /><ShipmentDetails plan={plan} requestId={stop.requestId}/></>
+                : trip && displayTrip ? <TripView planId={plan.id} trip={trip} displayTrip={displayTrip} reorderPending={canEdit && reorderPending} vehicle={vehicle} currency={currency} canDrag={canEdit && !solving}
+                    previewAllowed={JSON.stringify(plan.provenance.planningProfiles??[])===JSON.stringify(scenario.planningProfiles??[])}
+                    onSelectStop={(seq,requestId) => onSelect({ kind: 'stop', vehicleId: vehicle.id, tripIndex: trip.index, seq,requestId,planId:plan.id })}
+                    onResequence={canEdit && onSetSequence ? (newOrderNos) => {
+                      // the vehicle's full manual order = each trip's stops (in their
+                      // displayed/staged order), with THIS trip set to the new order
+                      const full = vehicle.trips.flatMap((tr) => (tr.index === trip.index
+                        ? newOrderNos
+                        : (stagedSeq ? reorderTripStops(tr, stagedSeq.orderNos,stagedSeq.requestIds) : tr).stops.map((s) => deliveryToken(s.orderNo,s.requestId))));
+                      onSetSequence(vehicle.id, full);
+                    } : undefined} />
+                  : <VehicleSummary vehicle={vehicle} plan={plan} onSelectTrip={(i) => onSelect({ kind: 'trip', vehicleId: vehicle.id, tripIndex: i })} />}
+
+              <Separator />
+              <ValidationRow plan={plan} vehicle={vehicle} />
+              {canEdit && !vehicle.unavailable && !stop && !trip && (
+                <ConstraintsEditor vehicle={vehicle}
+                  override={scenario.vehicleOverrides.find((o) => o.vehicleId === vehicle.id)}
+                  onSet={(patch) => onSetConstraint(vehicle.id, patch)} onClear={() => onClearConstraint(vehicle.id)} disabled={solving} />
+              )}
+              {canEdit && !vehicle.unavailable && overrideCount > 0 && (
+                <button type="button" onClick={onClearOverrides}
+                  className="flex w-full items-center justify-center gap-1.5 rounded border border-divider px-2 py-1 text-[11px] text-muted-foreground hover:bg-accent">
+                  <X className="h-3 w-3" /> {t('inspector.clearOverrides')} ({overrideCount})
+                </button>
+              )}
+
             </TabsContent>
             <TabsContent value="load" className="mt-0">
               <LoadTab vehicle={vehicle} />
