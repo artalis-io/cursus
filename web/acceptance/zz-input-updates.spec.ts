@@ -92,8 +92,22 @@ test('reviewed snapshot update preserves manual delivery identity, recalculates 
  // Archived workspace has no write controls, but its original plan remains readable.
  await page.evaluate(({planId,day})=>localStorage.setItem('cursus.manual-workspace.v1:acceptance',JSON.stringify({planId,day})),{planId:source.id,day:oldDay.id});await page.reload();
  await expect(page.getByRole('button',{name:'Open updated inputs',exact:true})).toBeVisible();
+ await expect(page.getByTestId('status-freshness')).toContainText('Archived input cycle');
  await openWorkspaceMenu(page,'Prepare');await expect(page.getByRole('menuitem',{name:'Update input snapshot',exact:true})).toHaveCount(0);await page.keyboard.press('Escape');
  await expect(page.getByRole('button',{name:'Manual planning',exact:true})).toHaveCount(0);
- await page.getByRole('button',{name:'Open updated inputs',exact:true}).click();await expect(await workspaceAction(page,'Update input snapshot')).toBeEnabled();
+ let releaseCapabilities!:()=>void,captureCapabilities!:()=>void,finishCapabilities!:()=>void;
+ const capabilityGate=new Promise<void>(resolve=>{releaseCapabilities=resolve;}),capabilitiesCaptured=new Promise<void>(resolve=>{captureCapabilities=resolve;}),capabilitiesFinished=new Promise<void>(resolve=>{finishCapabilities=resolve;});
+ await page.route('**/api/plans/*/manual-context',async route=>{const response=await route.fetch();captureCapabilities();await capabilityGate;await route.fulfill({response});finishCapabilities();});
+ try{
+  await page.getByRole('button',{name:'Open updated inputs',exact:true}).click();await capabilitiesCaptured;
+  await expect(await workspaceAction(page,'Update input snapshot')).toBeEnabled();
+  releaseCapabilities();await capabilitiesFinished;
+  await page.evaluate(()=>new Promise<void>(resolve=>requestAnimationFrame(()=>requestAnimationFrame(()=>resolve()))));
+  await expect(page.getByRole('menu',{name:'Prepare',exact:true})).toBeVisible();
+  // A capability refresh in the SAME authorized workspace must not close an
+  // already-open menu. Actual plan/identity changes still invalidate it.
+  await expect(page.getByRole('menuitem',{name:'Update input snapshot',exact:true})).toBeEnabled();
+ }finally{releaseCapabilities();await page.unroute('**/api/plans/*/manual-context');}
+
  await expect.poll(()=>page.evaluate(()=>JSON.parse(localStorage.getItem('cursus.manual-workspace.v1:acceptance')??'null')?.planId)).toBe(job.planId);
 });

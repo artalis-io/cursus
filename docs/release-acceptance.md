@@ -42,8 +42,11 @@ ports, disposable PostgreSQL and S3-compatible storage, test-only credentials,
 and two replicas of the production image. It uses the real entrypoint, enables
 magic-link authentication, disables provider delivery and never reads `.env`.
 The browser obtains its link from the isolated transactional outbox and follows
-the real GET/confirmation-form POST flow. No application HTTP responses are mocked.
-The immediate-click test holds and releases a real edit request to expose races.
+the real GET/confirmation-form POST flow. Successful workflow checks use the real
+HTTP handlers, shared persistence and native executables. Layout and failure-path tests can supply long lists,
+hold requests or inject malformed/error responses in the browser; those injections
+do not replace the native end-to-end checks. The immediate-click test holds and
+releases a real edit request to expose races.
 
 Temporary files and services are removed on completion or handled interruption;
 the locally built image is retained. Concurrent runs use separate ports,
@@ -78,7 +81,7 @@ truncates existing tables.
   Long and missing display-name edge cases are simulated by changing only that
   field in an otherwise real authenticated response; no switching is enabled.
 
-The eight browser tests run without retries. Any failure, flaky result or skipped
+The acceptance tests run without retries. Any failure, flaky result or skipped
 test blocks acceptance. CI builds the production image on Linux AMD64 and runs
 this suite alongside the existing unit, concurrency and fencing tests. The
 aggregate **release** check requires every job to succeed. Repository branch
@@ -89,6 +92,8 @@ interleaved planning days. Its checks reject the older pre-PR-21 image at fixtur
 validation, before it can receive a passing report.
 
 ## Enforced deployment gate
+
+The current suite contains 95 checks. Its browser command has a 20-minute aggregate budget, with 25 minutes for the CI job including image preparation. Individual browser tests retain their 120-second limit, assertions, and zero-retry policy; skips and flaky results still block acceptance.
 
 Use a clean checkout for release evidence. Development runs record a dirty
 checkout, but the deployment gate rejects such reports. A stale passing report

@@ -8,7 +8,7 @@ import { useI18n, useT } from '@/i18n';
 import type { DaySummary, Objective, Plan, Scenario } from '@/types';
 import type { JobView } from '@/App';
 import { WorkspaceNameContext } from '@/workspace';
-import { usePermission } from '@/permissions';
+import { usePermission, RoleContext, PermissionsContext } from '@/permissions';
 import {WorkspaceNavigation,WorkspaceMenu,WorkspaceMenuItem,useAnchoredPanel,type WorkspaceCommand} from '@/components/WorkspaceNavigation';
 
 /* Localize the planning-day label from its ISO date (e.g. "kedd, 2026. május 6."
@@ -64,6 +64,7 @@ export function TopBar({
   const { lang, setLang } = useI18n();
   const t = useT();
   const canEdit = usePermission('optimization.submit');
+  const role = useContext(RoleContext), permissions = useContext(PermissionsContext);
   const canCancel = usePermission('optimization.cancel');
   const workspaceName = useContext(WorkspaceNameContext);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -178,7 +179,7 @@ export function TopBar({
         <Button type="button" variant="graphite" size="sm" className="ml-auto shrink-0 border border-white/15" onClick={onOpenHelp} aria-label={t('help.title')}><HelpCircle aria-hidden className="h-4 w-4"/>{t('nav.help')}</Button>
       </div>
       <div className="flex min-h-11 min-w-0 flex-wrap items-center justify-between gap-2 border-t border-white/10 py-1.5">
-        <WorkspaceNavigation prepare={prepare} planning={planning} library={library} review={review} contextKey={`${plan.id}/${scenario.id}/${canEdit}/${exportPending}`} issuesCount={issuesCount}/>
+        <WorkspaceNavigation prepare={prepare} planning={planning} library={library} review={review} contextKey={`${plan.id}/${scenario.id}/${role}/${permissions?.join(',')}/${exportPending}`} pending={exportPending} issuesCount={issuesCount}/>
         <div className="ml-auto flex shrink-0 items-center gap-1.5">
         {/* Solve settings (objective + time budget) */}
         {canEdit && <div className="relative">

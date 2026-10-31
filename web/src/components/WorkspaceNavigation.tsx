@@ -87,14 +87,14 @@ export function WorkspaceMenuItem({label,onSelect,disabled=false,icon,count,clos
 }
 
 export interface WorkspaceCommand {label:string;onSelect:()=>void;disabled?:boolean;icon?:ReactNode;count?:number}
-export function WorkspaceNavigation({prepare,planning,library,review,contextKey,issuesCount}:{
- prepare:WorkspaceCommand[];planning:WorkspaceCommand[];library:WorkspaceCommand[];review:ReactNode;contextKey:string;issuesCount:number;
+export function WorkspaceNavigation({prepare,planning,library,review,contextKey,issuesCount,pending=false}:{
+ prepare:WorkspaceCommand[];planning:WorkspaceCommand[];library:WorkspaceCommand[];review:ReactNode;contextKey:string;issuesCount:number;pending?:boolean;
 }){
  const t=useT(),[open,setOpen]=useState<string|null>(null);
  useLayoutEffect(()=>{setOpen(null);},[contextKey]);
- const group=(id:string,label:string,commands:WorkspaceCommand[])=><WorkspaceMenu key={id} label={label} open={open===id} onOpenChange={next=>setOpen(next?id:null)} count={id==='plan'?issuesCount:0} warn={id==='plan'&&issuesCount>0}>
+ const group=(id:string,label:string,commands:WorkspaceCommand[])=><WorkspaceMenu key={id} label={label} disabled={pending} open={open===id} onOpenChange={next=>setOpen(next?id:null)} count={id==='plan'?issuesCount:0} warn={id==='plan'&&issuesCount>0}>
   {commands.map(command=><WorkspaceMenuItem key={command.label} {...command}/>)}</WorkspaceMenu>;
- return <nav aria-label={t('nav.workspace')} className="flex min-w-0 flex-wrap items-center gap-1.5">
+ return <nav aria-label={t('nav.workspace')} aria-busy={pending} className="flex min-w-0 flex-wrap items-center gap-1.5">
   {group('prepare',t('nav.prepare'),prepare)}{group('plan',t('nav.plan'),planning)}{review}{group('library',t('nav.library'),library)}
  </nav>;
 }

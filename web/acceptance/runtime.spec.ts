@@ -1,3 +1,4 @@
+import type {Workflow} from '../../server/src/workflow-contract';
 import {selectWorkspaceAction,openWorkspaceMenu} from '../tests/workspace-navigation';
 import { test, expect, type Page, type APIRequestContext } from '@playwright/test';
 import { execFileSync } from 'node:child_process';
@@ -824,6 +825,8 @@ test('a hard GVW access violation is visible and cannot be labelled Baseline OK'
   });
   await page.reload();
   await expect(page.getByText('Baseline · Constraint violation', { exact: true })).toBeVisible();
+  await expect(page.getByTestId('status-coverage')).toContainText('Constraint checks failed');
+  await expect(page.locator('#cursus-status-details')).not.toHaveAttribute('open','');
   await expect(page.getByText('Baseline · OK', { exact: true })).toHaveCount(0);
   await selectWorkspaceAction(page,'Issues');
   await expect(page.getByRole('dialog')).toContainText('Constraint violations');
@@ -1268,6 +1271,10 @@ test('native reduced-fleet result reports unassigned orders without claiming eff
   const delta = await get<{ deltas: { costTotal: number } }>(page.request,
     `/api/compare?base=${(await baseline(page)).id}&revised=${revised.id}`);
   expect(delta.deltas.costTotal).toBeLessThan(0); // exercises the former false "saved" branch
+  // Open details while the real plan response is held: changing the displayed
+  // plan must not remount and collapse the user's readiness disclosure.
+  const navigation=gate();
+  await page.route(`**/api/plans/${revised.id}`,async route=>{await navigation.wait;await route.continue();});
   // Open through the real history UI, including its real scenario context.
   await selectWorkspaceAction(page,'Plans');
   const history = page.getByRole('dialog');
@@ -1276,8 +1283,11 @@ test('native reduced-fleet result reports unassigned orders without claiming eff
   const panel = page.locator('details[aria-label="Dispatch readiness"]');
   await expect(panel.locator('summary')).toContainText('Action required');
   await panel.locator('summary').click();
+  await expect(panel).toHaveAttribute('open','');navigation.release();
   const coverage = panel.getByRole('region', { name: 'Coverage', exact: true });
   await expect(coverage).toContainText('PUBLIC-1');
+  await expect(panel).toHaveAttribute('open','');
+  await page.unroute(`**/api/plans/${revised.id}`);
   await expect(coverage).toContainText('Unassigned orders are reported by Surge');
   await expect(panel).toContainText('Lower distance or cost must not be interpreted as efficiency savings');
   await selectWorkspaceAction(page,'Compare');
@@ -1307,9 +1317,11 @@ test('native plan review, Admin-only approval and cross-replica stale-edit prote
   const panel = page.getByRole('region', { name: 'Plan approval', exact: true });
   await expect(panel.getByRole('button')).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'Review & release', exact: true })).toBeDisabled();
+  for(const label of ['Prepare','Plan','Library'])await expect(page.getByRole('navigation',{name:'Workspace tools'}).getByRole('button',{name:label,exact:true})).toBeDisabled();
   navigation.release();
-  await expect(panel).toHaveAttribute('data-plan-id', planId);
   await expect(page.getByRole('button', { name: 'Review & release', exact: true })).toBeEnabled();
+  await selectWorkspaceAction(page,'Plan approval');
+  await expect(panel).toHaveAttribute('data-plan-id', planId);
   await page.unroute(`**/api/plans/${planId}`);
   await expect(panel).toContainText('Draft');
   const handoffUrl = `/api/plans/${planId}/handoff.json`;
@@ -1526,7 +1538,7 @@ test('saved manual workspace survives failed metadata reads and slow road geomet
   await page.reload();await outage;await expect(page.getByText('Served / Total',{exact:true})).toHaveCount(0);
   expect(await page.evaluate(k=>JSON.parse(localStorage.getItem(k)??'null')?.planId,key)).toBe(saved.id);
   failStored=false;await page.reload();await expect(page.getByText('5 / 6',{exact:true})).toBeVisible();
-  await expect(page.getByRole('region',{name:'Plan approval',exact:true})).toHaveAttribute('data-plan-id',saved.id);
+  await expect(page.locator('section[aria-label="Plan approval"]')).toHaveAttribute('data-plan-id',saved.id);
   await page.getByRole('button',{name:'Undo manual change',exact:true}).click();const dialog=page.getByRole('dialog',{name:'Manual planning',exact:true});
   const previewRequest=page.waitForRequest(r=>r.method()==='POST'&&r.url().endsWith('/manual-preview'));
   await dialog.getByRole('button',{name:'Calculate preview',exact:true}).click();const intent=(await previewRequest).postDataJSON();
@@ -1595,6 +1607,7 @@ test('duplicate display references survive keyboard reordering, native replannin
 test('approved handoff is durable across replicas, read-only for Planner/Reviewer, acknowledged and explicitly cancelled',async({page})=>{
  await login(page);await shortBudget(page);
  const plan=await finishSolve(page,()=>page.getByRole('button',{name:'Optimize',exact:true}).click());
+ await selectWorkspaceAction(page,'Plan approval');
  const approval=page.getByRole('region',{name:'Plan approval',exact:true});
  await approval.getByRole('checkbox').check();await approval.getByRole('button',{name:'Mark reviewed',exact:true}).click();
  await expect(approval).toContainText('Reviewed');await approval.getByRole('checkbox').check();await approval.getByRole('button',{name:'Approve plan',exact:true}).click();await expect(approval).toContainText('Approved');
@@ -1679,4 +1692,184 @@ test('workspace navigation: first outside click starts one native solve without 
  await openWorkspaceMenu(page,'Prepare');
  await finishSolve(page,()=>page.getByRole('button',{name:'Optimize',exact:true}).click());
  expect(submissions).toBe(1);
+});
+
+for(const role of ['admin','planner','reviewer'] as const)test(`compact status: ${role} EN/HU disclosure is compact, keyboard reachable and read-only`,async({page},testInfo)=>{
+ await chaosLogin(page,role);
+ try{
+  const base=await baseline(page),writes:string[]=[];
+  page.on('request',r=>{if(new URL(r.url()).pathname.startsWith('/api/')&&!['GET','HEAD','OPTIONS'].includes(r.method()))writes.push(r.url());});
+  const details=page.locator('#cursus-status-details'),summary=details.locator('summary');
+  await expect(summary.getByTestId('status-approval')).toContainText('Draft');
+  await expect(details).not.toHaveAttribute('open','');
+  await expect(page.getByRole('region',{name:'Plan approval',exact:true})).toHaveCount(0);
+  const startHeight=(await page.locator('#cursus-map-pane').boundingBox())!.height;
+  await summary.focus();await page.keyboard.press('Enter');await expect(details).toHaveAttribute('open','');
+  await expect(page.getByRole('region',{name:'Coverage',exact:true})).toBeVisible();
+  const approval=page.getByRole('region',{name:'Plan approval',exact:true});await expect(approval).toBeVisible();
+  if(role==='reviewer')await expect(approval.getByRole('button')).toHaveCount(0);
+  else await approval.getByRole('checkbox').check();
+  await summary.focus();await page.keyboard.press('Space');await expect(details).not.toHaveAttribute('open','');
+  await expect.poll(async()=>(await page.locator('#cursus-map-pane').boundingBox())!.height).toBe(startHeight);
+  await selectWorkspaceAction(page,'Plan approval');await expect(page.locator('#cursus-plan-review')).toBeFocused();
+  if(role!=='reviewer')await expect(approval.getByRole('checkbox')).toBeChecked();
+  await summary.click();
+  for(const width of [375,600,1440])for(const hu of [false,true]){
+   await page.setViewportSize({width,height:900});await page.getByRole('button',{name:hu?'HU':'EN',exact:true}).click();
+   for(const id of ['status-coverage','status-freshness','status-approval'])await expect(summary.getByTestId(id)).toBeVisible();
+   expect(await details.evaluate(el=>el.scrollWidth<=el.clientWidth+1)).toBe(true);
+   const box=(await summary.boundingBox())!;expect(box.x).toBeGreaterThanOrEqual(0);expect(box.x+box.width).toBeLessThanOrEqual(width+1);
+   if(width===1440)expect(box.height).toBeLessThan(80);
+   await page.screenshot({path:testInfo.outputPath(`compact-${role}-${hu?'hu':'en'}-${width}.png`)});
+   await summary.click();await expect(details).toHaveAttribute('open','');
+   expect(await details.evaluate(el=>el.scrollWidth<=el.clientWidth+1)).toBe(true);
+   await summary.click();
+  }
+  expect(writes).toEqual([]);expect(await baseline(page)).toEqual(base);
+ }finally{chaosRole('planner');}
+});
+
+async function statusScenario(page:Page,label:string){
+ const base=await baseline(page),headers={origin:new URL(page.url()).origin};
+ const response=await page.request.post('/api/scenarios',{headers,data:{from:base.scenarioId,label}});expect(response.status()).toBe(201);
+ const scenario=await response.json() as Scenario;
+ const submitted=await page.request.post(`/api/scenarios/${scenario.id}/solve`,{headers:{...headers,'if-match':`"${scenario.revision}"`},data:{budgetSec:1}});expect(submitted.status()).toBe(202);
+ const {jobId}=await submitted.json() as {jobId:string};let job:Job;
+ await expect.poll(async()=>{job=await get<Job>(page.request,`${peer}/api/jobs/${jobId}`);return job.status;},{timeout:60000}).toBe('completed');
+ return {plan:await get<Plan>(page.request,`${peer}/api/plans/${job!.planId}`),scenario,headers};
+}
+async function reopenStatusPlan(page:Page,id:string){
+ const refreshed=page.waitForResponse(response=>new URL(response.url()).pathname==='/api/plans'&&response.request().method()==='GET');
+ await selectWorkspaceAction(page,'Plans');
+ await (await refreshed).finished();
+ const dialog=page.getByRole('dialog'),target=dialog.locator(`[data-plan-id="${id}"]`).getByRole('button',{name:'Reopen',exact:true});
+ await expect(dialog.locator('[data-radix-scroll-area-viewport]')).toBeVisible();
+ await expect(target).toBeVisible();
+ // Exercise the actual CSS entrance at both intermediate points. Its center
+ // must stay anchored even while a long list changes the dialog's height.
+ const geometry=await dialog.evaluate(element=>{
+  // CI may finish the short entrance before Playwright reaches evaluate.
+  // Replay the element's real stylesheet animation synchronously, then sample
+  // its actual keyframes without depending on runner scheduling.
+  const inlineAnimation=(element as HTMLElement).style.animation;
+  (element as HTMLElement).style.animation='none';
+  void (element as HTMLElement).offsetWidth;
+  (element as HTMLElement).style.animation=inlineAnimation;
+  const animation=element.getAnimations().find(a=>a instanceof CSSAnimation&&a.animationName==='enter');
+  if(!animation||!animation.effect)throw Error('Expected the real dialog entrance animation');
+  const duration=Number(animation.effect.getTiming().duration),samples=[];
+  animation.pause();
+  try{for(const progress of [0.25,0.75]){animation.currentTime=duration*progress;const r=element.getBoundingClientRect();samples.push({x:r.x+r.width/2,y:r.y+r.height/2,width:innerWidth,height:innerHeight});}}
+  finally{animation.finish();}
+  const viewport=element.querySelector('[data-radix-scroll-area-viewport]')!;
+  return {samples,listHeight:viewport.getBoundingClientRect().height,maxListHeight:innerHeight*0.6};
+ });
+ for(const sample of geometry.samples){expect(Math.abs(sample.x-sample.width/2)).toBeLessThan(2);expect(Math.abs(sample.y-sample.height/2)).toBeLessThan(2);}
+ expect(geometry.listHeight).toBeLessThanOrEqual(geometry.maxListHeight+1);
+ await target.scrollIntoViewIfNeeded();await expect(target).toBeInViewport({ratio:1});await target.click();
+ await expect(dialog).toHaveCount(0);await expect(page.locator('section[aria-label="Plan approval"]')).toHaveAttribute('data-plan-id',id);
+}
+
+test('compact status: unavailable or corrupt approval stays Unknown, retry is read-only and old responses cannot certify another plan',async({page})=>{
+ await login(page);
+ const {plan,scenario,headers}=await statusScenario(page,'Approval status recovery');
+ let version=0;
+ for(const action of ['review','approve']){
+  const response=await page.request.post(`${peer}/api/plans/${plan.id}/${action}`,{headers,data:{version,revision:scenario.revision,acknowledgeExceptions:true}});expect(response.status(),await response.text()).toBe(200);version++;
+ }
+ await reopenStatusPlan(page,plan.id);
+ const status=page.getByTestId('status-approval');await expect(status).toContainText('Approved');
+ const writes:string[]=[];page.on('request',r=>{if(new URL(r.url()).pathname.startsWith('/api/')&&!['GET','HEAD','OPTIONS'].includes(r.method()))writes.push(r.url());});
+ const authoritative=await get<Workflow>(page.request,`/api/plans/${plan.id}/workflow`);
+ let mode:'503'|'404'|'invalid'|'older'|'success'|'held'='503',reads=0;
+ let held=gate(),captured=gate(),finished=gate();
+ const path=`**/api/plans/${plan.id}/workflow`;
+ await page.route(path,async route=>{
+  reads++;
+  if(mode==='503'||mode==='404'){await route.fulfill({status:Number(mode),json:{error:'Public fixture approval outage'}});return;}
+  if(mode==='invalid'){await route.fulfill({json:{state:'approved'}});return;}
+  if(mode==='older'){await route.fulfill({json:{...authoritative,state:'draft',version:0}});return;}
+  if(mode==='held'){const response=await route.fetch();captured.release();await held.wait;await route.fulfill({response});finished.release();return;}
+  await route.continue();
+ });
+ try{
+  await expect(status).toContainText('Unknown');await expect(status).not.toContainText('Approved');
+  await selectWorkspaceAction(page,'Plan approval');
+  for(const failure of ['503','404','invalid','older'] as const){
+   mode=failure;await page.getByRole('button',{name:'Retry approval status',exact:true}).click();
+   await expect(status).toContainText('Unknown');await expect(status).not.toContainText('Approved');
+   await expect(page.getByRole('button',{name:'Approve plan',exact:true})).toHaveCount(0);
+  }
+  mode='held';
+  await page.getByRole('button',{name:'Retry approval status',exact:true}).click();await captured.wait;const heldReadCount=reads;
+  await expect(status).toContainText('Loading');
+  // A timer tick during a held read must not start overlapping refreshes.
+  await page.waitForTimeout(5200);expect(reads).toBe(heldReadCount);
+  held.release();await finished.wait;await expect(status).toContainText('Approved');
+  held=gate();captured=gate();finished=gate();
+  await captured.wait;
+  const base=await baseline(page);await reopenStatusPlan(page,base.id);
+  await expect(status).toContainText('Draft');held.release();await finished.wait;
+  await page.evaluate(()=>new Promise<void>(resolve=>requestAnimationFrame(()=>requestAnimationFrame(()=>resolve()))));
+  await expect(status).toContainText('Draft');await expect(status).not.toContainText('Approved');expect(writes).toEqual([]);
+ }finally{held.release();await page.unroute(path);}
+});
+
+test('compact status: another replica changes approval evidence and invalidates an earlier acknowledgement',async({page})=>{
+ await login(page);const {plan,scenario,headers}=await statusScenario(page,'Concurrent status evidence');
+ await reopenStatusPlan(page,plan.id);await selectWorkspaceAction(page,'Plan approval');
+ const panel=page.getByRole('region',{name:'Plan approval',exact:true});await panel.getByRole('checkbox').check();
+ const response=await page.request.post(`${peer}/api/plans/${plan.id}/review`,{headers,data:{version:0,revision:scenario.revision,acknowledgeExceptions:true}});expect(response.status()).toBe(200);
+ await expect(page.getByTestId('status-approval')).toContainText('Reviewed');await expect(panel.getByRole('checkbox')).not.toBeChecked();await expect(panel.getByRole('button',{name:'Approve plan',exact:true})).toBeDisabled();
+ await panel.getByRole('checkbox').check();await page.locator('#cursus-status-details summary').click();
+ await selectWorkspaceAction(page,'Plan approval');await expect(panel.getByRole('checkbox')).toBeChecked();
+ // Use the real preview API plus auth refresh to exercise a permission change
+ // in the same mounted workspace; the account buttons intentionally reload.
+ expect((await page.request.post('/api/auth/view-as',{headers,data:{role:'reviewer'}})).status()).toBe(200);
+ await page.evaluate(()=>window.dispatchEvent(new Event('focus')));await expect(page.getByRole('button',{name:'Return to Admin',exact:true})).toBeVisible();
+ await expect(panel.getByRole('checkbox')).toHaveCount(0);
+ expect((await page.request.post('/api/auth/view-as',{headers,data:{role:null}})).status()).toBe(200);
+ await page.evaluate(()=>window.dispatchEvent(new Event('focus')));await expect(page.getByRole('button',{name:'View as Reviewer',exact:true})).toBeVisible();
+ await expect(panel.getByRole('checkbox')).not.toBeChecked();await expect(panel.getByRole('button',{name:'Approve plan',exact:true})).toBeDisabled();
+ const heldReads=gate();let approvalWrites=0;
+ await page.route(`**/api/plans/${plan.id}/workflow`,async route=>{await heldReads.wait;await route.continue();});
+ await page.route(`**/api/plans/${plan.id}/approve`,async route=>{
+  approvalWrites++;const response=await route.fetch();expect(response.status()).toBe(200);
+  // The authoritative write succeeds, but the client receives an incomplete
+  // response. Retry is a GET of evidence, never a second approval submission.
+  await route.fulfill({json:{state:'approved'}});
+ });
+ try{
+  await panel.getByRole('checkbox').check();await panel.getByRole('button',{name:'Approve plan',exact:true}).click();
+  await expect(page.getByTestId('status-approval')).toContainText('Unknown');
+  expect((await get<Workflow>(page.request,`${peer}/api/plans/${plan.id}/workflow`)).state).toBe('approved');
+  await page.getByRole('button',{name:'Retry approval status',exact:true}).click();heldReads.release();
+  await expect(page.getByTestId('status-approval')).toContainText('Approved');expect(approvalWrites).toBe(1);
+ }finally{heldReads.release();}
+});
+
+
+test('compact status: manual eligibility warnings stay visible without changing independent approval eligibility',async({page})=>{
+ await page.route('**/api/plans/*/manual-context',route=>route.fulfill({json:{enabled:false,reason:'fresh_plan_required'}}));
+ await login(page);
+ await expect(page.getByText('This historical plan has no unambiguous delivery identities. Replan to create a fresh plan before manual editing.',{exact:true})).toBeVisible();
+ const details=page.locator('#cursus-status-details');await expect(details).not.toHaveAttribute('open','');
+ await expect(page.getByTestId('status-freshness')).toContainText('Matches the loaded scenario revision');
+ await expect(page.getByTestId('status-approval')).toContainText('Draft');
+ await selectWorkspaceAction(page,'Plan approval');await expect(page.getByRole('region',{name:'Plan approval',exact:true}).getByRole('checkbox')).toBeVisible();
+ await details.locator('summary').click();
+ await expect(page.getByText('This historical plan has no unambiguous delivery identities. Replan to create a fresh plan before manual editing.',{exact:true})).toBeVisible();
+});
+
+
+test('compact status: long history stays centered and its last plan reopens by pointer',async({page})=>{
+ await login(page);const {plan}=await statusScenario(page,'Last plan in long history');
+ const response=await page.request.get('/api/plans?day=acceptance-day');expect(response.status()).toBe(200);
+ const plans=await response.json() as {id:string;label:string}[],target=plans.find(p=>p.id===plan.id)!;
+ expect(target).toBeTruthy();
+ // A layout fixture supplies many cards, while the target remains a real
+ // native plan and Reopen still goes through the real scenario/plan handlers.
+ await page.route('**/api/plans?day=*',route=>route.fulfill({json:[...Array.from({length:60},(_,i)=>({...target,id:`layout-only-${i}`,label:`History card ${i+1}`})),target]}));
+ await reopenStatusPlan(page,plan.id);
+ await expect(page.getByTestId('status-approval')).toContainText('Draft');
 });

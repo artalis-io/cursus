@@ -149,7 +149,9 @@ def main():
                                CURSUS_ACCEPTANCE_COMPOSE=json.dumps(compose),
                                CURSUS_ACCEPTANCE_BROWSER_REPORT=str(browser_report),
                                CURSUS_ACCEPTANCE_OUTPUT_DIR=str(report_path.with_suffix('.artifacts')))
-            run(['npm', '--prefix', 'web', 'run', 'test:acceptance'], env=environment)
+            # Aggregate budget grows with coverage; individual tests remain bounded
+            # by Playwright's unchanged 120-second timeout, without retries.
+            run(['npm', '--prefix', 'web', 'run', 'test:acceptance'], env=environment, timeout=1200)
             stats = json.loads(browser_report.read_text())['stats']
             if stats['unexpected'] or stats['flaky'] or stats['skipped'] or stats['expected'] < 8:
                 raise ValueError('release acceptance requires all eight or more tests passing without skips or retries')
