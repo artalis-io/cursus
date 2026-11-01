@@ -23,6 +23,7 @@ import { ChangesDialog } from '@/components/ChangesDialog';
 import { WeekDialog } from '@/components/WeekDialog';
 import { IssuesDialog } from '@/components/IssuesDialog';
 import { ScenariosDialog } from '@/components/ScenariosDialog';
+import { PolicyNotice } from '@/components/PolicyNotice';
 import { HelpOverlay } from '@/components/HelpOverlay';
 import { CandidatePanel } from '@/components/CandidatePanel';
 import {ProfilesDialog} from '@/components/ProfilesDialog';
@@ -746,7 +747,7 @@ export default function App() {
             previewDistanceKm={previewTotals?.distanceKm} previewCostTotal={previewTotals?.costTotal}
             compact={!workspace.visibility.kpis} onToggleDetails={()=>workspace.toggleVisibility('kpis')} />
         </div>
-        {manualContext?.requiresRevalidation&&<div role="status" className="shrink-0 border-b border-warning/40 bg-warning/10 px-4 py-2 text-sm">{t('manual.policyChanged')}</div>}
+        {manualContext?.requiresRevalidation&&<PolicyNotice key={`${plan.id}/${scenario.id}/${scenario.revision}`} />}
         {manualContext?.reason==='fresh_plan_required'&&<div role="status" className="shrink-0 border-b border-warning/40 bg-warning/10 px-4 py-2 text-sm">{t('manual.freshPlanRequired')}</div>}
         <WorkspaceStatus plan={plan} baseline={baseline} scenario={scenario} loading={workspaceLoading}
           saving={pendingEdits>0} running={!!solving} candidate={!!candidate} conflict={!!freshnessError}

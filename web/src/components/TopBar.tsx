@@ -130,7 +130,7 @@ export function TopBar({
   </WorkspaceMenu>;
   return (
     <header className="shrink-0 bg-graphite px-4 text-graphite-foreground">
-      <div className="flex min-h-12 min-w-0 flex-wrap items-center gap-2 py-1.5 sm:gap-3">
+      <div className="flex min-h-12 min-w-0 flex-wrap items-center gap-2 py-1.5">
       <div className="flex shrink-0 items-baseline gap-2">
         <span className="text-lg font-bold tracking-tight">Cursus</span>
         {workspaceName ? <div role="group" aria-label={t('workspace.current')} className="flex min-w-0 items-baseline gap-2">
@@ -149,7 +149,7 @@ export function TopBar({
         ))}
       </div>
 
-      <div className="w-full min-w-0 max-w-full sm:w-64">
+      <div className="w-full min-w-0 max-w-full sm:w-[230px] xl:max-w-[300px] xl:flex-1">
         <Select value={dayId} onValueChange={onDayChange} disabled={solving}>
           <SelectTrigger className="h-8 border-white/15 bg-white/5 text-graphite-foreground">
             <SelectValue placeholder={t('topbar.selectDay')} />
@@ -166,7 +166,7 @@ export function TopBar({
       </div>
 
       {isReplan ? (
-        <Badge variant="warning" className="max-w-full min-w-0 truncate sm:max-w-[240px]" title={scenario.label}>
+        <Badge variant="warning" className="max-w-full min-w-0 truncate sm:max-w-[140px]" title={scenario.label}>
           {scenario.label}{changesCount > 0 ? ` · ${t('topbar.editsN', { n: changesCount })}` : ''}
         </Badge>
       ) : (
@@ -176,9 +176,7 @@ export function TopBar({
       )}
       {isReplan && invalid && <Badge variant="destructive">{t('topbar.invalid')}</Badge>}
 
-        <Button type="button" variant="graphite" size="sm" className="ml-auto shrink-0 border border-white/15" onClick={onOpenHelp} aria-label={t('help.title')}><HelpCircle aria-hidden className="h-4 w-4"/>{t('nav.help')}</Button>
-      </div>
-      <div className="flex min-h-11 min-w-0 flex-wrap items-center justify-between gap-2 border-t border-white/10 py-1.5">
+        <Button type="button" variant="graphite" size="sm" className="shrink-0 border border-white/15" onClick={onOpenHelp} aria-label={t('help.title')}><HelpCircle aria-hidden className="h-4 w-4"/>{t('nav.help')}</Button>
         <WorkspaceNavigation prepare={prepare} planning={planning} library={library} review={review} contextKey={`${plan.id}/${scenario.id}/${role}/${permissions?.join(',')}/${exportPending}`} pending={exportPending} issuesCount={issuesCount}/>
         <div className="ml-auto flex max-w-full shrink-0 flex-wrap items-center justify-end gap-1.5">
         {changesCount>0&&<Button type="button" variant="graphite" size="sm" className="max-w-[120px] border border-warning/60 text-warning" title={t('status.changes',{n:changesCount})} onClick={onOpenChanges}>
