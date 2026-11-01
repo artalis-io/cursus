@@ -23,7 +23,7 @@ export function expectNoErrors(page: Page): void {
 
 /** Select a vehicle from the fleet panel (scoped to avoid the timeline's SVG label). */
 export async function selectVehicle(page: Page, ref: string): Promise<void> {
-  await page.locator('aside').first().getByText(ref, { exact: true }).click();
+  await page.locator('aside').first().locator('[data-inspect-vehicle]').getByText(ref, { exact: true }).click();
 }
 
 /** Close any open popover (Export / Settings) by clicking its backdrop. */

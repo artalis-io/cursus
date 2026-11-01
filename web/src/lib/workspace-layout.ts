@@ -35,7 +35,9 @@ export function parseLayout(raw: string | null): WorkspaceLayout {
  * when the viewport shrinks, a sidebar closes, or readiness expands. */
 export function fitLayout(preferred: WorkspaceLayout, width: number, height: number, fleetOpen: boolean, inspectorOpen: boolean) {
   const desktop = width >= 1024;
-  if (!desktop) return { ...DEFAULT_LAYOUT, desktop, fleetMax: 520, inspectorMax: 560, timelineMin: 120, timelineMax: 360 };
+  const timelineMax = Math.max(0, Math.floor(Math.min(LIMITS.timeline[1], height - MAP_MIN_HEIGHT - HANDLE_SIZE)));
+  const timelineMin = Math.min(LIMITS.timeline[0], timelineMax);
+  if (!desktop) return { ...DEFAULT_LAYOUT, timeline: clamp(DEFAULT_LAYOUT.timeline,timelineMin,timelineMax), desktop, fleetMax: 520, inspectorMax: 560, timelineMin, timelineMax };
   const budget = width - MAP_MIN_WIDTH - HANDLE_SIZE * (Number(fleetOpen) + Number(inspectorOpen));
   const minFleet = fleetOpen ? LIMITS.fleet[0] : 0;
   const minInspector = inspectorOpen ? LIMITS.inspector[0] : 0;
@@ -44,8 +46,6 @@ export function fitLayout(preferred: WorkspaceLayout, width: number, height: num
   const scale = Math.min(1, Math.max(0, budget - minFleet - minInspector) / (extraFleet + extraInspector || 1));
   const fleet = minFleet + Math.floor(extraFleet * scale);
   const inspector = minInspector + Math.floor(extraInspector * scale);
-  const timelineMax = Math.max(0, Math.floor(Math.min(LIMITS.timeline[1], height - MAP_MIN_HEIGHT - HANDLE_SIZE)));
-  const timelineMin = Math.min(LIMITS.timeline[0], timelineMax);
   return { desktop, fleet, inspector, timeline: clamp(preferred.timeline, timelineMin, timelineMax),
     fleetMax: Math.floor(Math.min(LIMITS.fleet[1], budget - inspector)),
     inspectorMax: Math.floor(Math.min(LIMITS.inspector[1], budget - fleet)), timelineMin, timelineMax };

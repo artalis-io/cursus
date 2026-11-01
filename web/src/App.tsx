@@ -2,6 +2,7 @@ import { useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, u
 import { WorkspaceTenantContext,WorkspaceFeaturesContext } from '@/workspace';
 import { selectedUnassigned } from '@/lib/unassigned-selection';
 import {selectedStop} from '@/lib/stop-selection';
+import {sameSelection as sameSel} from '@/lib/selection-context';
 import { ChevronLeft, ChevronRight, ChevronUp, ChevronDown, RotateCcw } from 'lucide-react';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import { Button } from '@/components/ui/button';
@@ -131,13 +132,6 @@ function editMessage(edit: ScenarioEdit, t: (k: string, p?: Record<string, strin
   }
 }
 
-/** Structural equality for selection history de-duplication. */
-function sameSel(a: Selection, b: Selection): boolean {
-  if (a === b) return true;
-  if (!a || !b) return false;
-  return JSON.stringify(a) === JSON.stringify(b);
-}
-
 export default function App() {
   const {lang}=useI18n();
   const [scenario,setScenario]=useState<Scenario|null>(null);
@@ -194,6 +188,8 @@ export default function App() {
   const [nav, setNav] = useState<{ stack: Selection[]; idx: number }>({ stack: [null], idx: 0 });
   const selection = nav.stack[nav.idx] ?? null;
   const navigate = useCallback((sel: Selection) => {
+    if(sel){setRightOpen(true);if(window.innerWidth<1024){setLeftOpen(false);requestAnimationFrame(()=>document.querySelector<HTMLElement>('#cursus-inspector-pane [data-inspector-heading]')?.focus({preventScroll:true}));}}
+    else if(window.innerWidth<1024)setRightOpen(false);
     setNav((n) => {
       if (sameSel(n.stack[n.idx] ?? null, sel)) return n;
       const stack = [...n.stack.slice(0, n.idx + 1), sel].slice(-50);
@@ -226,6 +222,7 @@ export default function App() {
   const closeHelp = useCallback(() => { setHelpOpen(false); try { localStorage.setItem('otto.helpSeen', '1'); } catch { /* ignore */ } }, []);
   const [leftOpen, setLeftOpen] = useState(true);
   const [rightOpen, setRightOpen] = useState(true);
+  const closeInspector=()=>{setRightOpen(false);if(window.innerWidth<1024)requestAnimationFrame(()=>document.querySelector<HTMLElement>('#cursus-map-pane canvas')?.focus({preventScroll:true}));};
   const workspace = useWorkspaceLayout(leftOpen, rightOpen);
   // Fleet-panel filter (tail-lift / advisories / search) -> the map shows only
   // the matching vehicles' routes. null = no filter (show all).
@@ -767,7 +764,7 @@ export default function App() {
         <div ref={workspace.containerRef} className="flex min-h-0 flex-1">
           {leftOpen && (
             <aside id="cursus-fleet-pane" className="w-[310px] shrink-0 overflow-hidden border-r border-divider" style={{ width: workspace.layout.fleet }}>
-              <FleetPanel plan={plan} scenario={scenario} selection={selection} onSelect={navigate}
+              <FleetPanel onClose={()=>setLeftOpen(false)} plan={plan} scenario={scenario} selection={selection} onSelect={navigate}
                 fleet={manualMode&&manualContext?.enabled?manualContext.fleet:undefined}
                 manualMode={manualMode} onToggleManual={manualContext?.enabled&&!workspaceLoading?()=>setManualOptIn(value=>!value):undefined}
                 onUndoManual={manualMode&&manualContext?.canUndo?()=>openManual({undo:true,action:'release',requestIds:[]}):undefined}
@@ -783,7 +780,7 @@ export default function App() {
             onChange={n => workspace.setSize('fleet', n)} onReset={() => workspace.resetSize('fleet')} />}
 
           <main className="flex min-w-0 flex-1 flex-col">
-            <div id="cursus-map-pane" className="relative min-h-0 flex-1">
+            <div id="cursus-map-pane" className="relative min-h-0 flex-1 overflow-hidden">
               <div data-panel-controls role="group" aria-label={t('layout.controls')} className="pointer-events-none absolute left-3 top-3 z-10 grid grid-cols-[repeat(3,2rem)] grid-rows-[repeat(3,2rem)] gap-1 [&>button]:pointer-events-auto">
                 <Button variant="graphite" size="icon" className="col-start-2 row-start-1 h-8 w-8 opacity-90" aria-label={t(workspace.visibility.kpis ? 'layout.compactKpis' : 'layout.expandKpis')} title={t(workspace.visibility.kpis ? 'layout.compactKpis' : 'layout.expandKpis')} aria-expanded={workspace.visibility.kpis} aria-controls="cursus-kpi-pane" onClick={() => workspace.toggleVisibility('kpis')}>
                   {workspace.visibility.kpis ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
@@ -801,7 +798,7 @@ export default function App() {
                   {workspace.visibility.timeline ? <ChevronDown className="h-4 w-4" /> : <ChevronUp className="h-4 w-4" />}
                 </Button>
               </div>
-              <MapView plan={plan} scenario={scenario} selection={selection} onSelect={navigate} clockSec={clockSec} visibleVehicleIds={visibleVehicleIds} />
+              <MapView plan={plan} scenario={scenario} selection={selection} onSelect={navigate} clockSec={clockSec} visibleVehicleIds={visibleVehicleIds} fleet={manualMode&&manualContext?.enabled?manualContext.fleet:undefined} />
             </div>
             {workspace.visibility.timeline && workspace.layout.desktop && <ResizeHandle label={t('layout.timeline')} help={t('layout.help')} controls="cursus-timeline-pane"
               axis="y" direction={-1} value={workspace.layout.timeline} min={workspace.layout.timelineMin} max={workspace.layout.timelineMax}
@@ -819,7 +816,7 @@ export default function App() {
 
           {rightOpen && (
             <aside id="cursus-inspector-pane" className="w-[340px] shrink-0 overflow-hidden border-l border-divider" style={{ width: workspace.layout.inspector }}>
-              <Inspector plan={plan} baseline={baseline} scenario={scenario} selection={selection} onSelect={navigate} solving={!!solving||manualBusy} manualActions={manualActions}
+              <Inspector plan={plan} baseline={baseline} scenario={scenario} selection={selection} onSelect={navigate} solving={!!solving||manualBusy} manualActions={manualActions} onClose={closeInspector} fleet={manualMode&&manualContext?.enabled?manualContext.fleet:undefined}
                 onBack={goBack} onForward={goForward} canGoBack={canGoBack} canGoForward={canGoForward}
                 onMarkUnavailable={(id) => changeVehicle(id,true)}
                 onRestoreVehicle={(id) => changeVehicle(id,false)}
