@@ -89,8 +89,13 @@ test('reviewed snapshot update preserves manual delivery identity, recalculates 
  expect(beforeAdoption.selectedPlanId,'completing HGS does not automatically adopt its candidate').toBe(updated.id);
  const adoption=await page.request.post(`/api/scenarios/${scenario.id}/select-plan`,{headers:{origin,'if-match':`"${beforeAdoption.revision}"`},data:{planId:job.planId,selectionVersion:beforeAdoption.selectionVersion??0,acknowledgeIncomplete:false}});
  expect(adoption.status(),await adoption.text()).toBe(200);
- // Archived workspace has no write controls, but its original plan remains readable.
- await page.evaluate(({planId,day})=>localStorage.setItem('cursus.manual-workspace.v1:acceptance',JSON.stringify({planId,day})),{planId:source.id,day:oldDay.id});await page.reload();
+ // Reopen through the actual UI. Writing storage in the live workspace races
+ // its persistence effect after peer adoption, especially over a slow link.
+ // The archived day and the exact immutable plan remain inspectable in Library.
+ await page.getByRole('combobox').first().click();
+ await page.getByRole('option',{name:/7 May 2026.*archived/}).click();
+ await selectWorkspaceAction(page,'Plans');
+ await page.getByRole('dialog').locator(`[data-plan-id="${source.id}"]`).getByRole('button',{name:'Reopen',exact:true}).click();
  await expect(page.getByRole('button',{name:'Open updated inputs',exact:true})).toBeVisible();
  await expect(page.getByTestId('status-freshness')).toContainText('Archived input cycle');
  await openWorkspaceMenu(page,'Prepare');await expect(page.getByRole('menuitem',{name:'Update input snapshot',exact:true})).toHaveCount(0);await page.keyboard.press('Escape');
