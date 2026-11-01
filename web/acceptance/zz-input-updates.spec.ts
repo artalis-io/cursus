@@ -1,5 +1,5 @@
 import {selectWorkspaceAction,workspaceAction,openWorkspaceMenu} from '../tests/workspace-navigation';
-import {test,expect,type Page} from '@playwright/test';
+import {test,expect,type Page,type Dialog} from '@playwright/test';
 import {execFileSync} from 'node:child_process';
 import type {Plan,DaySummary,Scenario} from '../src/types';
 
@@ -89,8 +89,23 @@ test('reviewed snapshot update preserves manual delivery identity, recalculates 
  expect(beforeAdoption.selectedPlanId,'completing HGS does not automatically adopt its candidate').toBe(updated.id);
  const adoption=await page.request.post(`/api/scenarios/${scenario.id}/select-plan`,{headers:{origin,'if-match':`"${beforeAdoption.revision}"`},data:{planId:job.planId,selectionVersion:beforeAdoption.selectionVersion??0,acknowledgeIncomplete:false}});
  expect(adoption.status(),await adoption.text()).toBe(200);
- // Archived workspace has no write controls, but its original plan remains readable.
- await page.evaluate(({planId,day})=>localStorage.setItem('cursus.manual-workspace.v1:acceptance',JSON.stringify({planId,day})),{planId:source.id,day:oldDay.id});await page.reload();
+ // Reopen through the actual UI. Writing storage in the live workspace races
+ // its persistence effect after peer adoption, especially over a slow link.
+ // Its original planning day and exact immutable plan remain inspectable in Library.
+ await page.getByRole('combobox').first().click();
+ const archivedDay=(await (await page.request.get('/api/days')).json() as DaySummary[]).find(day=>day.id===oldDay.id)!;
+ expect(archivedDay.archived).toBe(true);
+ // Format in the same browser ICU as TopBar: Node and Chromium can differ
+ // on locale punctuation (for example the comma after an English weekday).
+ const oldDayLabel=await page.evaluate(day=>new Date(`${day.isoDate}T00:00:00`).toLocaleDateString('en-GB',{weekday:'long',year:'numeric',month:'long',day:'numeric'})+` · ${day.orders} orders · archived`,archivedDay);
+ const acceptSwitch=async(dialog:Dialog)=>{expect(dialog.type()).toBe('confirm');expect(dialog.message()).toMatch(/unapplied change.*Switch away and discard/);await dialog.accept();};
+ page.on('dialog',acceptSwitch);
+ try{
+  await page.getByRole('option',{name:oldDayLabel,exact:true}).click();
+  await expect(page.getByRole('combobox').first()).toContainText('archived');
+ }finally{page.off('dialog',acceptSwitch);}
+ await selectWorkspaceAction(page,'Plans');
+ await page.getByRole('dialog').locator(`[data-plan-id="${source.id}"]`).getByRole('button',{name:'Reopen',exact:true}).click();
  await expect(page.getByRole('button',{name:'Open updated inputs',exact:true})).toBeVisible();
  await expect(page.getByTestId('status-freshness')).toContainText('Archived input cycle');
  await openWorkspaceMenu(page,'Prepare');await expect(page.getByRole('menuitem',{name:'Update input snapshot',exact:true})).toHaveCount(0);await page.keyboard.press('Escape');
