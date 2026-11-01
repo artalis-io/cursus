@@ -1,5 +1,5 @@
 import {selectWorkspaceAction,workspaceAction,openWorkspaceMenu} from '../tests/workspace-navigation';
-import {test,expect,type Page} from '@playwright/test';
+import {test,expect,type Page,type Dialog} from '@playwright/test';
 import {execFileSync} from 'node:child_process';
 import type {Plan,DaySummary,Scenario} from '../src/types';
 
@@ -96,7 +96,12 @@ test('reviewed snapshot update preserves manual delivery identity, recalculates 
  const archivedDay=(await (await page.request.get('/api/days')).json() as DaySummary[]).find(day=>day.id===oldDay.id)!;
  expect(archivedDay.archived).toBe(true);
  const oldDayLabel=new Date(`${archivedDay.isoDate}T00:00:00`).toLocaleDateString('en-GB',{weekday:'long',year:'numeric',month:'long',day:'numeric'})+` · ${archivedDay.orders} orders · archived`;
- await page.getByRole('option',{name:oldDayLabel,exact:true}).click();
+ const acceptSwitch=async(dialog:Dialog)=>{expect(dialog.type()).toBe('confirm');expect(dialog.message()).toMatch(/unapplied change.*Switch away and discard/);await dialog.accept();};
+ page.on('dialog',acceptSwitch);
+ try{
+  await page.getByRole('option',{name:oldDayLabel,exact:true}).click();
+  await expect(page.getByRole('combobox').first()).toContainText('archived');
+ }finally{page.off('dialog',acceptSwitch);}
  await selectWorkspaceAction(page,'Plans');
  await page.getByRole('dialog').locator(`[data-plan-id="${source.id}"]`).getByRole('button',{name:'Reopen',exact:true}).click();
  await expect(page.getByRole('button',{name:'Open updated inputs',exact:true})).toBeVisible();
