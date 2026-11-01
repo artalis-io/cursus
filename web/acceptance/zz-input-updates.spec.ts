@@ -93,7 +93,9 @@ test('reviewed snapshot update preserves manual delivery identity, recalculates 
  // its persistence effect after peer adoption, especially over a slow link.
  // Its original planning day and exact immutable plan remain inspectable in Library.
  await page.getByRole('combobox').first().click();
- const oldDayLabel=new Date(`${oldDay.isoDate}T00:00:00`).toLocaleDateString('en-GB',{weekday:'long',year:'numeric',month:'long',day:'numeric'})+` · ${oldDay.orders} orders`+(oldDay.archived?' · archived':oldDay.datasetLabel?` · ${oldDay.datasetLabel}`:'');
+ const archivedDay=(await (await page.request.get('/api/days')).json() as DaySummary[]).find(day=>day.id===oldDay.id)!;
+ expect(archivedDay.archived).toBe(true);
+ const oldDayLabel=new Date(`${archivedDay.isoDate}T00:00:00`).toLocaleDateString('en-GB',{weekday:'long',year:'numeric',month:'long',day:'numeric'})+` · ${archivedDay.orders} orders · archived`;
  await page.getByRole('option',{name:oldDayLabel,exact:true}).click();
  await selectWorkspaceAction(page,'Plans');
  await page.getByRole('dialog').locator(`[data-plan-id="${source.id}"]`).getByRole('button',{name:'Reopen',exact:true}).click();
