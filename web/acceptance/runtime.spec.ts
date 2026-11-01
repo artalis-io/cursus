@@ -1,3 +1,4 @@
+import {compactHeaderChecks,dismissPolicyChecks,stalePolicyResponse} from '../tests/compact-header';
 import {km,money} from '../src/lib/format';
 import type {Workflow} from '../../server/src/workflow-contract';
 import {selectWorkspaceAction,openWorkspaceMenu} from '../tests/workspace-navigation';
@@ -2036,4 +2037,11 @@ test('interaction: preview does not save, manual save publishes a draft without 
  await expect(page.locator('[data-map-selection] [data-selection-kind]')).toHaveAttribute('data-selection-request-id',String(order.requestId));
  await expect(page.locator('[data-map-selection] [data-selection-kind]')).toHaveAttribute('data-selection-kind','unassigned');
  expect(writes.filter(path=>path.endsWith('/manual-plan'))).toHaveLength(1);expect(writes.some(path=>path.endsWith('/solve'))).toBe(false);
+});
+
+test('compact header: desktop context and commands share a row; responsive menus stay reachable',async({page})=>{
+ await login(page);await compactHeaderChecks(page);
+});
+test('compact header: dismissing policy explanation preserves authoritative revalidation status',async({page})=>{
+ await stalePolicyResponse(page);await login(page);await dismissPolicyChecks(page);
 });
