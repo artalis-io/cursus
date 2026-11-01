@@ -95,7 +95,9 @@ test('reviewed snapshot update preserves manual delivery identity, recalculates 
  await page.getByRole('combobox').first().click();
  const archivedDay=(await (await page.request.get('/api/days')).json() as DaySummary[]).find(day=>day.id===oldDay.id)!;
  expect(archivedDay.archived).toBe(true);
- const oldDayLabel=new Date(`${archivedDay.isoDate}T00:00:00`).toLocaleDateString('en-GB',{weekday:'long',year:'numeric',month:'long',day:'numeric'})+` · ${archivedDay.orders} orders · archived`;
+ // Format in the same browser ICU as TopBar: Node and Chromium can differ
+ // on locale punctuation (for example the comma after an English weekday).
+ const oldDayLabel=await page.evaluate(day=>new Date(`${day.isoDate}T00:00:00`).toLocaleDateString('en-GB',{weekday:'long',year:'numeric',month:'long',day:'numeric'})+` · ${day.orders} orders · archived`,archivedDay);
  const acceptSwitch=async(dialog:Dialog)=>{expect(dialog.type()).toBe('confirm');expect(dialog.message()).toMatch(/unapplied change.*Switch away and discard/);await dialog.accept();};
  page.on('dialog',acceptSwitch);
  try{
