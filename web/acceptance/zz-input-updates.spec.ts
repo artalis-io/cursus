@@ -91,9 +91,10 @@ test('reviewed snapshot update preserves manual delivery identity, recalculates 
  expect(adoption.status(),await adoption.text()).toBe(200);
  // Reopen through the actual UI. Writing storage in the live workspace races
  // its persistence effect after peer adoption, especially over a slow link.
- // The archived day and the exact immutable plan remain inspectable in Library.
+ // Its original planning day and exact immutable plan remain inspectable in Library.
  await page.getByRole('combobox').first().click();
- await page.getByRole('option',{name:/7 May 2026.*archived/}).click();
+ const oldDayLabel=new Date(`${oldDay.isoDate}T00:00:00`).toLocaleDateString('en-GB',{weekday:'long',year:'numeric',month:'long',day:'numeric'})+` · ${oldDay.orders} orders`+(oldDay.archived?' · archived':oldDay.datasetLabel?` · ${oldDay.datasetLabel}`:'');
+ await page.getByRole('option',{name:oldDayLabel,exact:true}).click();
  await selectWorkspaceAction(page,'Plans');
  await page.getByRole('dialog').locator(`[data-plan-id="${source.id}"]`).getByRole('button',{name:'Reopen',exact:true}).click();
  await expect(page.getByRole('button',{name:'Open updated inputs',exact:true})).toBeVisible();
