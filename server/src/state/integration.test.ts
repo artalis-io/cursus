@@ -1,3 +1,4 @@
+import {manualFixture} from './manual-fixture.js';
 import assert from 'node:assert/strict';
 import { test, before, after } from 'node:test';
 import { randomUUID } from 'node:crypto';
@@ -217,6 +218,7 @@ integration('Admin, Planner and Reviewer sessions enforce tenant-scoped permissi
       for (const url of [`/api/scenarios/${scenario.id}/edit`, `/api/scenarios/${scenario.id}/solve`, '/api/import/upload'])
         assert.equal((await app.inject({ method: 'POST', url, headers: readHeaders, payload: { edit: { op: 'removeVehicle', vehicleId: 1 }, role: 'admin' } })).statusCode, 403);
       assert.equal((await app.inject({ method: 'DELETE', url: `/api/scenarios/${scenario.id}`, headers: readHeaders })).statusCode, 403);
+      assert.equal((await app.inject({method:'DELETE',url:`/api/jobs/${randomUUID()}`,headers:readHeaders})).statusCode,403);
     }
     assert.equal((await a.listScenarios(id)).length, 1);
     assert.equal((await a.pool.query('SELECT count(*)::int n FROM jobs WHERE tenant_id=$1', [id])).rows[0].n, 0);
@@ -237,7 +239,7 @@ integration('Admin, Planner and Reviewer sessions enforce tenant-scoped permissi
     for (const app of apps) {
       const me = (await app.inject({ url: '/api/auth/me', headers: plannerHeaders })).json();
       assert.equal(me.role, 'planner'); assert.ok(me.permissions.includes('scenario.edit'));
-      assert.ok(!me.permissions.includes('dataset.upload')); assert.ok(!me.permissions.includes('optimization.cancel'));
+      assert.ok(!me.permissions.includes('dataset.upload')); assert.ok(me.permissions.includes('optimization.cancel'));
       const created = await app.inject({ method: 'POST', url: '/api/scenarios', headers: plannerHeaders, payload: { from: scenario.id } });
       assert.equal(created.statusCode, 201);
       const copy = created.json();
@@ -475,4 +477,39 @@ nativeIntegration('real native Surge result from a killed lease is fenced at pub
   await b.completeSolve(takeover!, output.planId, output.scenarioId, output.scenarioRevision, output.plan);
   const job = await a.getJob(tenant, id); assert.equal(job?.state, 'succeeded');
   assert.ok((job?.result as { planId?: string })?.planId);
+});
+
+integration('budget admission and cross-replica cancellation preserve tenant and fence boundaries',async()=>{
+ const own=`budget-${randomUUID()}`,other=`foreign-${randomUUID()}`;
+ await a.ensureTenant(own,'Budget integration');await a.ensureTenant(other,'Other');
+ const scenario={id:'budget-scenario',day:'test',kind:'copy',parentId:null,revision:0,label:'Budget',createdAt:new Date().toISOString(),removedVehicleIds:[],pins:[],forbids:[],sequences:[],vehicleOverrides:[]};
+ await a.createScenario(own,scenario.id,scenario);
+ const app=await createStatefulApi({store:a,tenantId:own,tenantName:'Budget integration'});
+ const peer=await createStatefulApi({store:b,tenantId:own,tenantName:'Budget integration'});
+ try{
+  const limit=(await app.inject({url:'/api/auth/me'})).json().solveLimits.maxSeconds;
+  const post=(value:unknown)=>app.inject({method:'POST',url:`/api/scenarios/${scenario.id}/solve`,headers:{'if-match':'"0"'},payload:{budgetSec:value,fullBudget:true}});
+  const count=async()=>Number((await a.pool.query('SELECT count(*) FROM jobs WHERE tenant_id=$1',[own])).rows[0].count);
+  for(const value of [null,'600',0,-1,1.5,limit+1])assert.equal((await post(value)).statusCode,400);
+  assert.equal(await count(),0);
+  const queued=await post(Math.min(600,limit));assert.equal(queued.statusCode,202);
+  const id=queued.json().jobId;
+  assert.equal((await a.getJob(own,id))!.payload && ((await a.getJob(own,id))!.payload as {fullBudget:boolean}).fullBudget,true);
+  assert.equal(await b.cancelSolve(other,id),false);
+  const cancel=await Promise.all([app,peer].map(api=>api.inject({method:'DELETE',url:`/api/jobs/${id}`})));
+  assert.equal(cancel.filter(r=>r.json().cancelled).length,1);assert.ok(cancel.every(r=>r.json().status==='cancelled'));
+  assert.deepEqual((await peer.inject({method:'DELETE',url:`/api/jobs/${id}`})).json(),{cancelled:false,status:'cancelled'});
+  assert.equal(await a.claimJob('solve','no-cancelled-work',30,own),null);
+  const next=await post(1),running=next.json().jobId;
+  const lease=await a.claimJob('solve','cancel-owner',30,own);assert.equal(lease!.id,running);
+  assert.equal((await peer.inject({method:'DELETE',url:`/api/jobs/${running}`})).json().cancelled,true);
+  await assert.rejects(()=>a.heartbeatJob(lease!),StaleFenceError);
+  await assert.rejects(()=>a.completeSolve(lease!,'cancelled-result',scenario.id,0,{}),StaleFenceError);
+  assert.equal(await a.getPlan(own,'cancelled-result'),null);
+  const completed=await post(1),doneId=completed.json().jobId;
+  const winner=await a.claimJob('solve','completed-owner',30,own);assert.equal(winner!.id,doneId);
+  await a.completeSolve(winner!,'completed-result',scenario.id,0,{...manualFixture().parent,id:'completed-result',scenarioId:scenario.id,scenarioRevision:0});
+  assert.deepEqual((await peer.inject({method:'DELETE',url:`/api/jobs/${doneId}`})).json(),{cancelled:false,status:'completed'});
+  assert.ok(await a.getPlan(own,'completed-result'));
+ }finally{await app.close();await peer.close();}
 });

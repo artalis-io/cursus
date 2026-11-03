@@ -1,3 +1,4 @@
+import {solveBudget} from '../solve-budget.js';
 import { execFile } from 'node:child_process';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -25,7 +26,7 @@ export async function executeSurgeLease(lease: Lease, signal: AbortSignal): Prom
   const payload = lease.payload as SolvePayload;
   if (!payload?.scenario || payload.scenario.id !== payload.scenarioId || payload.scenario.revision !== payload.scenarioRevision)
     throw new Error('invalid or inconsistent solve payload');
-  const budget = Math.max(1, Math.min(payload.budgetSec ?? config.solveTimeSeconds, 86_400));
+  const budget = solveBudget(payload.budgetSec,config.solveTimeSeconds,config.maxSolveSeconds,true);
   const built = buildRequest(payload.scenario, budget, payload.objective ?? 'vehicles', payload.fullBudget ?? false);
   const workspace = await mkdtemp(join(tmpdir(), 'cursus-solve-'));
   const requestFile = join(workspace, 'request.json');

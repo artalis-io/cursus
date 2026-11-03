@@ -62,3 +62,10 @@ test('importing the stateful conversion worker has no legacy filesystem side eff
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+ test('solve time cap rejects invalid operator configuration',()=>{
+ for(const value of ['0','-1','1.5','86401','NaN']){
+  const result=spawnSync(process.execPath,['--import','tsx','--input-type=module','--eval',"await import('./src/config.ts')"],{cwd:process.cwd(),env:{...process.env,DISPATCH_MAX_SOLVE_SECONDS:value},encoding:'utf8'});
+  assert.notEqual(result.status,0);assert.match(result.stderr,/DISPATCH_MAX_SOLVE_SECONDS/);
+ }
+ });

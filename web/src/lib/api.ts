@@ -34,9 +34,9 @@ function asNetworkError(e: unknown, url: string): never {
   throw new ApiError(null, 'network', `${url}: ${(e as Error).message}`);
 }
 
-async function jget<T>(url: string): Promise<T> {
+async function jget<T>(url: string, signal?:AbortSignal): Promise<T> {
   let r: Response;
-  try { r = await fetch(url, { cache: 'no-store' }); } catch (e) { asNetworkError(e, url); }
+  try { r = await fetch(url, { cache: 'no-store',signal }); } catch (e) { asNetworkError(e, url); }
   return handle<T>(r, url);
 }
 async function jsend<T>(url: string, method: string, body?: unknown, revision?: number): Promise<T> {
@@ -116,7 +116,7 @@ export const api = {
 
   plans: (day?: string) => jget<PlanSummary[]>(`/api/plans${day ? `?day=${day}` : ''}`),
 
-  job: (id: string) => jget<Job>(`/api/jobs/${id}`),
+  job: async (id: string,signal?:AbortSignal) => {const job=await jget<Job>(`/api/jobs/${id}`,signal);return String(job.status)==='queued'?{...job,status:'pending' as const}:job;},
   cancelJob: (id: string) => jsend<{ cancelled: boolean; status: string }>(`/api/jobs/${id}`, 'DELETE'),
 
   compare: (base: string, revised: string) => jget<Comparison>(`/api/compare?base=${base}&revised=${revised}`),
@@ -250,6 +250,16 @@ export interface RawSample { label: string; headers: string[]; rows: string[][];
 export interface CanonicalSample { fields: string[]; rows: Record<string, unknown>[]; count: number; sha256: string | null }
 
 /** Poll a job to a terminal state, reporting each tick. Honors an AbortSignal. */
+/** Stop both in-flight requests and between-poll waits on navigation/cancel. */
+function pollDelay(ms:number,signal?:AbortSignal):Promise<void>{
+ return new Promise((resolve,reject)=>{
+  const abort=()=>{clearTimeout(timer);signal?.removeEventListener('abort',abort);reject(new DOMException('aborted','AbortError'));};
+  const timer=setTimeout(()=>{signal?.removeEventListener('abort',abort);resolve();},ms);
+  if(signal?.aborted){abort();return;}
+  signal?.addEventListener('abort',abort,{once:true});
+ });
+}
+
 export async function pollJob(
   jobId: string,
   onTick: (job: Job) => void,
@@ -262,16 +272,17 @@ export async function pollJob(
     if (opts.signal?.aborted) throw new DOMException('aborted', 'AbortError');
     let job: Job;
     try {
-      job = await api.job(jobId);
+      job = await api.job(jobId,opts.signal);
       failures = 0;
     } catch (e) {
+      if(opts.signal?.aborted)throw new DOMException('aborted','AbortError');
       // A network blip or a transient 5xx shouldn't kill the whole solve view.
       if (++failures > maxTransientFailures) throw e;
-      await new Promise((res) => setTimeout(res, interval));
+      await pollDelay(interval,opts.signal);
       continue;
     }
     onTick(job);
     if (job.status === 'completed' || job.status === 'failed' || job.status === 'cancelled') return job;
-    await new Promise((res) => setTimeout(res, interval));
+    await pollDelay(interval,opts.signal);
   }
 }

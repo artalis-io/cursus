@@ -7,7 +7,7 @@ import { api, ApiError } from '@/lib/api';
 import { useI18n, useT } from '@/i18n';
 import type { DaySummary, Objective, Plan, Scenario } from '@/types';
 import type { JobView } from '@/App';
-import { WorkspaceNameContext } from '@/workspace';
+import { WorkspaceNameContext,SolveLimitsContext } from '@/workspace';
 import { usePermission, RoleContext, PermissionsContext } from '@/permissions';
 import {WorkspaceNavigation,WorkspaceMenu,WorkspaceMenuItem,useAnchoredPanel,type WorkspaceCommand} from '@/components/WorkspaceNavigation';
 
@@ -43,13 +43,13 @@ function Popover({ open, onClose, align = 'right', children }: { open: boolean; 
 }
 
 export function TopBar({
-  days, dayId, onDayChange, scenario, plan, job, solving, exportPending = false,
+  days, dayId, onDayChange, scenario, plan, job, solving, cancelling=false, exportPending = false,
   objective, onObjectiveChange, budgetSec, onBudgetChange, fullBudget, onFullBudgetChange, changesCount, dirty,
   onOptimize, onCancel, onReset, onOpenChanges, showCompare, onCompare, onOpenImport, onOpenHistory, onOpenWeek, onOpenIssues, issuesCount, onOpenScenarios, onOpenHelp,
   onOpenProfiles,onOpenHandoff,onOpenInputUpdates,onOpenReview,
 }: {
   days: DaySummary[]; dayId: string; onDayChange: (id: string) => void;
-  scenario: Scenario; plan: Plan; job: JobView | null; solving: boolean;
+  scenario: Scenario; plan: Plan; job: JobView | null; solving: boolean; cancelling?:boolean;
   exportPending?: boolean;
   objective: Objective; onObjectiveChange: (o: Objective) => void;
   budgetSec: number; onBudgetChange: (n: number) => void; fullBudget: boolean; onFullBudgetChange: (b: boolean) => void; changesCount: number; dirty: boolean;
@@ -66,6 +66,11 @@ export function TopBar({
   const canEdit = usePermission('optimization.submit');
   const role = useContext(RoleContext), permissions = useContext(PermissionsContext);
   const canCancel = usePermission('optimization.cancel');
+  const {maxSeconds}=useContext(SolveLimitsContext);
+  const shownBudget=Math.min(budgetSec,maxSeconds,600);
+  const isReplan = scenario.kind === 'copy';
+  const progress=cancelling?t('solve.cancelling'):job?.status==='pending'||!job?t(job?.id?'solve.queued':'solve.submitting'):isReplan?t('topbar.replanning'):t('topbar.optimizing');
+  const progressLabel=`${progress} · ${(job?.elapsedSec??0).toFixed(0)}s`;
   const workspaceName = useContext(WorkspaceNameContext);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [exportOpen, setExportOpen] = useState(false);
@@ -77,7 +82,6 @@ export function TopBar({
     setExportError(''); setExportBusy(false); setExportOpen(false);
     return () => { exportGeneration.current = generation + 1; };
   }, [plan.id, exportPending]);
-  const isReplan = scenario.kind === 'copy';
   const termOk = plan.provenance.termination === 'OK';
   const invalid = !plan.provenance.validation.valid;
 
@@ -203,10 +207,22 @@ export function TopBar({
                 </div>
               </div>
               <div>
-                <div className="mb-1 flex items-baseline justify-between text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
-                  <span>{t('topbar.budget')}</span><span className="tnum text-foreground">{budgetSec}s</span>
+                <div role="radiogroup" aria-label={t('solve.presets')} className="mb-3 grid grid-cols-3 gap-1" onKeyDown={event=>{
+                  if(!['ArrowRight','ArrowLeft','ArrowUp','ArrowDown','Home','End'].includes(event.key))return;
+                  event.preventDefault();const items=Array.from(event.currentTarget.querySelectorAll<HTMLButtonElement>('button[role="radio"]:not(:disabled)'));if(!items.length)return;
+                  const index=items.indexOf(event.target as HTMLButtonElement),next=event.key==='Home'?0:event.key==='End'?items.length-1:(index+(['ArrowRight','ArrowDown'].includes(event.key)?1:-1)+items.length)%items.length;
+                  items[next].click();items[next].focus();
+                }}>
+                  {([{id:'quick',seconds:30},{id:'standard',seconds:240},{id:'thorough',seconds:600}] as const).map(preset=><button key={preset.id} type="button" role="radio" tabIndex={shownBudget===preset.seconds||![30,240,600].includes(shownBudget)&&preset.id==='quick'?0:-1} aria-checked={shownBudget===preset.seconds} disabled={preset.seconds>maxSeconds}
+                    onClick={()=>onBudgetChange(preset.seconds)} className={`rounded border px-2 py-1.5 text-xs disabled:opacity-40 ${shownBudget===preset.seconds?'border-primary bg-primary/10':'border-divider hover:bg-accent'}`}>
+                    <span className="block font-medium">{t(`solve.${preset.id}`)}</span><span>{preset.seconds<60?`${preset.seconds}s`:`${preset.seconds/60} min`}</span>
+                  </button>)}
                 </div>
-                <input type="range" min={15} max={240} step={5} value={budgetSec}
+                <p className="mb-2 max-w-[290px] text-xs text-muted-foreground">{t('solve.budgetHint')}</p>
+                <div className="mb-1 flex items-baseline justify-between text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                  <span>{![30,240,600].includes(shownBudget)?`${t('solve.custom')} · `:''}{t('topbar.budget')}</span><span className="tnum text-foreground">{shownBudget}s</span>
+                </div>
+                <input aria-label={t('topbar.budget')} type="range" min={Math.min(15,maxSeconds)} max={Math.min(600,maxSeconds)} step={1} value={shownBudget}
                   onChange={(e) => onBudgetChange(Number(e.target.value))} className="w-full accent-[var(--primary)]" />
               </div>
               <label className="flex cursor-pointer items-start gap-2 text-xs">
@@ -224,8 +240,8 @@ export function TopBar({
             allowing the timer label to grow used to shift the entire toolbar. */}
         {canEdit ? <div className="flex w-[190px] shrink-0 items-center gap-1.5">
           {solving ? (
-            <Button variant="default" size="sm" disabled className="w-[152px] shrink-0 overflow-hidden">
-              <Loader2 className="h-4 w-4 animate-spin" /> {isReplan ? t('topbar.replanning') : t('topbar.optimizing')} {job ? `${job.elapsedSec.toFixed(0)}s` : ''}
+            <Button variant="default" size="sm" disabled title={progressLabel} aria-label={progressLabel} className="w-[152px] shrink-0 overflow-hidden">
+              <Loader2 className="h-4 w-4 shrink-0 animate-spin" /><span role="status" className="min-w-0 truncate" title={t('solve.elapsedHint')}><span className="sr-only">{progress}</span><span aria-hidden="true">{progressLabel}</span></span>
             </Button>
           ) : (
             <Button variant="default" size="sm" onClick={onOptimize} className={`w-[152px] shrink-0 ${dirty ? 'ring-2 ring-warning/60' : ''}`}>
@@ -233,7 +249,7 @@ export function TopBar({
             </Button>
           )}
           {canCancel && <Button variant="graphite" size="icon" aria-label={t('topbar.cancel')} onClick={onCancel} title={t('topbar.cancel')}
-            disabled={!solving} aria-hidden={!solving}
+            disabled={!solving||!job?.id||cancelling} aria-hidden={!solving}
             className={`h-8 w-8 shrink-0 border border-white/15 ${solving ? '' : 'invisible'}`}>
             <X className="h-4 w-4" />
           </Button>}

@@ -1,5 +1,5 @@
 import { useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { WorkspaceTenantContext,WorkspaceFeaturesContext } from '@/workspace';
+import { WorkspaceTenantContext,WorkspaceFeaturesContext,SolveLimitsContext } from '@/workspace';
 import { selectedUnassigned } from '@/lib/unassigned-selection';
 import {selectedStop} from '@/lib/stop-selection';
 import {sameSelection as sameSel} from '@/lib/selection-context';
@@ -207,6 +207,7 @@ export default function App() {
   // replaced between those phases, so deriving UI state from it alone can
   // briefly render the idle Optimize control between two active states.
   const [solveActive, setSolveActive] = useState(false);
+  const solveBusyRef=useRef(false);
   const [error, setError] = useState<string | null>(null);
   const [compareOpen, setCompareOpen] = useState(false);
   const [candidate,setCandidate]=useState<{plan:Plan;reference:Plan}|null>(null);
@@ -229,7 +230,10 @@ export default function App() {
   // the matching vehicles' routes. null = no filter (show all).
   const [visibleVehicleIds, setVisibleVehicleIds] = useState<number[] | null>(null);
   const [objective, setObjective] = useState<Objective>('vehicles');
+  const {maxSeconds:maxSolveSeconds}=useContext(SolveLimitsContext);
   const [budgetSec, setBudgetSec] = useState<number>(SOLVE_BUDGET_SEC);
+  const [cancelling,setCancelling]=useState(false);
+  const cancellingRef=useRef(false);
   const [fullBudget, setFullBudget] = useState(false); // keep searching until the time limit
   // Timeline playback: a clock (sec from midnight) swept across the planned day.
   const [clockSec, setClockSec] = useState<number | null>(null);
@@ -372,7 +376,7 @@ export default function App() {
     activeJobId.current = jobId;
     const saved=readActiveJob(),referenceId=saved?.jobId===jobId?saved.referencePlanId:planRef.current?.id;
     persistActiveJob({ jobId, scenarioId, dayId,referencePlanId:referenceId });
-    setJob({ id: jobId, status: 'running', elapsedSec: 0, scenarioId, error: null });
+    setJob(current=>({id:jobId,status:'pending',elapsedSec:current?.id===jobId||!current?.id?current?.elapsedSec??0:0,scenarioId,error:null}));
     try {
       const final = await pollJob(jobId, (j) => {
         if (activeJobId.current !== jobId) return;
@@ -406,32 +410,38 @@ export default function App() {
     const ctrl = new AbortController();
     pollAbort.current = ctrl;
     setError(null);
-    setJob({ id: '', status: 'pending', elapsedSec: 0, scenarioId, error: null });
+    setJob(current=>current?.id===''&&current.scenarioId===scenarioId?current:{id:'',status:'pending',elapsedSec:0,scenarioId,error:null});
     try {
       const current = scenarioRef.current;
       if (!current || current.id !== scenarioId) return null;
-      const { jobId } = await api.solve(scenarioId, current.revision, budgetSec, objective, fullBudget,planRef.current?.id);
+      const { jobId } = await api.solve(scenarioId, current.revision, Math.min(budgetSec,maxSolveSeconds), objective, fullBudget,planRef.current?.id);
+      if(ctrl.signal.aborted||!writeAccess.current.mounted||scenarioRef.current?.id!==scenarioId)return null;
       return await followJob(jobId, scenarioId, dayIdForJob, ctrl);
     } catch (e) {
-      if ((e as Error).name === 'AbortError') return null;
+      if (ctrl.signal.aborted||!writeAccess.current.mounted||scenarioRef.current?.id!==scenarioId||(e as Error).name === 'AbortError') return null;
       rejectStaleIntent(e);
       setError(describeApiError(e, t));
       setJob(null);
       return null;
     }
-  }, [budgetSec, objective, fullBudget, followJob, rejectStaleIntent]);
+  }, [budgetSec, maxSolveSeconds, objective, fullBudget, followJob, rejectStaleIntent]);
 
   // Cancel the active solve (server-side) and drop back to the current plan.
   const cancelSolve = useCallback(async () => {
     if (!writeAccess.current.mounted || !writeAccess.current.cancel) return;
     const id = activeJobId.current;
-    if (!id) { pollAbort.current?.abort(); setJob(null); return; }
-    activeJobId.current = null;
-    pollAbort.current?.abort();
-    persistActiveJob(null);
-    try { await api.cancelJob(id); } catch { /* best effort */ }
-    setJob(null);
-  }, []);
+    if(!id||cancellingRef.current)return;
+    cancellingRef.current=true;setCancelling(true);
+    try{
+      const result=await api.cancelJob(id);
+      if(activeJobId.current===id&&(result.cancelled||result.status==='cancelled')){
+        activeJobId.current=null;pollAbort.current?.abort();persistActiveJob(null);setJob(null);
+      }
+      // A completed result won the race: polling still publishes its candidate.
+    }catch(e){if(activeJobId.current===id)setError(describeApiError(e,t));}
+    finally{cancellingRef.current=false;setCancelling(false);}
+
+  }, [t]);
 
   // Reconnect to a solve persisted before a reload. Returns true if it set up state.
   const tryResume = useCallback(async (ds: DaySummary[]): Promise<boolean> => {
@@ -522,9 +532,10 @@ export default function App() {
   // it is an edited copy. Staged edits are applied together here.
   const replan = useCallback(async () => {
     if(manualBusyRef.current)return;
-    if (!writeAccess.current.mounted || !writeAccess.current.solve || !scenarioRef.current || solveActive) return;
+    if (!writeAccess.current.mounted || !writeAccess.current.solve || !scenarioRef.current || solveBusyRef.current) return;
     const epoch = writeAccess.current.epoch;
-    setSolveActive(true);
+    solveBusyRef.current=true;setSolveActive(true);
+    setJob({id:'',status:'pending',elapsedSec:0,scenarioId:scenarioRef.current.id,error:null});
     try {
       if (!await editQueue.current) return;
       if (!writeAccess.current.mounted || !writeAccess.current.solve || epoch !== writeAccess.current.epoch) return;
@@ -533,8 +544,8 @@ export default function App() {
       const wasCopy = current.kind === 'copy';
       const revised = await runSolve(current.id, dayId);
       if (revised && wasCopy) setCompareOpen(true);
-    } finally { setSolveActive(false); }
-  }, [dayId, runSolve, solveActive]);
+    } finally { solveBusyRef.current=false;setSolveActive(false);setJob(current=>current?.id===''?null:current); }
+  }, [dayId, runSolve]);
 
   const resetToBaseline = useCallback(() => {
     const d = days.find((x) => x.id === dayId);
@@ -722,7 +733,7 @@ export default function App() {
           onOpenInputUpdates={features.inputUpdates&&canEdit&&!candidate&&!pendingEdits?()=>setInputUpdatesOpen(true):undefined}
           onOpenHandoff={features.acknowledgedHandoff?()=>setHandoffOpen(true):undefined}
           days={days} dayId={dayId} onDayChange={(id) => { if (!okToSwitch()) return; const d = days.find((x) => x.id === id); if (d) void loadDay(d); }}
-          scenario={scenario} plan={plan} job={job} solving={!!solving} exportPending={workspaceLoading}
+          scenario={scenario} plan={plan} job={job} solving={!!solving} cancelling={cancelling} exportPending={workspaceLoading}
           objective={objective} onObjectiveChange={setObjective}
           budgetSec={budgetSec} onBudgetChange={setBudgetSec}
           fullBudget={fullBudget} onFullBudgetChange={setFullBudget}

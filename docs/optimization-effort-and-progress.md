@@ -1,0 +1,17 @@
+# Optimization effort and progress
+
+Cursus offers Quick (30 seconds), Standard (240 seconds), and Thorough (600 seconds) in the existing Solve settings menu. The slider remains available for custom budgets. Existing UI defaults and `VITE_SOLVE_SECONDS` overrides remain unchanged. Selecting a preset changes only the requested time budget: it does not change the objective, fleet/constraints, HGS population search, thread count, or the existing Run full budget option.
+
+Budgets are maximum search times. A solver can finish earlier, and a longer search does not guarantee a better result. No percentage or estimated completion time is invented.
+
+The existing Optimize/Replan control shows Submitting, Queued, Running (Optimizing/Replanning), or Cancelling, with a fixed footprint. Its clock is total time for the optimization request, including submission and queue wait; saved-plan KPIs continue to describe the displayed saved plan. Polls cannot move this clock backwards. A reload reconnects to the durable job; completion offers Candidate ready while preserving the displayed plan until explicit selection. Selection does not approve a plan.
+
+The authenticated identity response advertises `solveLimits.maxSeconds`. `DISPATCH_MAX_SOLVE_SECONDS` defaults to 600 and accepts an integer from 1 to 86400. Keep it consistent across replicas. The UI offers at most ten minutes and disables presets above a lower operator cap. Both HTTP admission paths reject malformed/over-limit requests. Both stateful native executors also cap previously queued work against the current operator limit. A default longer than the cap is bounded to the cap. The legacy minimum of five seconds is preserved where the cap permits it.
+
+This closes a previous stateful-runtime gap: queued HTTP requests previously had no reliable upper admission bound, and one native path allowed substantially longer runs. Existing ten-minute workloads remain supported; deployments deliberately accepting longer API runs must configure their cap explicitly.
+
+Existing queue admission, resource/concurrency limits, HGS settings, watchdogs, leases and publication fencing remain authoritative. No new worker platform, database schema, or automatic deployment is introduced.
+
+Admin and Planner can cancel solves within their tenant; Reviewer cannot. Cancellation atomically marks a queued/running solve cancelled and advances its fencing generation. A worker heartbeat observes revoked ownership and aborts native execution; solve heartbeats run at most one second apart. Stale workers cannot publish or turn a cancelled job into a failure. Cancellation is idempotent, and import/handoff jobs cannot be cancelled through this endpoint. If completion wins the database race, the completed candidate remains available. If the cancellation HTTP request fails, the UI retains polling and permits retry rather than pretending work stopped. Cancel is disabled while submission has no acknowledged job ID.
+
+Verification covers budget validation, queued-state compatibility, tenant/fence boundaries, role checks, presets in EN/HU, lower server caps, one-click/rapid double-click submission, moving queued clocks, reload, failed cancellation/retry, real native cancellation across replicas, no remaining Surge process, and candidate selection. Presentation fixtures use public synthetic data; real native HTTP acceptance and PostgreSQL integration tests exercise authoritative state separately. No production email or customer-data mutation is needed.

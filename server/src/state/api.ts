@@ -1,3 +1,4 @@
+import {solveBudget} from '../solve-budget.js';
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from 'fastify';
 import { JobQueueFullError, RevisionConflictError, ScenarioHandoffHistoryError, type StatefulStore } from './postgres.js';
 import { ScenarioRepository } from './scenarios.js';
@@ -48,7 +49,7 @@ import {registerInputUpdates} from './input-updates-api.js';
 
 // Do not advertise legacy-only endpoints as usable controls in this runtime.
 function statefulPermissions(role: string) {
-  return isRole(role) ? rolePermissions[role].filter(p => p !== 'optimization.cancel' && p !== 'analysis.generate' && p !== 'dataset.delete') : [];
+  return isRole(role) ? rolePermissions[role].filter(p => p !== 'analysis.generate' && p !== 'dataset.delete') : [];
 }
 
 export interface StatefulApiOptions { store: StatefulStore; tenantId: string; tenantName: string; auth?: StatefulAuthService; publicOrigin?: string; objects?: ObjectStore; maxUploadBytes?: number; manualPlanning?: ManualDatasetLoader;fleetSettings?:Omit<ManualDatasetContext,'day'>;handoffDestinations?:Destination[];geometryLoader?:typeof fillPlanGeometry;inputUpdatesEnabled?:boolean }
@@ -173,11 +174,11 @@ export async function createStatefulApi(options: StatefulApiOptions): Promise<Fa
   });
   app.get('/api/auth/me', async (req, reply) => {
     reply.header('Cache-Control', 'private, no-store');
-    if (!options.auth) return { email: 'local@cursus', tenantId: options.tenantId, tenantName: options.tenantName, role: 'admin', permissions: statefulPermissions('admin').filter(p => p !== 'role.preview'), build: buildInfo,features:{planningProfiles:true,acknowledgedHandoff:true,inputUpdates:!!options.inputUpdatesEnabled&&!!options.objects&&!!options.manualPlanning} };
+    if (!options.auth) return { email: 'local@cursus', tenantId: options.tenantId, tenantName: options.tenantName, role: 'admin', permissions: statefulPermissions('admin').filter(p => p !== 'role.preview'), solveLimits:{maxSeconds:config.maxSolveSeconds}, build: buildInfo,features:{planningProfiles:true,acknowledgedHandoff:true,inputUpdates:!!options.inputUpdatesEnabled&&!!options.objects&&!!options.manualPlanning} };
     const principal = await options.auth.authenticate(cookieValue(req.headers.cookie, 'cursus_session'));
     if (!principal || principal.tenantId !== options.tenantId) return reply.code(401).send({ error: 'authentication required' });
     const identity = viewIdentity(principal, req.headers.cookie);
-    return { ...identity, permissions: statefulPermissions(identity.effectiveRole), tenantName: await options.store.getTenantName(principal.tenantId), build: buildInfo,features:{planningProfiles:true,acknowledgedHandoff:true,inputUpdates:!!options.inputUpdatesEnabled&&!!options.objects&&!!options.manualPlanning} };
+    return { ...identity, permissions: statefulPermissions(identity.effectiveRole), tenantName: await options.store.getTenantName(principal.tenantId), solveLimits:{maxSeconds:config.maxSolveSeconds}, build: buildInfo,features:{planningProfiles:true,acknowledgedHandoff:true,inputUpdates:!!options.inputUpdatesEnabled&&!!options.objects&&!!options.manualPlanning} };
   });
   app.post('/api/auth/logout', async (req, reply) => {
     if (options.auth && req.headers.origin !== options.publicOrigin) return reply.code(403).send({ error: 'invalid request origin' });
@@ -239,6 +240,9 @@ export async function createStatefulApi(options: StatefulApiOptions): Promise<Fa
   });
   app.post<{ Params: { id: string }; Body: { budgetSec?: number; objective?: string; fullBudget?: boolean;referencePlanId?:unknown } }>('/api/scenarios/:id/solve', async (req, reply) => {
     const scenario = await scenarios.get(req.params.id); if (!scenario) return reply.code(404).send({ error: 'scenario not found' });
+    let budgetSec:number;
+    try{budgetSec=solveBudget(req.body?.budgetSec,config.solveTimeSeconds,config.maxSolveSeconds);}
+    catch(error){return reply.code(400).send({error:(error as Error).message});}
     if (scenario.revision !== expectedRevision(req.headers)) return reply.code(409).send({ error: 'Scenario changed; reload before optimizing.' });
     if(req.body?.referencePlanId!==undefined){
       if(typeof req.body.referencePlanId!=='string'||req.body.referencePlanId.length>128)return reply.code(400).send({error:'Invalid reference plan'});
@@ -250,7 +254,7 @@ export async function createStatefulApi(options: StatefulApiOptions): Promise<Fa
     let id: string;
     try {
       id = await options.store.enqueueJob(options.tenantId, 'solve', `solve/${scenario.id}/${scenario.revision}/${randomKey()}`, {
-        scenarioId: scenario.id, scenarioRevision: scenario.revision, budgetSec: req.body?.budgetSec, objective: req.body?.objective ?? 'vehicles', fullBudget: req.body?.fullBudget === true, scenario,referencePlanId:req.body?.referencePlanId,
+        scenarioId: scenario.id, scenarioRevision: scenario.revision, budgetSec, objective: req.body?.objective ?? 'vehicles', fullBudget: req.body?.fullBudget === true, scenario,referencePlanId:req.body?.referencePlanId,
       }, config.maxSolveQueue, { id: scenario.id, revision: expectedRevision(req.headers)! });
     } catch (error) {
       if (error instanceof RevisionConflictError) return reply.code(409).send({ error: 'Scenario changed; reload before optimizing.' });
@@ -262,6 +266,15 @@ export async function createStatefulApi(options: StatefulApiOptions): Promise<Fa
   app.get<{ Params: { id: string } }>('/api/jobs/:id', async (req, reply) => {
     const job = await options.store.getJob(options.tenantId, req.params.id);
     return job ? statefulJobResponse(job) : reply.code(404).send({ error: 'job not found' });
+  });
+  app.delete<{Params:{id:string}}>('/api/jobs/:id',async(req,reply)=>{
+    if(!/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(req.params.id))return reply.code(404).send({error:'job not found'});
+    const job=await options.store.getJob(options.tenantId,req.params.id);
+    if(!job||job.kind!=='solve')return reply.code(404).send({error:'job not found'});
+    const cancelled=await options.store.cancelSolve(options.tenantId,req.params.id);
+    const current=await options.store.getJob(options.tenantId,req.params.id);
+    if(!current)return reply.code(404).send({error:'job not found'});
+    return {cancelled,status:statefulJobResponse(current).status};
   });
   app.get<{ Params: { id: string };Querystring:{geometry?:string} }>('/api/plans/:id', async (req, reply) => {
     if(req.query.geometry!==undefined&&req.query.geometry!=='stored')return reply.code(400).send({error:'geometry must be stored or omitted.'});
@@ -566,13 +579,14 @@ export function statefulJobResponse(job: Record<string, unknown>) {
   const result = job.result && typeof job.result === 'object' ? job.result as Record<string, unknown> : {};
   const payload = job.payload && typeof job.payload === 'object' ? job.payload as Record<string, unknown> : {};
   const state = String(job.state ?? 'pending');
-  const status = state === 'succeeded' ? 'completed' : state;
+  const status = state === 'succeeded' ? 'completed' : state === 'queued' ? 'pending' : state;
   const createdAt = new Date(String(job.createdAt));
   const updatedAt = new Date(String(job.updatedAt));
   const active = state === 'queued' || state === 'running';
   const elapsedEnd = active ? Date.now() : updatedAt.valueOf();
   return {
     ...job,
+    state,
     status,
     scenarioId: payload.scenarioId ?? null,
     scenarioRevision: payload.scenarioRevision ?? null,

@@ -1,3 +1,4 @@
+import {solveBudget} from './solve-budget.js';
 import fastifyStatic from '@fastify/static';
 import { hostname } from 'node:os';
 import { readFile } from 'node:fs/promises';
@@ -73,7 +74,7 @@ async function solve(lease: Lease, signal: AbortSignal): Promise<SolveOutput> {
   if (!dataset) throw new Error(`no admitted dataset contains day ${payload.scenario.day}`);
   const profiles=await new ProfileRepository(store,lease.tenantId).resolve(payload.scenario.planningProfiles??[]);
   const plan = await solveConvertedDataset(objects, lease.tenantId, dataset.manifest as never, payload.scenario,
-    Math.max(1, payload.budgetSec ?? config.solveTimeSeconds), payload.objective ?? 'vehicles', signal, payload.fullBudget ?? false,
+    solveBudget(payload.budgetSec,config.solveTimeSeconds,config.maxSolveSeconds,true), payload.objective ?? 'vehicles', signal, payload.fullBudget ?? false,
     lease.tenantId===config.authTenantId?fleetSettings:undefined,
     payload.referencePlanId?(await store.getPlan(lease.tenantId,payload.referencePlanId))??undefined:undefined,profiles);
   return { planId: plan.id, scenarioId: payload.scenario.id, scenarioRevision: payload.scenario.revision, plan };
