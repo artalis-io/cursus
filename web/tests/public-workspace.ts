@@ -1,7 +1,7 @@
 import {expect,type Page} from '@playwright/test';
-import {manualFixture} from '../../server/src/state/manual-fixture';
+import {publicPlan} from './public-plan';
 export async function publicWorkspace(page:Page,stale=false,maxSeconds=600){
- const f=manualFixture(),plan={...f.parent,source:'saved',scenarioRevision:1},scenario={...f.scenario,kind:'base'};
+ const f=publicPlan(),plan={...f.parent,source:'saved',scenarioRevision:1},scenario={...f.scenario,kind:'base'};
  for(const v of plan.vehicles)for(const trip of v.trips)trip.geometry={type:'LineString',coordinates:[[19,47],[19.1,47.1]]};
  const days=[{id:scenario.day,isoDate:'2026-05-06',orders:117,baseScenarioId:scenario.id,baselinePlanId:plan.id},
   {id:'second-day',isoDate:'2026-05-07',orders:146,baseScenarioId:'second-scenario',baselinePlanId:'second-plan'}];
