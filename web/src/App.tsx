@@ -410,14 +410,15 @@ export default function App() {
     const ctrl = new AbortController();
     pollAbort.current = ctrl;
     setError(null);
-    setJob({ id: '', status: 'pending', elapsedSec: 0, scenarioId, error: null });
+    setJob(current=>current?.id===''&&current.scenarioId===scenarioId?current:{id:'',status:'pending',elapsedSec:0,scenarioId,error:null});
     try {
       const current = scenarioRef.current;
       if (!current || current.id !== scenarioId) return null;
       const { jobId } = await api.solve(scenarioId, current.revision, Math.min(budgetSec,maxSolveSeconds), objective, fullBudget,planRef.current?.id);
+      if(ctrl.signal.aborted||!writeAccess.current.mounted||scenarioRef.current?.id!==scenarioId)return null;
       return await followJob(jobId, scenarioId, dayIdForJob, ctrl);
     } catch (e) {
-      if ((e as Error).name === 'AbortError') return null;
+      if (ctrl.signal.aborted||!writeAccess.current.mounted||scenarioRef.current?.id!==scenarioId||(e as Error).name === 'AbortError') return null;
       rejectStaleIntent(e);
       setError(describeApiError(e, t));
       setJob(null);
@@ -534,6 +535,7 @@ export default function App() {
     if (!writeAccess.current.mounted || !writeAccess.current.solve || !scenarioRef.current || solveBusyRef.current) return;
     const epoch = writeAccess.current.epoch;
     solveBusyRef.current=true;setSolveActive(true);
+    setJob({id:'',status:'pending',elapsedSec:0,scenarioId:scenarioRef.current.id,error:null});
     try {
       if (!await editQueue.current) return;
       if (!writeAccess.current.mounted || !writeAccess.current.solve || epoch !== writeAccess.current.epoch) return;
@@ -542,7 +544,7 @@ export default function App() {
       const wasCopy = current.kind === 'copy';
       const revised = await runSolve(current.id, dayId);
       if (revised && wasCopy) setCompareOpen(true);
-    } finally { solveBusyRef.current=false;setSolveActive(false); }
+    } finally { solveBusyRef.current=false;setSolveActive(false);setJob(current=>current?.id===''?null:current); }
   }, [dayId, runSolve]);
 
   const resetToBaseline = useCallback(() => {

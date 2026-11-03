@@ -2052,9 +2052,9 @@ test('solve presets: a single Thorough submission produces a native candidate wi
  await page.getByRole('radio',{name:/Thorough/}).click();
  await expect(page.getByRole('slider',{name:'Time budget',exact:true})).toHaveValue('600');
  await page.keyboard.press('Escape');
- let submissions=0;page.on('request',r=>{if(r.method()==='POST'&&r.url().endsWith('/solve')){submissions++;expect(r.postDataJSON().budgetSec).toBe(600);expect(r.postDataJSON().fullBudget).toBe(false);}});
+ const submissions:Record<string,unknown>[]=[];page.on('request',r=>{if(r.method()==='POST'&&r.url().endsWith('/solve'))submissions.push(r.postDataJSON());});
  const plan=await finishSolve(page,()=>page.getByRole('button',{name:/^(Optimize|Replan)$/,exact:true}).evaluate(el=>{(el as HTMLButtonElement).click();(el as HTMLButtonElement).click();}),{reload:true});
- expect(submissions).toBe(1);expect(plan.provenance.validation.valid).toBe(true);
+ expect(submissions).toHaveLength(1);expect(submissions[0].budgetSec).toBe(600);expect(submissions[0].fullBudget??false).toBe(false);expect(plan.provenance.validation.valid).toBe(true);
 });
 
 for(const role of ['admin','planner'] as const)test(`solve cancellation ${role}: native work cancels across replicas after reload without publishing`,async({page})=>{
@@ -2062,19 +2062,20 @@ for(const role of ['admin','planner'] as const)test(`solve cancellation ${role}:
  const before=await get<Plan[]>(page.request,'/api/plans');
  await page.getByRole('button',{name:'Solve settings',exact:true}).click();
  await page.getByRole('slider',{name:'Time budget',exact:true}).fill('60');
- await page.getByRole('checkbox',{name:'Run full budget',exact:true}).check();await page.keyboard.press('Escape');
+ await page.getByRole('checkbox',{name:/^Run full budget/}).check();await page.keyboard.press('Escape');
  const submitted=page.waitForResponse(r=>r.request().method()==='POST'&&r.url().endsWith('/solve'));
  await page.getByRole('button',{name:/^(Optimize|Replan)$/,exact:true}).click();
  const response=await submitted;expect(response.status()).toBe(202);const {jobId}=await response.json();
+const nativeCount="const fs=require('node:fs');let n=0;for(const pid of fs.readdirSync('/proc')){if(!/^\\d+$/.test(pid))continue;try{if(fs.readlinkSync('/proc/'+pid+'/exe').endsWith('/surge_solve'))n++;}catch{}}console.log(n)";
  try{
   await expect.poll(async()=>(await get<{status:string}>(page.request,`${peer}/api/jobs/${jobId}`)).status,{timeout:15000}).toBe('running');
+  await expect.poll(()=>['app-a','app-b'].reduce((n,service)=>n+Number(dc('exec','-T',service,'node','-e',nativeCount).trim()),0),{timeout:15000}).toBeGreaterThan(0);
   await page.reload();await expect(page.getByRole('button',{name:'Cancel',exact:true})).toBeEnabled();
   const cancelled=page.waitForResponse(r=>r.request().method()==='DELETE'&&r.url().endsWith(`/jobs/${jobId}`));
   await page.getByRole('button',{name:'Cancel',exact:true}).click();expect((await cancelled).status()).toBe(200);
   await expect(page.getByRole('button',{name:/^(Optimize|Replan)$/,exact:true})).toBeEnabled();
   await expect.poll(async()=>(await get<{status:string}>(page.request,`${peer}/api/jobs/${jobId}`)).status).toBe('cancelled');
   await page.reload();await expect(page.getByRole('button',{name:/^(Optimize|Replan)$/,exact:true})).toBeEnabled();
-  const nativeCount="const fs=require('node:fs');let n=0;for(const pid of fs.readdirSync('/proc')){if(!/^\\d+$/.test(pid))continue;try{if(fs.readlinkSync('/proc/'+pid+'/exe').endsWith('/surge_solve'))n++;}catch{}}console.log(n)";
   for(const service of ['app-a','app-b'])await expect.poll(()=>dc('exec','-T',service,'node','-e',nativeCount).trim(),{timeout:10000}).toBe('0');
   expect((await get<Plan[]>(page.request,`${peer}/api/plans`)).map(p=>p.id).sort()).toEqual(before.map(p=>p.id).sort());
   await expect(page.getByRole('region',{name:'Plan candidate',exact:true})).toHaveCount(0);
