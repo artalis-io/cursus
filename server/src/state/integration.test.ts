@@ -495,7 +495,8 @@ integration('budget admission and cross-replica cancellation preserve tenant and
   const id=queued.json().jobId;
   assert.equal((await a.getJob(own,id))!.payload && ((await a.getJob(own,id))!.payload as {fullBudget:boolean}).fullBudget,true);
   assert.equal(await b.cancelSolve(other,id),false);
-  const cancel=await peer.inject({method:'DELETE',url:`/api/jobs/${id}`});assert.deepEqual(cancel.json(),{cancelled:true,status:'cancelled'});
+  const cancel=await Promise.all([app,peer].map(api=>api.inject({method:'DELETE',url:`/api/jobs/${id}`})));
+  assert.equal(cancel.filter(r=>r.json().cancelled).length,1);assert.ok(cancel.every(r=>r.json().status==='cancelled'));
   assert.deepEqual((await peer.inject({method:'DELETE',url:`/api/jobs/${id}`})).json(),{cancelled:false,status:'cancelled'});
   assert.equal(await a.claimJob('solve','no-cancelled-work',30,own),null);
   const next=await post(1),running=next.json().jobId;
@@ -504,5 +505,10 @@ integration('budget admission and cross-replica cancellation preserve tenant and
   await assert.rejects(()=>a.heartbeatJob(lease!),StaleFenceError);
   await assert.rejects(()=>a.completeSolve(lease!,'cancelled-result',scenario.id,0,{}),StaleFenceError);
   assert.equal(await a.getPlan(own,'cancelled-result'),null);
+  const completed=await post(1),doneId=completed.json().jobId;
+  const winner=await a.claimJob('solve','completed-owner',30,own);assert.equal(winner!.id,doneId);
+  await a.completeSolve(winner!,'completed-result',scenario.id,0,{id:'completed-result'});
+  assert.deepEqual((await peer.inject({method:'DELETE',url:`/api/jobs/${doneId}`})).json(),{cancelled:false,status:'completed'});
+  assert.ok(await a.getPlan(own,'completed-result'));
  }finally{await app.close();await peer.close();}
 });

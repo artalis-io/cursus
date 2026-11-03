@@ -236,7 +236,7 @@ export function TopBar({
         {canEdit ? <div className="flex w-[190px] shrink-0 items-center gap-1.5">
           {solving ? (
             <Button variant="default" size="sm" disabled title={progressLabel} aria-label={progressLabel} className="w-[152px] shrink-0 overflow-hidden">
-              <Loader2 className="h-4 w-4 shrink-0 animate-spin" /><span role="status" className="min-w-0 truncate" title={t('solve.elapsedHint')}>{progressLabel}</span>
+              <Loader2 className="h-4 w-4 shrink-0 animate-spin" /><span role="status" className="min-w-0 truncate" title={t('solve.elapsedHint')}><span className="sr-only">{progress}</span><span aria-hidden="true">{progressLabel}</span></span>
             </Button>
           ) : (
             <Button variant="default" size="sm" onClick={onOptimize} className={`w-[152px] shrink-0 ${dirty ? 'ring-2 ring-warning/60' : ''}`}>
