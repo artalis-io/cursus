@@ -8,6 +8,9 @@ test('presentation: presets show their real budgets in EN/HU and respect server 
   await page.getByRole('radio',{name:new RegExp(label)}).click();
   await expect(page.getByRole('slider',{name:'Time budget',exact:true})).toHaveValue(String(seconds));
  }
+ await page.getByRole('radio',{name:/Quick/}).focus();await page.keyboard.press('ArrowRight');
+ await expect(page.getByRole('radio',{name:/Standard/})).toHaveAttribute('aria-checked','true');
+ await page.getByRole('radio',{name:/Thorough/}).click();
  await page.keyboard.press('Escape');await page.getByRole('button',{name:'HU',exact:true}).click();
  await page.getByRole('button',{name:'Megoldási beállítások',exact:true}).click();
  await expect(page.getByRole('radio',{name:/Alapos/})).toHaveAttribute('aria-checked','true');

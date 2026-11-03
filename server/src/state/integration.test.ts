@@ -1,3 +1,4 @@
+import {manualFixture} from './manual-fixture.js';
 import assert from 'node:assert/strict';
 import { test, before, after } from 'node:test';
 import { randomUUID } from 'node:crypto';
@@ -507,7 +508,7 @@ integration('budget admission and cross-replica cancellation preserve tenant and
   assert.equal(await a.getPlan(own,'cancelled-result'),null);
   const completed=await post(1),doneId=completed.json().jobId;
   const winner=await a.claimJob('solve','completed-owner',30,own);assert.equal(winner!.id,doneId);
-  await a.completeSolve(winner!,'completed-result',scenario.id,0,{id:'completed-result'});
+  await a.completeSolve(winner!,'completed-result',scenario.id,0,{...manualFixture().parent,id:'completed-result',scenarioId:scenario.id,scenarioRevision:0});
   assert.deepEqual((await peer.inject({method:'DELETE',url:`/api/jobs/${doneId}`})).json(),{cancelled:false,status:'completed'});
   assert.ok(await a.getPlan(own,'completed-result'));
  }finally{await app.close();await peer.close();}

@@ -207,8 +207,13 @@ export function TopBar({
                 </div>
               </div>
               <div>
-                <div role="radiogroup" aria-label={t('solve.presets')} className="mb-3 grid grid-cols-3 gap-1">
-                  {([{id:'quick',seconds:30},{id:'standard',seconds:240},{id:'thorough',seconds:600}] as const).map(preset=><button key={preset.id} type="button" role="radio" aria-checked={shownBudget===preset.seconds} disabled={preset.seconds>maxSeconds}
+                <div role="radiogroup" aria-label={t('solve.presets')} className="mb-3 grid grid-cols-3 gap-1" onKeyDown={event=>{
+                  if(!['ArrowRight','ArrowLeft','ArrowUp','ArrowDown','Home','End'].includes(event.key))return;
+                  event.preventDefault();const items=Array.from(event.currentTarget.querySelectorAll<HTMLButtonElement>('button[role="radio"]:not(:disabled)'));if(!items.length)return;
+                  const index=items.indexOf(event.target as HTMLButtonElement),next=event.key==='Home'?0:event.key==='End'?items.length-1:(index+(['ArrowRight','ArrowDown'].includes(event.key)?1:-1)+items.length)%items.length;
+                  items[next].click();items[next].focus();
+                }}>
+                  {([{id:'quick',seconds:30},{id:'standard',seconds:240},{id:'thorough',seconds:600}] as const).map(preset=><button key={preset.id} type="button" role="radio" tabIndex={shownBudget===preset.seconds||![30,240,600].includes(shownBudget)&&preset.id==='quick'?0:-1} aria-checked={shownBudget===preset.seconds} disabled={preset.seconds>maxSeconds}
                     onClick={()=>onBudgetChange(preset.seconds)} className={`rounded border px-2 py-1.5 text-xs disabled:opacity-40 ${shownBudget===preset.seconds?'border-primary bg-primary/10':'border-divider hover:bg-accent'}`}>
                     <span className="block font-medium">{t(`solve.${preset.id}`)}</span><span>{preset.seconds<60?`${preset.seconds}s`:`${preset.seconds/60} min`}</span>
                   </button>)}
