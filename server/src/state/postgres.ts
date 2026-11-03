@@ -192,6 +192,13 @@ export class StatefulStore {
     return rows[0] ? { ...rows[0], fence: Number(rows[0].fence), attempt: Number(rows[0].attempt) } as Lease : null;
   }
 
+  /** Cancellation revokes write authority immediately, even if native work has not exited. */
+  async cancelSolve(tenantId:string,id:string):Promise<boolean>{
+    const result=await this.pool.query(`UPDATE jobs SET state='cancelled',fence=fence+1,lease_owner=NULL,lease_expires_at=NULL,updated_at=now()
+      WHERE tenant_id=$1 AND id=$2::uuid AND kind='solve' AND state IN ('queued','running')`,[tenantId,id]);
+    return result.rowCount===1;
+  }
+
   async heartbeatJob(lease: Lease, leaseSeconds = 30): Promise<void> {
     const result = await this.pool.query(`UPDATE jobs SET lease_expires_at=now()+make_interval(secs=>$5),heartbeat_at=now(),updated_at=now()
       WHERE tenant_id=$1 AND id=$2 AND state='running' AND lease_owner=$3 AND fence=$4 AND lease_expires_at>=clock_timestamp()`,

@@ -15,9 +15,10 @@ export async function workOneSolve(store: StatefulStore, execute: SolveExecutor,
     if (heartbeating) return;
     heartbeating = true;
     void store.heartbeatJob(lease, leaseSeconds).catch(() => abort.abort()).finally(() => { heartbeating = false; });
-  }, Math.max(250, leaseSeconds * 500));
+  }, Math.max(250, Math.min(1000, leaseSeconds * 500)));
   try {
     const output = await execute(lease, abort.signal);
+    clearInterval(heartbeat);
     await store.completeSolve(lease, output.planId, output.scenarioId, output.scenarioRevision, output.plan);
   } catch (error) {
     try { await store.failJob(lease, (error as Error).message); } catch { /* a new fence owns the terminal decision */ }

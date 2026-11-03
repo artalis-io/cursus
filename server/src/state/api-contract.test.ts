@@ -88,3 +88,9 @@ test('stateful dataset and provenance adapters preserve the SPA contract', () =>
   assert.equal(summary.sources[0]?.sha256, 'abc'); assert.equal(summary.scope.day1, 10); assert.equal(summary.scope.day2, 12);
   assert.ok(summary.pipeline.length > 0); assert.ok(summary.rules.length > 0);
 });
+
+ test('queued jobs map to pending for the SPA while retaining durable queue state',()=>{
+ const createdAt=new Date(Date.now()-4000).toISOString();
+ const job=statefulJobResponse({id:'queued',state:'queued',payload:{},createdAt,updatedAt:createdAt});
+ assert.equal(job.status,'pending');assert.equal(job.state,'queued');assert.ok(job.elapsedSec>=4);
+ });

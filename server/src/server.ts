@@ -1,3 +1,4 @@
+import {solveBudget} from './solve-budget.js';
 import Fastify, { type FastifyReply, type FastifyRequest } from 'fastify';
 import fastifyStatic from '@fastify/static';
 import fastifyMultipart from '@fastify/multipart';
@@ -175,11 +176,11 @@ app.post<{ Querystring: { token?: string } }>('/api/auth/verify', async (req, re
 });
 app.get('/api/auth/me', async (req, reply) => {
   reply.header('Cache-Control', 'private, no-store');
-  if (!auth) return { email: 'local@cursus', tenantId: 'local', tenantName: config.authTenantName, role: 'admin', permissions: rolePermissions.admin.filter(p => p !== 'role.preview' && p !== 'plan.review' && p !== 'plan.approve' && !p.startsWith('profile.') && !p.startsWith('handoff.')), build: buildInfo };
+  if (!auth) return { email: 'local@cursus', tenantId: 'local', tenantName: config.authTenantName, role: 'admin', permissions: rolePermissions.admin.filter(p => p !== 'role.preview' && p !== 'plan.review' && p !== 'plan.approve' && !p.startsWith('profile.') && !p.startsWith('handoff.')), solveLimits:{maxSeconds:config.maxSolveSeconds}, build: buildInfo };
   const principal = auth.authenticate(cookieValue(req.headers.cookie, 'cursus_session'));
   if (!principal) return reply.code(401).send({ error: 'authentication required' });
   const identity = viewIdentity(principal, req.headers.cookie);
-  return { ...identity, permissions: identity.permissions.filter(p => p !== 'plan.review' && p !== 'plan.approve' && !p.startsWith('profile.') && !p.startsWith('handoff.')), tenantName: config.authTenantName, build: buildInfo };
+  return { ...identity, permissions: identity.permissions.filter(p => p !== 'plan.review' && p !== 'plan.approve' && !p.startsWith('profile.') && !p.startsWith('handoff.')), tenantName: config.authTenantName, solveLimits:{maxSeconds:config.maxSolveSeconds}, build: buildInfo };
 });
 app.post('/api/auth/logout', async (req, reply) => {
   if (auth && req.headers.origin !== config.authPublicOrigin) return reply.code(403).send({ error: 'invalid request origin' });
@@ -348,7 +349,9 @@ app.post<{ Params: { id: string }; Body: { budgetSec?: number; objective?: strin
   const scenario = store.getScenario(req.params.id);
   if (!scenario) return reply.code(404).send({ error: 'scenario not found' });
   if (!hasSolveCapacity()) return reply.code(503).send({ error: 'solver busy, retry shortly' });
-  const budget = Math.max(5, Math.min(600, req.body?.budgetSec ?? config.solveTimeSeconds));
+  let budget:number;
+  try{budget=Math.min(config.maxSolveSeconds,Math.max(5,solveBudget(req.body?.budgetSec,config.solveTimeSeconds,config.maxSolveSeconds)));}
+  catch(error){return reply.code(400).send({error:(error as Error).message});}
   const objective: Objective = req.body?.objective === 'distance' ? 'distance' : 'vehicles';
   const fullBudget = req.body?.fullBudget === true;
   const job = store.createJob(scenario.id, scenario.revision);

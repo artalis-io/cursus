@@ -12,6 +12,12 @@ function env(name: string, fallback: string): string {
   return v && v.length > 0 ? v : fallback;
 }
 
+function maxSolveSeconds():number{
+ const value=Number(env('DISPATCH_MAX_SOLVE_SECONDS','600'));
+ if(!Number.isInteger(value)||value<1||value>86400)throw new Error('DISPATCH_MAX_SOLVE_SECONDS must be an integer from 1 to 86400');
+ return value;
+}
+
 function populationThreads(): number {
   const value = Number(env('DISPATCH_SOLVE_THREADS', '4'));
   if (!Number.isInteger(value) || value < 1 || value > 16)
@@ -92,6 +98,7 @@ export const config = {
   // live solves are honest about status/elapsed whatever the budget.
   solveTimeSeconds: Number(env('DISPATCH_SOLVE_SECONDS', '240')),
   solvePopulationThreads: populationThreads(),
+  maxSolveSeconds:maxSolveSeconds(),
 
   // Pseudonymize customer names (cities/coords kept). For shippable screenshots
   // of real plans without exposing client PII. Off by default (real demo).

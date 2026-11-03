@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { ArrowRight, CheckCircle2, LoaderCircle, LockKeyhole, Mail, Route } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { AccountBar, type AccountUser } from '@/components/AccountBar';
-import { WorkspaceNameContext, WorkspaceTenantContext,WorkspaceFeaturesContext } from '@/workspace';
+import { WorkspaceNameContext, WorkspaceTenantContext,WorkspaceFeaturesContext,SolveLimitsContext } from '@/workspace';
 import { useI18n } from '@/i18n';
 import { RoleContext, PermissionsContext } from '@/permissions';
 
@@ -60,7 +60,7 @@ export function AuthGate({ children }: { children: ReactNode }) {
   }
 
   if (user) return <div className="flex h-full min-h-0 flex-col overflow-hidden">
-    <WorkspaceNameContext.Provider value={user.tenantName?.trim() || null}>
+    <SolveLimitsContext.Provider value={{maxSeconds:Number.isInteger(user.solveLimits?.maxSeconds)&&user.solveLimits!.maxSeconds>0&&user.solveLimits!.maxSeconds<=86400?user.solveLimits!.maxSeconds:600}}><WorkspaceNameContext.Provider value={user.tenantName?.trim() || null}>
       <WorkspaceTenantContext.Provider value={user.tenantId}>
       <WorkspaceFeaturesContext.Provider value={user.features??{}}>
       <RoleContext.Provider value={user.effectiveRole || user.role}>
@@ -70,7 +70,7 @@ export function AuthGate({ children }: { children: ReactNode }) {
       </RoleContext.Provider>
       </WorkspaceFeaturesContext.Provider>
       </WorkspaceTenantContext.Provider>
-    </WorkspaceNameContext.Provider>
+    </WorkspaceNameContext.Provider></SolveLimitsContext.Provider>
     <AccountBar user={user} signingOut={signingOut} error={logoutError} onSignOut={() => void logout()} />
   </div>;
 

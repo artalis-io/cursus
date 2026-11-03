@@ -4,3 +4,5 @@ import { createContext } from 'react';
 export const WorkspaceNameContext = createContext<string | null>(null);
 export const WorkspaceTenantContext = createContext<string | null>(null);
 export const WorkspaceFeaturesContext = createContext<{planningProfiles?:boolean;acknowledgedHandoff?:boolean;inputUpdates?:boolean}>({});
+
+export const SolveLimitsContext = createContext<{maxSeconds:number}>({maxSeconds:600});

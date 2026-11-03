@@ -116,7 +116,7 @@ export const api = {
 
   plans: (day?: string) => jget<PlanSummary[]>(`/api/plans${day ? `?day=${day}` : ''}`),
 
-  job: (id: string) => jget<Job>(`/api/jobs/${id}`),
+  job: async (id: string) => {const job=await jget<Job>(`/api/jobs/${id}`);return String(job.status)==='queued'?{...job,status:'pending' as const}:job;},
   cancelJob: (id: string) => jsend<{ cancelled: boolean; status: string }>(`/api/jobs/${id}`, 'DELETE'),
 
   compare: (base: string, revised: string) => jget<Comparison>(`/api/compare?base=${base}&revised=${revised}`),
