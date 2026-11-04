@@ -4,6 +4,7 @@ import { useT } from '@/i18n';
 import type { Role, Permission } from '../../../server/src/roles';
 
 export interface AccountUser {
+  userId?:string;
   solveLimits?:{maxSeconds:number};
   features?: {planningProfiles?:boolean;acknowledgedHandoff?:boolean;inputUpdates?:boolean};
   email: string;

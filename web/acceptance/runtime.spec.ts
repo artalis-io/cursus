@@ -2070,7 +2070,15 @@ const nativeCount="const fs=require('node:fs');let n=0;for(const pid of fs.readd
  try{
   await expect.poll(async()=>(await get<{status:string}>(page.request,`${peer}/api/jobs/${jobId}`)).status,{timeout:15000}).toBe('running');
   await expect.poll(()=>['app-a','app-b'].reduce((n,service)=>n+Number(dc('exec','-T',service,'node','-e',nativeCount).trim()),0),{timeout:15000}).toBeGreaterThan(0);
-  await page.reload();await expect(page.getByRole('button',{name:'Cancel',exact:true})).toBeEnabled();
+  // Simulate losing the tab and its saved request reference. The authenticated
+  // server must rediscover this actor's durable job, not depend on old UI state.
+  await page.evaluate(()=>Object.keys(localStorage).filter(k=>k==='otto.activeJob'||k.startsWith('cursus.activeJob.v2:')).forEach(k=>localStorage.removeItem(k)));
+  const reopened=await page.context().newPage();await page.close();page=reopened;await page.goto('/');
+  await expect(page.getByRole('button',{name:'Cancel',exact:true})).toBeEnabled();
+  // One failed freshness read must not hide the independent cancellation permission.
+  await page.route('**/api/scenarios/*',route=>route.request().method()==='GET'?route.fulfill({status:503,json:{error:'Transient freshness check failure'}}):route.continue());
+  await page.evaluate(()=>window.dispatchEvent(new Event('focus')));
+  await expect(page.getByRole('button',{name:'Cancel',exact:true})).toBeEnabled();
   const cancelled=page.waitForResponse(r=>r.request().method()==='DELETE'&&r.url().endsWith(`/jobs/${jobId}`));
   await page.getByRole('button',{name:'Cancel',exact:true}).click();expect((await cancelled).status()).toBe(200);
   await expect(page.getByRole('button',{name:/^(Optimize|Replan)$/,exact:true})).toBeEnabled();

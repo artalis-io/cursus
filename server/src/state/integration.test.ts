@@ -513,3 +513,25 @@ integration('budget admission and cross-replica cancellation preserve tenant and
   assert.ok(await a.getPlan(own,'completed-result'));
  }finally{await app.close();await peer.close();}
 });
+
+integration('active solve discovery is tenant/actor scoped, includes legacy shared work and exposes no payload',async()=>{
+  const owner=`discovery-${randomUUID()}`,foreign=`discovery-other-${randomUUID()}`;
+  await a.ensureTenant(owner,'Discovery');await a.ensureTenant(foreign,'Other');
+  const mine=await a.enqueueJob(owner,'solve','mine',{submittedBy:'actor-a',scenarioId:'public-scenario',scenario:{day:'public-day'},referencePlanId:'public-plan'});
+  const other=await a.enqueueJob(owner,'solve','other',{submittedBy:'actor-b',scenarioId:'other-scenario'});
+  const legacy=await a.enqueueJob(owner,'solve','legacy',{scenarioId:'legacy-scenario'});
+  const hidden=await a.enqueueJob(foreign,'solve','foreign',{submittedBy:'actor-a'});
+  try{
+    assert.deepEqual(new Set((await a.activeSolveJobs(owner,'actor-a')).map(j=>j.id)),new Set([mine,legacy]));
+    assert(!(await a.activeSolveJobs(owner,'actor-a')).some(j=>j.id===other||j.id===hidden));
+    await a.cancelSolve(owner,mine);assert(!(await b.activeSolveJobs(owner,'actor-a')).some(j=>j.id===mine));
+    const app=await createStatefulApi({store:a,tenantId:owner,tenantName:'Discovery'});
+    try{
+      const response=await app.inject('/api/jobs/active');assert.equal(response.statusCode,200);
+      assert.equal(response.headers['cache-control'],'private, no-store');
+      const jobs=response.json();assert.equal(jobs.length,2);assert(jobs.every((j:Record<string,unknown>)=>!('payload' in j)&&!('submittedBy' in j)&&!('tenantId' in j)));
+    }finally{await app.close();}
+  }finally{
+    await a.pool.query('DELETE FROM jobs WHERE tenant_id=ANY($1::text[])',[[owner,foreign]]);
+  }
+});

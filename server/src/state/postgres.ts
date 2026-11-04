@@ -105,6 +105,15 @@ export class StatefulStore {
     return rows[0] ?? null;
   }
 
+  /** Discover this actor's durable solves; pre-attribution jobs remain shared within their tenant. */
+  async activeSolveJobs(tenantId:string,actorId:string|null):Promise<Record<string,unknown>[]> {
+    const {rows}=await this.pool.query(`SELECT id::text,kind,state,payload,result,error,created_at "createdAt",updated_at "updatedAt"
+      FROM jobs WHERE tenant_id=$1 AND kind='solve' AND state IN ('queued','running')
+      AND ($2::text IS NULL OR payload->>'submittedBy'=$2 OR payload->>'submittedBy' IS NULL)
+      ORDER BY created_at DESC,id DESC LIMIT 50`,[tenantId,actorId]);
+    return rows;
+  }
+
   async updateScenario(tenantId: string, id: string, expectedRevision: number, body: unknown): Promise<number> {
     const { rows } = await this.pool.query<{ revision: string }>(`UPDATE scenarios SET revision=revision+1,body=$4,updated_at=now()
       WHERE tenant_id=$1 AND id=$2 AND revision=$3 RETURNING revision`, [tenantId, id, expectedRevision, body]);

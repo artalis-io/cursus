@@ -248,6 +248,7 @@ export type ScenarioEdit = (
 
 export type JobStatus = 'pending' | 'running' | 'completed' | 'failed' | 'cancelled';
 export interface Job {
+  payload?:{submittedBy?:string|null};
   id: string;
   scenarioId: string;
   scenarioRevision: number;

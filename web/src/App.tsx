@@ -1,5 +1,5 @@
 import { useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { WorkspaceTenantContext,WorkspaceFeaturesContext,SolveLimitsContext } from '@/workspace';
+import { WorkspaceActorContext,WorkspaceTenantContext,WorkspaceFeaturesContext,SolveLimitsContext } from '@/workspace';
 import { selectedUnassigned } from '@/lib/unassigned-selection';
 import {selectedStop} from '@/lib/stop-selection';
 import {sameSelection as sameSel} from '@/lib/selection-context';
@@ -48,11 +48,11 @@ export interface JobView { id: string; status: Job['status']; elapsedSec: number
  * runs server-side, independent of the tab). */
 const ACTIVE_JOB_KEY = 'otto.activeJob';
 interface ActiveJobRef { jobId: string; scenarioId: string; dayId: string; referencePlanId?:string }
-function persistActiveJob(v: ActiveJobRef | null): void {
-  try { if (v) localStorage.setItem(ACTIVE_JOB_KEY, JSON.stringify(v)); else localStorage.removeItem(ACTIVE_JOB_KEY); } catch { /* ignore */ }
+function writeActiveJob(v: ActiveJobRef | null,key=ACTIVE_JOB_KEY): void {
+  try { if (v) localStorage.setItem(key, JSON.stringify(v)); else localStorage.removeItem(key); } catch { /* ignore */ }
 }
-function readActiveJob(): ActiveJobRef | null {
-  try { const s = localStorage.getItem(ACTIVE_JOB_KEY); return s ? (JSON.parse(s) as ActiveJobRef) : null; } catch { return null; }
+function readSavedJob(key=ACTIVE_JOB_KEY): ActiveJobRef | null {
+  try { const s = localStorage.getItem(key); return s ? (JSON.parse(s) as ActiveJobRef) : null; } catch { return null; }
 }
 
 function hasCompleteRouteGeometry(plan: Plan): boolean {
@@ -141,8 +141,12 @@ export default function App() {
   const features=useContext(WorkspaceFeaturesContext);
   const [profilesOpen,setProfilesOpen]=useState(false);
   const [handoffOpen,setHandoffOpen]=useState(false);
-  const tenant=useContext(WorkspaceTenantContext);
+  const tenant=useContext(WorkspaceTenantContext),actor=useContext(WorkspaceActorContext);
+  const jobStorageKey=`cursus.activeJob.v2:${tenant??'local'}:${actor??'local'}`;
+  const persistActiveJob=useCallback((ref:ActiveJobRef|null)=>{writeActiveJob(ref,jobStorageKey);writeActiveJob(null);},[jobStorageKey]);
+  const readActiveJob=useCallback(()=>readSavedJob(jobStorageKey)??readSavedJob(),[jobStorageKey]);
   const manualStorageKey=`cursus.manual-workspace.v1:${tenant??'local'}`;
+  const [backgroundJob,setBackgroundJob]=useState<{ref:ActiveJobRef;phase:'active'|'completed'|'unknown'}|null>(null);
   const [freshnessError, setFreshnessError] = useState<string | null>(null);
   const [workspaceLoading, setWorkspaceLoading] = useState(false);
   const navigationGeneration = useRef(0);
@@ -272,6 +276,8 @@ export default function App() {
           writeAccess.current.epoch++;
           writeAccess.current.edit = false; writeAccess.current.solve = false;
           setFreshnessError('freshness.changed');
+        } else if(!stopped&&pendingEditsRef.current===0&&scenarioRef.current===snapshot&&latest.revision===snapshot.revision){
+          setFreshnessError(current=>current==='freshness.unverified'?null:current);
         }
       } catch {
         if (!stopped && pendingEditsRef.current === 0 && scenarioRef.current === snapshot) {
@@ -358,7 +364,6 @@ export default function App() {
     writeAccess.current.epoch++;
     pollAbort.current?.abort();
     activeJobId.current = null;
-    persistActiveJob(null);
     setJob(null);
     setCandidate(null); setCompareOpen(false);
     setPlaying(false); setClockSec(null);
@@ -396,12 +401,12 @@ export default function App() {
       return null;
     } catch (e) {
       if ((e as Error).name === 'AbortError') return null;
-      persistActiveJob(null);
+      if(e instanceof ApiError&&[403,404].includes(e.status??0))persistActiveJob(null);
       setError(describeApiError(e, t));
       setJob((j) => (j ? { ...j, status: 'failed', error: String(e) } : j));
       return null;
     }
-  }, []);
+  }, [t,readActiveJob,persistActiveJob]);
 
   // Run a live solve of a scenario with the current objective/budget.
   const runSolve = useCallback(async (scenarioId: string, dayIdForJob: string): Promise<Plan | null> => {
@@ -427,28 +432,34 @@ export default function App() {
   }, [budgetSec, maxSolveSeconds, objective, fullBudget, followJob, rejectStaleIntent]);
 
   // Cancel the active solve (server-side) and drop back to the current plan.
-  const cancelSolve = useCallback(async () => {
+  const cancelSolve = useCallback(async (backgroundId?:string) => {
     if (!writeAccess.current.mounted || !writeAccess.current.cancel) return;
-    const id = activeJobId.current;
+    const id = backgroundId??activeJobId.current;
     if(!id||cancellingRef.current)return;
     cancellingRef.current=true;setCancelling(true);
     try{
       const result=await api.cancelJob(id);
-      if(activeJobId.current===id&&(result.cancelled||result.status==='cancelled')){
-        activeJobId.current=null;pollAbort.current?.abort();persistActiveJob(null);setJob(null);
+      if(result.cancelled||result.status==='cancelled'){
+        if(activeJobId.current===id){activeJobId.current=null;pollAbort.current?.abort();setJob(null);}
+        if(readActiveJob()?.jobId===id)persistActiveJob(null);
+        setBackgroundJob(current=>current?.ref.jobId===id?null:current);
       }
       // A completed result won the race: polling still publishes its candidate.
-    }catch(e){if(activeJobId.current===id)setError(describeApiError(e,t));}
+    }catch(e){if(activeJobId.current===id||backgroundId===id)setError(describeApiError(e,t));}
     finally{cancellingRef.current=false;setCancelling(false);}
 
-  }, [t]);
+  }, [t,readActiveJob,persistActiveJob]);
 
   // Reconnect to a solve persisted before a reload. Returns true if it set up state.
   const tryResume = useCallback(async (ds: DaySummary[]): Promise<boolean> => {
-    const ref = readActiveJob();
+    let ref = readActiveJob();
+    if(!ref){
+      try{const active=(await api.activeJobs())[0];if(active){ref={jobId:active.id,scenarioId:active.scenarioId,dayId:active.dayId??'',referencePlanId:active.referencePlanId??undefined};persistActiveJob(ref);}}catch{/* Rolling compatibility: older servers lack discovery. */}
+    }
     if (!ref) return false;
     try {
       const j = await api.job(ref.jobId);
+      if(j.payload?.submittedBy&&actor&&j.payload.submittedBy!==actor){persistActiveJob(null);return false;}
       if (j.status === 'failed' || j.status === 'cancelled') { persistActiveJob(null); return false; }
       const sc = await api.scenario(ref.scenarioId);
       const d = ds.find((x) => x.id === sc.day) ?? ds.find((x) => x.id === ref.dayId);
@@ -467,8 +478,33 @@ export default function App() {
       pollAbort.current = ctrl;
       void followJob(ref.jobId, ref.scenarioId, d.id, ctrl);
       return true;
-    } catch { persistActiveJob(null); return false; }
-  }, [followJob]);
+    } catch(error) { if(error instanceof ApiError&&[403,404].includes(error.status??0))persistActiveJob(null); return false; }
+  }, [followJob,readActiveJob,persistActiveJob,actor]);
+
+  useEffect(()=>{
+    let alive=true,busy=false;
+    const refresh=async()=>{
+      if(busy||document.hidden)return;busy=true;
+      try{
+        let ref=readActiveJob();
+        if(!ref){
+          const active=(await api.activeJobs())[0];
+          if(!alive)return;
+          if(active){ref={jobId:active.id,scenarioId:active.scenarioId,dayId:active.dayId??'',referencePlanId:active.referencePlanId??undefined};persistActiveJob(ref);}
+        }
+        if(!ref||ref.jobId===job?.id&&['pending','running','completed'].includes(job.status)){if(alive)setBackgroundJob(null);return;}
+        const latest=await api.job(ref.jobId);if(!alive||readActiveJob()?.jobId!==ref.jobId)return;
+        if(latest.payload?.submittedBy&&actor&&latest.payload.submittedBy!==actor){persistActiveJob(null);setBackgroundJob(null);return;}
+        if(latest.status==='failed'||latest.status==='cancelled'){persistActiveJob(null);setBackgroundJob(null);return;}
+        setBackgroundJob({ref,phase:latest.status==='completed'?'completed':'active'});
+      }catch{
+        const ref=readActiveJob();if(alive&&ref&&ref.jobId!==job?.id)setBackgroundJob({ref,phase:'unknown'});
+      }finally{busy=false;}
+    };
+    void refresh();const timer=window.setInterval(()=>void refresh(),5000);
+    window.addEventListener('focus',refresh);
+    return()=>{alive=false;clearInterval(timer);window.removeEventListener('focus',refresh);};
+  },[job?.id,job?.status,tenant,actor,readActiveJob,persistActiveJob]);
 
   // Apply a manual override (forks an editable copy from a base scenario). Does
   // not solve; overrides take effect on the next Replan. A toast confirms the
@@ -577,7 +613,7 @@ export default function App() {
   // baseline, and stage its edits (Replan solves it). It has no result yet.
   const onImportScenario = useCallback(async (s: Scenario) => {
     writeAccess.current.epoch++;
-    setCandidate(null);setCompareOpen(false);persistActiveJob(null);
+    setCandidate(null);setCompareOpen(false);pollAbort.current?.abort();activeJobId.current=null;setJob(null);
     try {
       if (s.day !== dayId) { const d = days.find((x) => x.id === s.day); if (d) await loadDay(d); }
       setScenario(s);
@@ -591,7 +627,6 @@ export default function App() {
     writeAccess.current.epoch++;
     pollAbort.current?.abort();
     activeJobId.current = null;
-    persistActiveJob(null);
     setJob(null); resetSelection(); setError(null);
     setCandidate(null);setCompareOpen(false);
     try {
@@ -644,6 +679,10 @@ export default function App() {
   function openManual(request:ManualRequest){
     if(!canEdit||manualBusyRef.current||solveActive||job?.status==='running'||job?.status==='pending'||!manualContext?.enabled)return;
     if(!plan||!scenario||plan.scenarioRevision!==scenario.revision||pendingEditsRef.current){setError(t('manual.pending'));return;}
+    if(request.action==='assign'&&request.targetVehicleId===undefined&&selection?.kind==='stop'){
+      const source=plan.vehicles.find(v=>v.id===selection.vehicleId)?.trips.find(tr=>tr.index===selection.tripIndex);
+      if(source)request={...request,targetVehicleId:selection.vehicleId,targetTripId:source.manualTripId??`trip-${source.index}`};
+    }
     setManualRequest(request);
   }
   function manualOrders(orderNos:string[],vehicleId:number){
@@ -667,7 +706,7 @@ export default function App() {
 
   async function openUpdatedInputs(next:Plan){
     if(!writeAccess.current.mounted)return;
-    const generation=++navigationGeneration.current;writeAccess.current.epoch++;pollAbort.current?.abort();activeJobId.current=null;persistActiveJob(null);
+    const generation=++navigationGeneration.current;writeAccess.current.epoch++;pollAbort.current?.abort();activeJobId.current=null;
     setJob(null);setCandidate(null);setCompareOpen(false);setWorkspaceLoading(true);
     try{
       const [ds,sc]=await Promise.all([api.days(),api.scenario(next.scenarioId)]),day=ds.find(d=>d.id===sc.day);
@@ -695,8 +734,8 @@ export default function App() {
   const dirty = scenario.revision !== plan.scenarioRevision;
   const selectedOrder=selection?.kind==='unassigned'?selectedUnassigned(plan.unassigned,selection)
     :selection?.kind==='stop'?selectedStop(plan.vehicles.find(v=>v.id===selection.vehicleId)?.trips.find(tr=>tr.index===selection.tripIndex)?.stops??[],selection,plan.id):null;
-  const manualActions=(manualMode||selection?.kind==='unassigned')&&manualContext?.enabled&&selectedOrder?.requestId!==undefined?<ManualOrderActions plan={plan} requestId={selectedOrder.requestId} actors={manualContext.actors}
-    assigned={selection?.kind==='stop'} disabled={!!solving||manualBusy||dirty||pendingEdits>0}
+  const manualActions=manualContext?.enabled&&selectedOrder?.requestId!==undefined?<ManualOrderActions plan={plan} requestId={selectedOrder.requestId} actors={manualContext.actors}
+    assigned={selection?.kind==='stop'} disabled={!!solving||manualBusy||dirty||pendingEdits>0} disabledReason={solving?'solve.reorderPaused':dirty||pendingEdits>0?'manual.pending':undefined}
     onAction={action=>openManual({action,requestIds:[selectedOrder.requestId!]})}/>:manualMode&&selectedOrder?<p className="text-xs text-muted-foreground">{t(dirty?'manual.pending':'manual.identity')}</p>:undefined;
   function changeVehicle(id:number,excluded:boolean){
     if(manualMode&&manualContext?.enabled)openManual({action:'deassign',requestIds:plan!.vehicles.find(v=>v.id===id)?.trips.flatMap(tr=>tr.stops.map(s=>s.requestId!))??[],vehicle:{id,excluded}});
@@ -721,7 +760,7 @@ export default function App() {
   }
 
   return (
-    <PermissionsContext.Provider value={scenario.supersededBy?['workspace.read','workspace.export']:inheritedPermissions}><StaleWorkspaceContext.Provider value={!!candidate || !!freshnessError || workspaceLoading || !!(plan.manual||plan.assignments)&&!manualContext?.enabled}><TooltipProvider delayDuration={200}>
+    <PermissionsContext.Provider value={scenario.supersededBy?['workspace.read','workspace.export',...(canCancel?['optimization.cancel' as const]:[])]:inheritedPermissions}><StaleWorkspaceContext.Provider value={!!candidate || !!freshnessError || workspaceLoading || !!(plan.manual||plan.assignments)&&!manualContext?.enabled}><TooltipProvider delayDuration={200}>
       <div className="flex h-full flex-col overflow-hidden">
         {scenario.supersededBy&&<div role="status" className="flex items-center justify-between gap-3 border-b bg-muted px-4 py-2 text-sm">
           <span>{lang==='hu'?'Korábbi adatciklus — csak olvasható. Az új tervezéshez nyissa meg a frissített adatokat.':'Previous input cycle — read-only. Open the updated inputs to continue planning.'}</span>
@@ -739,7 +778,7 @@ export default function App() {
           fullBudget={fullBudget} onFullBudgetChange={setFullBudget}
           changesCount={changesCount} dirty={dirty}
           onOptimize={() => void replan()}
-          onCancel={() => void cancelSolve()}
+          onCancel={() => void cancelSolve()} backgroundActive={!!backgroundJob&&backgroundJob.phase!=='completed'}
           onReset={resetToBaseline}
           onOpenChanges={() => setChangesOpen(true)}
           showCompare={isReplan && plan.source === 'live'}
@@ -752,6 +791,12 @@ export default function App() {
           onOpenScenarios={() => setScenariosOpen(true)}
           onOpenHelp={() => setHelpOpen(true)}
         />
+        {backgroundJob&&<div className="flex shrink-0 flex-wrap items-center gap-2 border-b border-divider bg-panel px-3 py-1.5 text-xs" role="status">
+          <span className="min-w-0 flex-1">{t(backgroundJob.phase==='completed'?'solve.candidateReady':'solve.background')}</span>
+          <Button variant="graphite" size="sm" onClick={()=>{setWorkspaceLoading(true);void tryResume(days).finally(()=>setWorkspaceLoading(false));}}>{t('solve.openRunning')}</Button>
+          {canCancel&&backgroundJob.phase!=='completed'&&<Button variant="graphite" size="sm" disabled={cancelling} aria-label={t('topbar.cancel')} onClick={()=>void cancelSolve(backgroundJob.ref.jobId)}>{t('solve.stop')}</Button>}
+        </div>}
+
         {candidate&&<CandidatePanel key={candidate.plan.id} {...candidate} busy={candidateBusy} canAdopt={canEdit} onAdopt={ack=>void chooseCandidate(true,ack)} onKeep={()=>void chooseCandidate(false)} onCompare={()=>setCompareOpen(true)}/>}
         <div id="cursus-kpi-pane" className="shrink-0">
           <KpiStrip plan={plan} baseline={baseline} compare={isReplan} job={job}
@@ -828,7 +873,7 @@ export default function App() {
 
           {rightOpen && (
             <aside id="cursus-inspector-pane" className="w-[340px] shrink-0 overflow-hidden border-l border-divider" style={{ width: workspace.layout.inspector }}>
-              <Inspector plan={plan} baseline={baseline} scenario={scenario} selection={selection} onSelect={navigate} solving={!!solving||manualBusy} manualActions={manualActions} onClose={closeInspector} fleet={manualMode&&manualContext?.enabled?manualContext.fleet:undefined}
+              <Inspector plan={plan} baseline={baseline} scenario={scenario} selection={selection} onSelect={navigate} solving={!!solving||manualBusy} manualActions={manualActions} showAutomaticActions={!manualMode} onClose={closeInspector} fleet={manualMode&&manualContext?.enabled?manualContext.fleet:undefined}
                 onBack={goBack} onForward={goForward} canGoBack={canGoBack} canGoForward={canGoForward}
                 onMarkUnavailable={(id) => changeVehicle(id,true)}
                 onRestoreVehicle={(id) => changeVehicle(id,false)}

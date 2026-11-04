@@ -462,8 +462,8 @@ function LoadTab({ vehicle }: { vehicle: Vehicle }) {
   );
 }
 
-export function Inspector({ plan, scenario, selection, onSelect, onBack, onForward, canGoBack, canGoForward, onMarkUnavailable, onRestoreVehicle, onSetConstraint, onClearConstraint, solving, onPin, onUnpin, onForbid, onClearOverrides, onSetSequence, onClearSequence, manualActions, fleet, onClose }: {
-  manualActions?:React.ReactNode;fleet?:Vehicle[];onClose?:()=>void;
+export function Inspector({ plan, scenario, selection, onSelect, onBack, onForward, canGoBack, canGoForward, onMarkUnavailable, onRestoreVehicle, onSetConstraint, onClearConstraint, solving, onPin, onUnpin, onForbid, onClearOverrides, onSetSequence, onClearSequence, manualActions, showAutomaticActions=false, fleet, onClose }: {
+  manualActions?:React.ReactNode;showAutomaticActions?:boolean;fleet?:Vehicle[];onClose?:()=>void;
   plan: Plan; baseline: Plan; scenario: Scenario; selection: Selection; onSelect: (s: Selection) => void; onMarkUnavailable: (id: number) => void; solving: boolean;
   onBack: () => void; onForward: () => void; canGoBack: boolean; canGoForward: boolean;
   onRestoreVehicle: (id: number) => void;
@@ -558,10 +558,12 @@ export function Inspector({ plan, scenario, selection, onSelect, onBack, onForwa
         <div className="min-w-0">
           <div className="space-y-3 p-3">
             <TabsContent value="details" className="mt-0 space-y-3">
-              {manualActions??(canEdit && stop && (
+              {canEdit&&solving&&<p role="status" className="rounded border border-divider p-2 text-xs text-muted-foreground">{t('solve.reorderPaused')}</p>}
+              {manualActions}
+              {canEdit&&stop&&(!manualActions||showAutomaticActions)&&<details open={!manualActions}><summary className="cursor-pointer text-xs text-muted-foreground">{t('manual.optimizerPreferences')}</summary>
                 <AssignmentSection plan={plan} scenario={scenario} orderNo={stop.orderNo} requestId={stop.requestId} currentVehicleId={vehicle.id}
                   onPin={onPin} onUnpin={onUnpin} onForbid={onForbid} disabled={solving} />
-              ))}
+              </details>}
               {/* Lock-and-resolve: freeze this vehicle's route; the rest re-solves around it. */}
               {canEdit && !vehicle.unavailable && !stop && !trip && onSetSequence && onClearSequence && vehicle.trips.some((tr) => tr.stops.length > 0) && (
                 scenario.sequences.some((q) => q.vehicleId === vehicle.id && q.locked) ? (

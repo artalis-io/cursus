@@ -10,6 +10,18 @@ export type Lang = 'en' | 'hu';
 type Dict = Record<string, string>;
 
 const en: Dict = {
+  'manual.optimizerPreferences':'Optimizer preferences for Replan',
+  'manual.searchVehicles':'Search vehicles',
+  'manual.searchVehiclesHint':'Registration or vehicle class',
+  'manual.chooseVehicle':'Choose a vehicle…',
+  'manual.chooseRound':'Choose a round…',
+  'manual.rounds':'rounds','manual.stops':'stops','manual.locked':'Route locked','manual.pallets':'pallets',
+  'manual.destination':'Destination','manual.currentRound':'Current round before the move',
+  'manual.destinationHint':'Preview recalculates the complete plan before anything is saved.',
+  'solve.stop':'Stop',
+  'solve.background':'Optimization continues in the background.',
+  'solve.openRunning':'Open optimization',
+  'solve.reorderPaused':'Stop the current optimization before reordering stops. Closing the browser does not stop it.',
   'status.changes': 'Review staged changes ({n})',
   'status.coverage': 'Coverage & constraints',
   'status.failedConstraints': 'Constraint checks failed',
@@ -337,6 +349,18 @@ const en: Dict = {
 };
 
 const hu: Dict = {
+  'manual.optimizerPreferences':'Optimalizálási beállítások újratervezéshez',
+  'manual.searchVehicles':'Jármű keresése',
+  'manual.searchVehiclesHint':'Rendszám vagy járműosztály',
+  'manual.chooseVehicle':'Válasszon járművet…',
+  'manual.chooseRound':'Válasszon fordulót…',
+  'manual.rounds':'forduló','manual.stops':'megálló','manual.locked':'Zárolt útvonal','manual.pallets':'raklap',
+  'manual.destination':'Cél','manual.currentRound':'A forduló áthelyezés előtti adatai',
+  'manual.destinationHint':'Az előnézet mentés előtt újraszámolja a teljes tervet.',
+  'solve.stop':'Leállít',
+  'solve.background':'Az optimalizálás a háttérben folytatódik.',
+  'solve.openRunning':'Optimalizálás megnyitása',
+  'solve.reorderPaused':'A megállók átrendezéséhez előbb állítsa le az optimalizálást. A böngésző bezárása nem állítja le.',
   'status.changes': 'Előkészített módosítások áttekintése ({n})',
   'status.coverage': 'Kiszolgálás és korlátok',
   'status.failedConstraints': 'Sikertelen korlátellenőrzés',

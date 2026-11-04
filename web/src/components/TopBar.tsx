@@ -43,13 +43,13 @@ function Popover({ open, onClose, align = 'right', children }: { open: boolean; 
 }
 
 export function TopBar({
-  days, dayId, onDayChange, scenario, plan, job, solving, cancelling=false, exportPending = false,
+  days, dayId, onDayChange, scenario, plan, job, solving, cancelling=false, backgroundActive=false, exportPending = false,
   objective, onObjectiveChange, budgetSec, onBudgetChange, fullBudget, onFullBudgetChange, changesCount, dirty,
   onOptimize, onCancel, onReset, onOpenChanges, showCompare, onCompare, onOpenImport, onOpenHistory, onOpenWeek, onOpenIssues, issuesCount, onOpenScenarios, onOpenHelp,
   onOpenProfiles,onOpenHandoff,onOpenInputUpdates,onOpenReview,
 }: {
   days: DaySummary[]; dayId: string; onDayChange: (id: string) => void;
-  scenario: Scenario; plan: Plan; job: JobView | null; solving: boolean; cancelling?:boolean;
+  scenario: Scenario; plan: Plan; job: JobView | null; solving: boolean; cancelling?:boolean; backgroundActive?:boolean;
   exportPending?: boolean;
   objective: Objective; onObjectiveChange: (o: Objective) => void;
   budgetSec: number; onBudgetChange: (n: number) => void; fullBudget: boolean; onFullBudgetChange: (b: boolean) => void; changesCount: number; dirty: boolean;
@@ -154,7 +154,7 @@ export function TopBar({
       </div>
 
       <div className="w-full min-w-0 max-w-full sm:w-[230px] xl:max-w-[300px] xl:flex-1">
-        <Select value={dayId} onValueChange={onDayChange} disabled={solving}>
+        <Select value={dayId} onValueChange={onDayChange}>
           <SelectTrigger className="h-8 border-white/15 bg-white/5 text-graphite-foreground">
             <SelectValue placeholder={t('topbar.selectDay')} />
           </SelectTrigger>
@@ -238,20 +238,20 @@ export function TopBar({
 
         {/* Keep this footprint constant: conditionally inserting Cancel and
             allowing the timer label to grow used to shift the entire toolbar. */}
-        {canEdit ? <div className="flex w-[190px] shrink-0 items-center gap-1.5">
+        {canEdit||solving&&canCancel ? <div className="flex w-[190px] shrink-0 items-center gap-1.5">
           {solving ? (
-            <Button variant="default" size="sm" disabled title={progressLabel} aria-label={progressLabel} className="w-[152px] shrink-0 overflow-hidden">
-              <Loader2 className="h-4 w-4 shrink-0 animate-spin" /><span role="status" className="min-w-0 truncate" title={t('solve.elapsedHint')}><span className="sr-only">{progress}</span><span aria-hidden="true">{progressLabel}</span></span>
+            <Button variant="default" size="sm" disabled title={progressLabel} aria-label={progressLabel} className="w-[124px] shrink-0 overflow-hidden">
+              <Loader2 className="h-4 w-4 shrink-0 animate-spin" /><span role="status" className="min-w-0 truncate" title={t('solve.elapsedHint')}><span className="sr-only">{progress}</span><span aria-hidden="true" className="flex min-w-0 items-center gap-1"><span className="truncate">{progress}</span><span className="shrink-0">{(job?.elapsedSec??0).toFixed(0)}s</span></span></span>
             </Button>
           ) : (
-            <Button variant="default" size="sm" onClick={onOptimize} className={`w-[152px] shrink-0 ${dirty ? 'ring-2 ring-warning/60' : ''}`}>
+            <Button variant="default" size="sm" disabled={backgroundActive} title={backgroundActive?t('solve.background'):undefined} onClick={onOptimize} className={`w-[124px] shrink-0 ${dirty ? 'ring-2 ring-warning/60' : ''}`}>
               {isReplan ? <Repeat className="h-4 w-4" /> : <Play className="h-4 w-4" />} {isReplan ? t('topbar.replan') : t('topbar.optimize')}
             </Button>
           )}
           {canCancel && <Button variant="graphite" size="icon" aria-label={t('topbar.cancel')} onClick={onCancel} title={t('topbar.cancel')}
             disabled={!solving||!job?.id||cancelling} aria-hidden={!solving}
-            className={`h-8 w-8 shrink-0 border border-white/15 ${solving ? '' : 'invisible'}`}>
-            <X className="h-4 w-4" />
+            className={`h-8 w-[60px] shrink-0 gap-1 border border-white/15 ${solving ? '' : 'invisible'}`}>
+            <X className="h-3 w-3 shrink-0" /><span className="text-[10px]">{t('solve.stop')}</span>
           </Button>}
         </div> : <span className="px-2 text-xs text-graphite-foreground/80">{t('account.readOnly')}</span>}
 
