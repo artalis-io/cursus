@@ -1,3 +1,4 @@
+import {ObjectStoreError} from './objects.js';
 import {solveBudget} from '../solve-budget.js';
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from 'fastify';
 import { JobQueueFullError, RevisionConflictError, ScenarioHandoffHistoryError, type StatefulStore } from './postgres.js';
@@ -149,13 +150,16 @@ export async function createStatefulApi(options: StatefulApiOptions): Promise<Fa
   app.get('/api/health', async () => ({ status: 'ok', service: 'cursus-api', runtime: 'stateful' }));
   app.get('/health/ready', async (_req, reply) => {
     try {
-      await options.store.pool.query('SELECT 1');
+      reply.header('Cache-Control','no-store');
+      const healthQuery={text:'SELECT 1',query_timeout:1_500};
+      await options.store.pool.query(healthQuery);
       await options.objects?.ready();
       // Keep the literal spacing compatible with the adopted Cloudflare
       // monitor's expected-body fragment: `"status": "ready"`.
       return reply.type('application/json').send('{"status": "ready", "service": "cursus-api", "runtime": "stateful"}');
-    } catch {
-      return reply.code(503).send({ status: 'not-ready', service: 'cursus-api', runtime: 'stateful' });
+    } catch(error) {
+      return reply.code(503).send({ status: 'not-ready', service: 'cursus-api', runtime: 'stateful',
+        ...(error instanceof ObjectStoreError?{dependency:'object-storage',code:error.code}:{dependency:'database'}) });
     }
   });
   app.post<{ Body: { email?: string } }>('/api/auth/magic-link', async (req, reply) => {

@@ -36,9 +36,10 @@ const secretAccessKey = await secret('CURSUS_R2_SECRET_ACCESS_KEY_FILE', config.
 const store = new StatefulStore(databaseUrl);
 const objects = new ObjectStore(required('CURSUS_R2_BUCKET', config.r2Bucket), {
   endpoint: required('CURSUS_R2_ENDPOINT', config.r2Endpoint), accessKeyId, secretAccessKey,
+  onEvent:event=>console.warn(JSON.stringify(event)),
 });
-await store.migrate();
-await objects.ready();
+try { await store.migrate(); await objects.ready(); }
+catch(error) { objects.close(); await store.close(); throw error; }
 
 const auth = config.authRequired ? new StatefulAuthService(store, {
   allowedEmailsFile: required('CURSUS_AUTH_ALLOWED_EMAILS_FILE', config.authAllowedEmailsFile),
@@ -100,6 +101,7 @@ if (config.resendApiKeyFile) {
 const shutdown = async (): Promise<void> => {
   if (stopping) return;
   stopping = true;
+  objects.close();
   await app.close();
   await Promise.allSettled(workers);
   await store.close();
@@ -108,4 +110,4 @@ process.once('SIGTERM', () => void shutdown());
 process.once('SIGINT', () => void shutdown());
 
 try { await app.listen({ host: config.host, port: config.port }); }
-catch (error) { stopping = true; await Promise.allSettled(workers); await store.close(); throw error; }
+catch (error) { stopping = true; objects.close(); await Promise.allSettled(workers); await store.close(); throw error; }
