@@ -69,7 +69,7 @@ jobs:
         run: >-
           python3 -m py_compile deploy/ha.py deploy/stateful.py deploy/cutover.py
           deploy/recovery-adapter.py deploy/migration-source.py deploy/migration-adapter.py
-          deploy/boot-recover.py deploy/recovery.py
+          deploy/boot-recover.py deploy/recovery.py deploy/ops.py deploy/ops_probe.py deploy/ops_restore.py deploy/ops_schedule.py
 
   stateful:
     runs-on: ubuntu-latest
@@ -101,6 +101,10 @@ jobs:
           CURSUS_TEST_S3_ENDPOINT: http://127.0.0.1:59000
           CURSUS_TEST_SURGE_BIN: ${{ github.workspace }}/vendor/otto/surge/surge_solve
         run: npm run test:stateful
+      - name: Consistent off-node backup and network-isolated restore
+        env:
+          CURSUS_OPS_DISPOSABLE_INTEGRATION: '1'
+        run: python3 tests/ops_restore_integration.py
       - name: Stop integration environment
         if: always()
         run: docker compose -p cursus-ci-stateful -f compose.integration.yaml down -v
