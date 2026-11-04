@@ -31,8 +31,13 @@ export function planningRecoveryCases(){
    if(route.request().method()==='DELETE'){active=false;return route.fulfill({json:{cancelled:true,status:'cancelled'}});}
    await route.fulfill({json:{id:'durable-job',scenarioId:scenario.id,status:active?'running':'cancelled',elapsedSec:20}});
   });
+  await page.addInitScript(()=>{
+    const state=window as unknown as {maximumStopControls:number};state.maximumStopControls=0;
+    new MutationObserver(()=>{state.maximumStopControls=Math.max(state.maximumStopControls,document.querySelectorAll('button[aria-label="Cancel"]:not([aria-hidden="true"])').length);}).observe(document,{childList:true,subtree:true,attributes:true});
+  });
   await page.evaluate(()=>Object.keys(localStorage).filter(k=>k==='otto.activeJob'||k.startsWith('cursus.activeJob.v2:')).forEach(k=>localStorage.removeItem(k)));await page.reload();
   await expect(page.getByRole('button',{name:'Cancel',exact:true})).toBeEnabled();
+  expect(await page.evaluate(()=>(window as unknown as {maximumStopControls:number}).maximumStopControls)).toBe(1);
   await page.locator('header').getByRole('combobox').click();
   await page.getByRole('option',{name:/7 May 2026/}).click();
   await expect(page.getByText('Optimization continues in the background.',{exact:true})).toBeVisible({timeout:10000});

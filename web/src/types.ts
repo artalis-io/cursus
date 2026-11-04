@@ -158,6 +158,7 @@ export interface Plan {
 }
 
 export interface ManualLayout {
+  lockedVehicleIds?:number[];
   datasetSha256:string;
   decisions:Record<string,{kind:'vehicle';vehicleId:number}|{kind:'unassigned'}>;
   origins:Record<string,string>;

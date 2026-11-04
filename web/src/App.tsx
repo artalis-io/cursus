@@ -791,8 +791,8 @@ export default function App() {
           onOpenScenarios={() => setScenariosOpen(true)}
           onOpenHelp={() => setHelpOpen(true)}
         />
-        {backgroundJob&&<div className="flex shrink-0 flex-wrap items-center gap-2 border-b border-divider bg-panel px-3 py-1.5 text-xs" role="status">
-          <span className="min-w-0 flex-1">{t(backgroundJob.phase==='completed'?'solve.candidateReady':'solve.background')}</span>
+        {backgroundJob&&!(backgroundJob.ref.jobId===job?.id&&['pending','running','completed'].includes(job.status))&&<div className="flex shrink-0 flex-wrap items-center gap-2 border-b border-divider bg-panel px-3 py-1.5 text-xs" role="status">
+          <span className="min-w-0 flex-1">{t(backgroundJob.phase==='completed'?'solve.candidateReady':backgroundJob.phase==='unknown'?'solve.backgroundUnknown':'solve.background')}</span>
           <Button variant="graphite" size="sm" onClick={()=>{setWorkspaceLoading(true);void tryResume(days).finally(()=>setWorkspaceLoading(false));}}>{t('solve.openRunning')}</Button>
           {canCancel&&backgroundJob.phase!=='completed'&&<Button variant="graphite" size="sm" disabled={cancelling} aria-label={t('topbar.cancel')} onClick={()=>void cancelSolve(backgroundJob.ref.jobId)}>{t('solve.stop')}</Button>}
         </div>}

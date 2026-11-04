@@ -57,7 +57,8 @@ export function ManualPlanningDialog({plan,scenario,fleet,request,onClose,onAppl
         :request.requestIds.map(requestId=>({op:request.action==='deassign'?'deassign':'release',requestId}))}}),[plan,request,operationId,vehicleId,tripId,newTripId,position,trip,remaining.length,datasetSha256]);
   const intentKey=JSON.stringify(intent);
   useEffect(()=>{generation.current++;setPreview(null);setError(null);},[intentKey]);
-  const valid=!!request.vehicle||!!request.undo||request.action!=='assign'||!!vehicle&&tripId!=='?'&&!vehicle.unavailable&&!scenario.removedVehicleIds.includes(vehicle.id)&&!scenario.sequences.some(q=>q.vehicleId===vehicle.id&&q.locked);
+  const lockedTargets=new Set([...((plan.manual??plan.assignments)?.layout.lockedVehicleIds??[]),...scenario.sequences.filter(q=>q.locked).map(q=>q.vehicleId)]);
+  const valid=!!request.vehicle||!!request.undo||request.action!=='assign'||!!vehicle&&tripId!=='?'&&!vehicle.unavailable&&!scenario.removedVehicleIds.includes(vehicle.id)&&!lockedTargets.has(vehicle.id);
   const guidedOrder=plan.unassigned.find(o=>o.requestId===request.requestIds[0]);
   const guided=!request.undo&&!request.vehicle&&request.action==='assign'&&request.requestIds.length===1&&!!guidedOrder;
   const exceptions=plan.provenance.planningPolicy?.exceptions.filter(e=>e.orderNo===guidedOrder?.orderNo)??[];
@@ -73,7 +74,7 @@ export function ManualPlanningDialog({plan,scenario,fleet,request,onClose,onAppl
   }
   function choosePlacement(suggestion:PlacementSuggestion){
     if(busy||attempted||!canEdit)return;
-    setVehicleId(String(suggestion.vehicleId));setTripId(suggestion.newTrip?'':suggestion.tripId);
+    setVehicleSearch('');setVehicleId(String(suggestion.vehicleId));setTripId(suggestion.newTrip?'':suggestion.tripId);
     if(suggestion.newTrip)setNewTripId(suggestion.tripId);
     const target=fleet.find(v=>v.id===suggestion.vehicleId)?.trips.find(tr=>(tr.manualTripId??`trip-${tr.index}`)===suggestion.tripId);
     setPosition(suggestion.position===(target?.stops.length??0)?'':String(suggestion.position));
@@ -135,9 +136,9 @@ export function ManualPlanningDialog({plan,scenario,fleet,request,onClose,onAppl
       }} className="mt-1 h-9 w-full rounded border bg-card px-2">
         <option value="">{t('manual.chooseVehicle')}</option>
         {fleet.filter(v=>`${v.ref} ${v.vehicleClass??''}`.toLocaleLowerCase().includes(vehicleSearch.trim().toLocaleLowerCase())).map(v=><option key={v.id} value={v.id}
-          disabled={v.unavailable||scenario.removedVehicleIds.includes(v.id)||scenario.sequences.some(q=>q.vehicleId===v.id&&q.locked)}>
+          disabled={v.unavailable||scenario.removedVehicleIds.includes(v.id)||lockedTargets.has(v.id)}>
           {v.ref} · {Math.round(v.capacityKg).toLocaleString()} kg · {v.trips.length} {t('manual.rounds')}
-          {v.unavailable?` · ${t('manual.unavailable')}`:scenario.removedVehicleIds.includes(v.id)?` · ${t('manual.excluded')}`:scenario.sequences.some(q=>q.vehicleId===v.id&&q.locked)?` · ${t('manual.locked')}`:''}
+          {v.unavailable?` · ${t('manual.unavailable')}`:scenario.removedVehicleIds.includes(v.id)?` · ${t('manual.excluded')}`:lockedTargets.has(v.id)?` · ${t('manual.locked')}`:''}
         </option>)}
       </select></label>
       <label>{t('manual.trip')}<select aria-label={t('manual.trip')} disabled={!vehicle} value={tripId} onChange={e=>{setTripId(e.target.value);setPosition('');}} className="mt-1 h-9 w-full rounded border bg-card px-2">
@@ -151,7 +152,7 @@ export function ManualPlanningDialog({plan,scenario,fleet,request,onClose,onAppl
       {vehicle&&tripId!=='?'&&<section className="col-span-2 rounded border border-divider bg-muted/20 p-2 text-xs" aria-label={t('manual.destination')}>
         <div className="font-semibold">{t('manual.destination')}: {vehicle.ref} · {trip?t('fleet.tripLabel',{n:trip.index+1}):t('manual.newTrip')} · {position===''?t('manual.append'):t('manual.before',{order:remaining[Number(position)]?.orderNo??'—'})}</div>
         {trip&&<><p>{t('manual.currentRound')}: {hhmm(trip.startSec)}–{hhmm(trip.endSec)} · {trip.loadKg.toLocaleString()} / {vehicle.capacityKg.toLocaleString()} kg · {trip.loadPallets} / {vehicle.capacityPallets} {t('manual.pallets')}</p>
-          <ol className="mt-2 max-h-32 list-inside list-decimal overflow-y-auto">{remaining.map(stop=><li key={stop.requestId??stop.seq}>{stop.customer??stop.orderNo} · {stop.city??''} · {hhmm(stop.serviceStartSec)}</li>)}</ol></>}
+          <p className="mt-1 text-muted-foreground">{t('manual.positionScope')}</p><ol className="mt-2 max-h-32 list-inside list-decimal overflow-y-auto">{remaining.map(stop=><li key={stop.requestId??stop.seq}>{stop.customer??stop.orderNo} · {stop.city??''} · {hhmm(stop.serviceStartSec)}</li>)}</ol></>}
         <p className="mt-1 text-muted-foreground">{t('manual.destinationHint')}</p>
       </section>}
     </fieldset>}

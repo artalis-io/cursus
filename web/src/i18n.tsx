@@ -10,6 +10,8 @@ export type Lang = 'en' | 'hu';
 type Dict = Record<string, string>;
 
 const en: Dict = {
+  'manual.positionScope':'The positions below exclude the orders being moved.',
+  'solve.backgroundUnknown':'Optimization status is unavailable. Reconnect or request Stop.',
   'manual.optimizerPreferences':'Optimizer preferences for Replan',
   'manual.searchVehicles':'Search vehicles',
   'manual.searchVehiclesHint':'Registration or vehicle class',
@@ -349,6 +351,8 @@ const en: Dict = {
 };
 
 const hu: Dict = {
+  'manual.positionScope':'Az alábbi sorrend nem tartalmazza az áthelyezendő rendeléseket.',
+  'solve.backgroundUnknown':'Az optimalizálás állapota nem ellenőrizhető. Csatlakozzon újra, vagy kérjen leállítást.',
   'manual.optimizerPreferences':'Optimalizálási beállítások újratervezéshez',
   'manual.searchVehicles':'Jármű keresése',
   'manual.searchVehiclesHint':'Rendszám vagy járműosztály',
