@@ -2081,6 +2081,10 @@ const nativeCount="const fs=require('node:fs');let n=0;for(const pid of fs.readd
   await expect(page.getByRole('button',{name:'Cancel',exact:true})).toBeEnabled();
   const cancelled=page.waitForResponse(r=>r.request().method()==='DELETE'&&r.url().endsWith(`/jobs/${jobId}`));
   await page.getByRole('button',{name:'Cancel',exact:true}).click();expect((await cancelled).status()).toBe(200);
+  // The simulated outage is still active: editing must remain fail-closed.
+  await expect(page.getByText('Unable to verify the current scenario. Reload before making changes.',{exact:false})).toBeVisible();
+  await page.unroute('**/api/scenarios/*');
+  await page.evaluate(()=>window.dispatchEvent(new Event('focus')));
   await expect(page.getByRole('button',{name:/^(Optimize|Replan)$/,exact:true})).toBeEnabled();
   await expect.poll(async()=>(await get<{status:string}>(page.request,`${peer}/api/jobs/${jobId}`)).status).toBe('cancelled');
   await page.reload();await expect(page.getByRole('button',{name:/^(Optimize|Replan)$/,exact:true})).toBeEnabled();
