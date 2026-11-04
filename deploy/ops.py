@@ -137,7 +137,14 @@ def reconcile(previous,checks,cfg,now):
  ids={c['id'] for c in checks}
  for known in set(state['incidents'])-ids:
   checks.append(check(known,False,'monitor','A previously monitored check disappeared'))
+ # Unknown parent probes suppress derivative alerts without declaring recovery.
+ unavailable={c['id'][:-len('.reachable')] for c in checks if c['id'].endswith('.reachable') and not c['healthy']}
+ missing_db={c['id'][:-len('.database')] for c in checks if c['id'].endswith('.database') and not c['healthy']}
  for item in checks:
+  key=item['id']
+  if any(key.startswith(node+'.') and key!=node+'.reachable' for node in unavailable):item['suppressed']=True
+  if key=='database.identity' and (unavailable or missing_db):item['suppressed']=True
+  if any(key in (node+'.replication',node+'.archive') for node in missing_db):item['suppressed']=True
   if item.get('suppressed'):continue
   row=state['incidents'].setdefault(item['id'],{'failed':0,'healthy':0,'active':False})
   row['healthy']=row.get('healthy',0)+1 if item['healthy'] else 0

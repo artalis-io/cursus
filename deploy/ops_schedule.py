@@ -24,7 +24,7 @@ def plist(command,python,release,state_dir,notifications,cfg):
    'StartInterval':cfg['monitor_interval_seconds'] if command=='monitor' else cfg['restore_retry_seconds'],
    'ProcessType':'Background','LowPriorityIO':True,'Nice':10,
    'StandardOutPath':str(state_dir/(command+'.log')),'StandardErrorPath':str(state_dir/(command+'.stderr.log')),
-   'EnvironmentVariables':{'PATH':'/usr/bin:/bin:/usr/sbin:/sbin'}}
+   'EnvironmentVariables':{'PATH':'/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin'}}
 
 
 def manage(action,approved,cfg,state_dir,notifications,*,home=None,system=None,run=None,production=None):

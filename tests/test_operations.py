@@ -25,6 +25,18 @@ class OperationsTests(unittest.TestCase):
   disk=patch.object(ops.shutil,'disk_usage',return_value=SimpleNamespace(total=100,free=80));disk.start();self.addCleanup(disk.stop)
   self.cfg,self.production=ops.load_config(ROOT/'deploy/operations.json')
   self.bad=[ops.check('primary.ready',False,'ready','Readiness failed')]
+ def test_unreachable_parent_suppresses_existing_and_missing_dependencies(self):
+  state=None
+  for stamp in [0,60,120]:
+   state=ops.reconcile(state,[ops.check('primary.archive',False,'archive','pending')],self.cfg,stamp)
+  before=copy.deepcopy(state['incidents']['primary.archive'])
+  for stamp in [180,240,300]:
+   state=ops.reconcile(state,[ops.check('primary.reachable',False,'reachable','unavailable'),ops.check('primary.ready',False,'ready','unknown'),ops.check('database.identity',False,'database','unknown')],self.cfg,stamp)
+  self.assertEqual(state['incidents']['primary.archive'],before)
+  self.assertEqual([e['check'] for e in state['notifications']],['primary.archive','primary.reachable'])
+ def test_scheduler_path_supports_existing_homebrew_ssh_proxy(self):
+  conf=schedule.plist('monitor','/usr/bin/python3',Path('/pinned'),self.state,None,self.cfg)
+  self.assertIn('/opt/homebrew/bin',conf['EnvironmentVariables']['PATH'].split(':'))
  def test_incident_and_recovery_are_deduplicated_with_hysteresis(self):
   state=None
   for stamp in [0,60,120,180]:state=ops.reconcile(state,self.bad,self.cfg,stamp)
