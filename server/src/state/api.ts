@@ -258,7 +258,7 @@ export async function createStatefulApi(options: StatefulApiOptions): Promise<Fa
     let id: string;
     try {
       id = await options.store.enqueueJob(options.tenantId, 'solve', `solve/${scenario.id}/${scenario.revision}/${randomKey()}`, {
-        scenarioId: scenario.id, scenarioRevision: scenario.revision, budgetSec, objective: req.body?.objective ?? 'vehicles', fullBudget: req.body?.fullBudget === true, scenario,referencePlanId:req.body?.referencePlanId,
+        scenarioId: scenario.id, scenarioRevision: scenario.revision, budgetSec, objective: req.body?.objective ?? 'vehicles', fullBudget: req.body?.fullBudget === true, scenario,referencePlanId:req.body?.referencePlanId,submittedBy:req.cursusPrincipal?.userId??null,
       }, config.maxSolveQueue, { id: scenario.id, revision: expectedRevision(req.headers)! });
     } catch (error) {
       if (error instanceof RevisionConflictError) return reply.code(409).send({ error: 'Scenario changed; reload before optimizing.' });
@@ -266,6 +266,16 @@ export async function createStatefulApi(options: StatefulApiOptions): Promise<Fa
       throw error;
     }
     return reply.code(202).send({ jobId: id, status: 'pending', scenarioId: scenario.id, scenarioRevision: scenario.revision });
+  });
+  app.get('/api/jobs/active',async(req,reply)=>{
+    reply.header('Cache-Control','private, no-store');
+    const jobs=await options.store.activeSolveJobs(options.tenantId,req.cursusPrincipal?.userId??null);
+    return jobs.map(job=>{
+      const view=statefulJobResponse(job),payload=job.payload as Record<string,unknown>;
+      const scenario=payload.scenario as Record<string,unknown>|undefined;
+      return {id:job.id,status:view.status,scenarioId:view.scenarioId,elapsedSec:view.elapsedSec,
+        dayId:scenario?.day??null,referencePlanId:payload.referencePlanId??null};
+    });
   });
   app.get<{ Params: { id: string } }>('/api/jobs/:id', async (req, reply) => {
     const job = await options.store.getJob(options.tenantId, req.params.id);

@@ -9,7 +9,7 @@ function routes(permission: Permission | 'public', method: string, paths: string
 routes('public', 'GET', ['/api/health', '/api/auth/me', '/api/auth/verify', '/api/auth/workspace', '/api/auth/workspace/icon']);
 routes('public', 'POST', ['/api/auth/magic-link', '/api/auth/verify', '/api/auth/logout', '/api/auth/view-as']);
 routes('workspace.read', 'GET', ['/api/config', '/api/days', '/api/scenarios', '/api/scenarios/:id',
-  '/api/scenarios/:id/plans', '/api/jobs/:id', '/api/plans', '/api/plans/:id', '/api/compare', '/api/week',
+  '/api/scenarios/:id/plans', '/api/jobs/active', '/api/jobs/:id', '/api/plans', '/api/plans/:id', '/api/compare', '/api/week',
   '/api/sage/status', '/api/import/summary', '/api/import/raw', '/api/import/canonical', '/api/import/catalog',
   '/api/import/datasets', '/tiles.vector.json', '/tiles/*']);
 routes('workspace.read', 'GET', ['/api/plans/:id/workflow']);

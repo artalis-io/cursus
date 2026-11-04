@@ -158,6 +158,7 @@ export interface Plan {
 }
 
 export interface ManualLayout {
+  lockedVehicleIds?:number[];
   datasetSha256:string;
   decisions:Record<string,{kind:'vehicle';vehicleId:number}|{kind:'unassigned'}>;
   origins:Record<string,string>;
@@ -248,6 +249,7 @@ export type ScenarioEdit = (
 
 export type JobStatus = 'pending' | 'running' | 'completed' | 'failed' | 'cancelled';
 export interface Job {
+  payload?:{submittedBy?:string|null};
   id: string;
   scenarioId: string;
   scenarioRevision: number;
