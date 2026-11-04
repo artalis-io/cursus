@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "production_config": "deploy/production.json",
+  "monitor_interval_seconds": 60,
+  "failure_samples": 3,
+  "recovery_samples": 2,
+  "replication_lag_bytes": 67108864,
+  "archive_pending_seconds": 300,
+  "disk_free_percent": 10,
+  "backup_max_age_seconds": 93600,
+  "restore_interval_seconds": 86400,
+  "restore_retry_seconds": 3600,
+  "r2_failure_events": 3
+}
