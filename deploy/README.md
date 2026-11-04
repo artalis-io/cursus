@@ -174,3 +174,5 @@ fixture is stored here.
 
 No speculative resource limits are imposed. Use `docker stats --no-stream` and
 job elapsed time in the API to establish workload-specific sizing.
+
+R2 connection limits, readiness behavior, safe diagnostic signals and recovery tests are documented in [R2 resilience](../docs/r2-resilience.md).
