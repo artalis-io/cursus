@@ -10,7 +10,7 @@ export function validateLoading(value:unknown,request:SurgeRequest,sha:string):L
  need(object(value)&&keys(value,['schemaVersion','datasetSha256','mode','vehicles','requests'])&&value.schemaVersion===1&&value.mode==='disabled'&&value.datasetSha256===sha&&/^[a-f0-9]{64}$/.test(sha),'disabled, dataset-bound schemaVersion=1 required');
  need(Array.isArray(value.vehicles)&&value.vehicles.length===request.vehicles.length&&Array.isArray(value.requests)&&value.requests.length===request.requests.length,'complete vehicle and request inventories required');
  const vehicles=new Set(request.vehicles.map(v=>v.id)),requests=new Map(request.requests.map(r=>[r.id,r]));let total=0,classCount=64;
- need(!request.vehicles.some(v=>'open_start' in v||'initial_load' in v),'open starts and initial cargo are unsupported');
+ need(!request.vehicles.some(v=>('open_start' in v&&v.open_start!==false)||'initial_load' in v),'open starts and initial cargo are unsupported');
  for(const raw of value.vehicles){
   need(object(raw)&&keys(raw,['vehicleId','slotCount','maxLayers','clearanceMm','maxStackWeightG','payloadG','access','allowedTop','slots'])&&number(raw.vehicleId)&&vehicles.delete(Number(raw.vehicleId)),'duplicate or unknown vehicle');
   need(number(raw.slotCount,128)&&Number(raw.slotCount)>0&&number(raw.maxLayers,8)&&Number(raw.maxLayers)>0&&number(raw.clearanceMm,4294967295)&&Number(raw.clearanceMm)>0&&number(raw.maxStackWeightG)&&number(raw.payloadG),'invalid geometry or weight');

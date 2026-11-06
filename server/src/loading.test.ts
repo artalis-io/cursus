@@ -62,3 +62,11 @@ test('automatic plan mapping preserves metrics and binds round facts to sparse n
  assert.deepEqual(plan.stats,f.parent.stats);assert.equal(plan.physicalLoading?.rounds[0]?.unitCount,2);
  assert.equal(plan.physicalLoading?.sourceSha256,'c'.repeat(64));
 });
+
+test('explicit depot start is supported; open starts and initial cargo remain rejected',()=>{
+ const f=loadingFixture(),vehicle=f.request.vehicles[0]! as unknown as Record<string,unknown>;
+ const check=()=>{const sha=createHash('sha256').update(JSON.stringify(f.request)).digest('hex');f.document.datasetSha256=sha;return validateLoading(f.document,f.request,sha);};
+ vehicle.open_start=false;assert.doesNotThrow(check);
+ vehicle.open_start=true;assert.throws(check,/open starts/);
+ vehicle.open_start=false;vehicle.initial_load=[0,0];assert.throws(check,/initial cargo/);
+});
