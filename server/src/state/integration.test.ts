@@ -544,7 +544,10 @@ integration('physical loading admission crosses two real APIs without enabling h
  const one=await createStatefulApi({store:a,objects,tenantId:scope,tenantName:'Loading test'}),two=await createStatefulApi({store:b,objects,tenantId:scope,tenantName:'Loading test'});
  const f=loadingFixture(),repository=new DatasetRepository(a,objects,scope);
  try{
-  const upload=await repository.upload(Buffer.from(JSON.stringify(f.bundle)),'application/json');
+  const address=await one.listen({host:'127.0.0.1',port:0});
+  const form=new FormData();form.set('file',new Blob([JSON.stringify(f.bundle)],{type:'application/json'}),'physical-loading.json');
+  const response=await fetch(`${address}/api/import/upload`,{method:'POST',body:form});assert.equal(response.status,201);
+  const upload=await response.json() as {datasetId:string};
   const path=`/api/import/datasets/${upload.datasetId}`;
   assert.equal((await one.inject({method:'POST',url:path+'/admit',payload:{}})).statusCode,409);
   assert.equal((await one.inject({method:'POST',url:path+'/validate',payload:{}})).statusCode,200);
