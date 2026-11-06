@@ -1,3 +1,5 @@
+import {loadingFixture} from './loading-fixture.js';
+import {loadConvertedDay} from './conversion.js';
 import {manualFixture} from './manual-fixture.js';
 import assert from 'node:assert/strict';
 import { test, before, after } from 'node:test';
@@ -534,4 +536,28 @@ integration('active solve discovery is tenant/actor scoped, includes legacy shar
   }finally{
     await a.pool.query('DELETE FROM jobs WHERE tenant_id=ANY($1::text[])',[[owner,foreign]]);
   }
+});
+
+integration('physical loading admission crosses two real APIs without enabling hard loading or crossing tenants',async()=>{
+ const scope=`loading-${randomUUID()}`;await a.ensureTenant(scope,'Loading test');
+ const objects=new ObjectStore(bucket,{endpoint:s3Endpoint,accessKeyId:'integration',secretAccessKey:'integration'});
+ const one=await createStatefulApi({store:a,objects,tenantId:scope,tenantName:'Loading test'}),two=await createStatefulApi({store:b,objects,tenantId:scope,tenantName:'Loading test'});
+ const f=loadingFixture(),repository=new DatasetRepository(a,objects,scope);
+ try{
+  const upload=await repository.upload(Buffer.from(JSON.stringify(f.bundle)),'application/json');
+  const path=`/api/import/datasets/${upload.datasetId}`;
+  assert.equal((await one.inject({method:'POST',url:path+'/admit',payload:{}})).statusCode,409);
+  assert.equal((await one.inject({method:'POST',url:path+'/validate',payload:{}})).statusCode,200);
+  assert.equal((await two.inject({method:'POST',url:path+'/admit',payload:{}})).statusCode,200);
+  const admitted=await new DatasetRepository(b,objects,scope).get(upload.datasetId);assert.equal(admitted?.status,'admitted');
+  const manifest=admitted!.manifest as import('./conversion.js').ConvertedManifest;
+  const day=await loadConvertedDay(objects,scope,manifest,f.scenario);
+  assert.deepEqual(day.physicalLoading,f.document);assert.ok(!('loading' in day.request));
+  assert.equal(await new DatasetRepository(b,objects,tenant).get(upload.datasetId),null);
+  await assert.rejects(()=>loadConvertedDay(objects,tenant,manifest,f.scenario),/tenant/);
+  const bad=structuredClone(f.bundle);bad.physicalLoading.mode='hard' as 'disabled';
+  const rejected=await repository.upload(Buffer.from(JSON.stringify(bad)),'application/json');
+  assert.equal((await two.inject({method:'POST',url:`/api/import/datasets/${rejected.datasetId}/validate`,payload:{}})).statusCode,400);
+  assert.equal((await repository.get(rejected.datasetId))?.status,'uploaded');
+ }finally{await one.close();await two.close();objects.close();}
 });

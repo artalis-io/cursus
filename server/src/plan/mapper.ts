@@ -1,3 +1,4 @@
+import {loadingSnapshot} from '../loading.js';
 import { createHash } from 'node:crypto';
 import type {
   Plan, PlanStop, PlanTrip, PlanVehicle, PlanUnassigned, PlanCost, PlanVehicleCost,
@@ -230,6 +231,7 @@ export function mapSolutionToPlan(inp: MapInputs): Plan {
   const shipmentIds=new Set(deliveries?.map(d=>d.shipmentId));
 
   return {
+    ...(inp.day.physicalLoading&&inp.day.physicalLoadingSha256?{physicalLoading:loadingSnapshot(inp.day.physicalLoading,inp.day.physicalLoadingSha256,vehicles)}:{}),
     ...(document&&inp.day.shipmentSha256?{shipmentMetadata:{datasetSha256:document.datasetSha256,sourceSha256:inp.day.shipmentSha256,
       loadingFeasibility:'not_evaluated' as const,deliveries:structuredClone(deliveries!),shipments:structuredClone(document.shipments.filter(s=>shipmentIds.has(s.id)))}}:{}),
     id: inp.planId,

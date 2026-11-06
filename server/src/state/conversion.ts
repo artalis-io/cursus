@@ -1,3 +1,4 @@
+import {validateLoading} from '../loading.js';
 import { createHash } from 'node:crypto';
 import { createReadStream } from 'node:fs';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
@@ -121,7 +122,7 @@ export async function workOneDatasetAdmission(store: StatefulStore, objects: Obj
 
 /** Solve directly from admitted immutable artifacts; no node-local registry is
  * authoritative. This is the stateful counterpart of loadDay/buildRequest. */
-export interface ConvertedManifest { artifacts?: { request?: ImmutableObject; geocoded?: ImmutableObject;shipments?:ImmutableObject };
+export interface ConvertedManifest { artifacts?: { request?: ImmutableObject; geocoded?: ImmutableObject;shipments?:ImmutableObject;physicalLoading?:ImmutableObject };
   days?: { dayId: string; date?: string; isoDate: string; label: string }[] }
 export async function loadConvertedDay(objects: ObjectStore, tenantId: string, manifest: ConvertedManifest,
   scenario: Scenario, profiles: ApprovedProfile[] = []): Promise<LoadedDay> {
@@ -135,14 +136,18 @@ export async function loadConvertedDay(objects: ObjectStore, tenantId: string, m
   if(scenario.deliveryDatasetSha256&&scenario.deliveryDatasetSha256!==requestObject.sha256)throw new Error('Scenario delivery identities belong to another dataset');
   const prefix = `tenants/${tenantId}/sha256/`;
   if (!requestObject.key.startsWith(prefix) || !geoObject.key.startsWith(prefix)) throw new Error('dataset artifact is outside the tenant namespace');
+  const loadingObject=manifest.artifacts?.physicalLoading;
+  if(loadingObject&&!loadingObject.key.startsWith(prefix))throw new Error('loading artifact is outside the tenant namespace');
   const shipmentObject=manifest.artifacts?.shipments;
   if(shipmentObject&&!shipmentObject.key.startsWith(prefix))throw new Error('shipment artifact is outside the tenant namespace');
   const [requestBytes, geoBytes] = await Promise.all([objects.getVerified(requestObject), objects.getVerified(geoObject)]);
   const request = JSON.parse(new TextDecoder().decode(requestBytes)) as SurgeRequest;
+  if('loading' in request)throw new Error('Native hard loading is not enabled in this runtime.');
   const geoJson = JSON.parse(new TextDecoder().decode(geoBytes)) as { records?: Record<string, unknown>[] } | Record<string, unknown>[];
   const rows = Array.isArray(geoJson) ? geoJson : geoJson.records ?? [];
   let shipmentDocument:ShipmentDocument|undefined;
   if(shipmentObject)shipmentDocument=validateShipments(JSON.parse(new TextDecoder().decode(await objects.getVerified(shipmentObject))),request,requestObject.sha256);
+  const physicalLoading=loadingObject?validateLoading(JSON.parse(new TextDecoder().decode(await objects.getVerified(loadingObject))),request,requestObject.sha256):undefined;
   const dayMeta = manifest.days?.find((d) => d.dayId === (scenario.datasetBinding?.dayId??scenario.day));
   if (!dayMeta) throw new Error('dataset day is missing');
   const refs = new Set(rows.filter((r) => String(r.delivery_date ?? '') === String(dayMeta.date ?? dayMeta.isoDate))
@@ -166,6 +171,7 @@ export async function loadConvertedDay(objects: ObjectStore, tenantId: string, m
   const solution: SurgeSolution = { status: 'OK', routes: [], unassigned: scopedReqIds,
     stats: { vehicles_used: 0, trips: 0, total_distance: 0, unassigned: scopedReqIds.length } };
   const day=withPlanningPolicy({ datasetRequestSha256: requestObject.sha256,deliveryEnrichment,
+    ...(physicalLoading?{physicalLoading,physicalLoadingSha256:loadingObject!.sha256}:{}),
     ...(shipmentDocument?{shipmentDocument,shipmentSha256:shipmentObject!.sha256}:{}),
     def: { id: scenario.day, date: dayMeta.date ?? dayMeta.isoDate, isoDate: dayMeta.isoDate, label: dayMeta.label,
     requestFile: '', solutionFile: '' }, kind: 'uploaded', request, solution,

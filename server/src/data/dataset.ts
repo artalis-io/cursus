@@ -168,6 +168,8 @@ export function vehicleInfoFor(ref: string, table: Map<string, VehicleInfo>): Ve
 }
 
 export interface LoadedDay {
+  physicalLoading?: import('../loading-contract.js').LoadingDocument;
+  physicalLoadingSha256?: string;
   shipmentDocument?: import('../shipment-contract.js').ShipmentDocument;
   shipmentSha256?:string;
   deliveryEnrichment?: Map<number,OrderInfo>;

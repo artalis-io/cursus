@@ -139,6 +139,7 @@ export interface PlanCost {
 export type Objective = 'vehicles' | 'distance';
 
 export interface Plan {
+  physicalLoading?:import('../../server/src/loading-contract').LoadingSnapshot;
   shipmentMetadata?:import('../../server/src/shipment-contract').ShipmentSnapshot;
   manual?: { parentPlanId:string; layout:ManualLayout };
   assignments?: { parentPlanId:string; layout:ManualLayout };

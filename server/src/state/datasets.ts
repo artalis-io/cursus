@@ -24,11 +24,12 @@ export class DatasetRepository {
     const source = (current.manifest as { source?: ImmutableObject }).source;
     if (!source) throw new Error('dataset source object is missing');
     const bytes = await this.objects.getVerified(source);
-    let bundle: { schemaVersion?: unknown; days?: unknown; surgeRequest?: unknown;geocoded?:unknown;shipments?:unknown };
+    let bundle: { schemaVersion?: unknown; days?: unknown; surgeRequest?: unknown;geocoded?:unknown;shipments?:unknown;physicalLoading?:unknown };
     try { bundle = JSON.parse(new TextDecoder().decode(bytes)); } catch { throw new Error('dataset is not valid JSON'); }
     if (bundle.schemaVersion !== 1 || !Array.isArray(bundle.days) || !bundle.days.length || !bundle.surgeRequest || typeof bundle.surgeRequest !== 'object')
       throw new Error('unsupported dataset bundle (requires schemaVersion=1, days[], and surgeRequest)');
-    const prepared=bundle.geocoded!==undefined||bundle.shipments!==undefined;
+    if('loading' in bundle.surgeRequest)throw new Error('Native hard loading is not enabled; import physicalLoading metadata separately.');
+    const prepared=bundle.geocoded!==undefined||bundle.shipments!==undefined||bundle.physicalLoading!==undefined;
     if(prepared)preparedBundle(bundle);
     const manifest = { ...(current.manifest as object), validation: { valid: true, schemaVersion: 1, days: bundle.days,prepared } };
     await this.db.validateDataset(this.tenantId, datasetId, manifest);
@@ -46,6 +47,7 @@ export class DatasetRepository {
       artifacts={request:await this.objects.putImmutable(this.tenantId,bundle.requestBytes,'application/json'),
         geocoded:await this.objects.putImmutable(this.tenantId,Buffer.from(JSON.stringify({records:bundle.geocoded})),'application/json'),
         shipments:await this.objects.putImmutable(this.tenantId,Buffer.from(JSON.stringify(bundle.shipments)),'application/json')};
+      if(bundle.physicalLoading)artifacts.physicalLoading=await this.objects.putImmutable(this.tenantId,Buffer.from(JSON.stringify(bundle.physicalLoading)),'application/json');
       days=bundle.days;
     }
     const objects = [...new Map([manifest.source,...derived,...Object.values(artifacts??{})].filter((x):x is ImmutableObject=>!!x).map(o=>[o.key,o])).values()];

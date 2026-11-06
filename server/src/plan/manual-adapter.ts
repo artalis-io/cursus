@@ -1,3 +1,4 @@
+import {loadingSnapshot} from '../loading.js';
 import { createHash } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
 import { applyFleetSettings } from '../state/manual-settings.js';
@@ -189,5 +190,10 @@ export function materializeManualPlan(parent: Plan, scenario: Scenario, input: M
         fixedCost: cost.fixed, variableCost: cost.variable, totalCost: cost.total };
     }) } };
   delete plan.assignments;
+  // Rebuild round counts from the current immutable declarations, never from
+  // the parent's layout. These facts still make no feasibility claim.
+  delete plan.physicalLoading;
+  if(context.day.physicalLoading&&context.day.physicalLoadingSha256)
+    plan.physicalLoading=loadingSnapshot(context.day.physicalLoading,context.day.physicalLoadingSha256,vehicles);
   return plan;
 }
