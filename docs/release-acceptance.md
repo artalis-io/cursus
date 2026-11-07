@@ -55,6 +55,16 @@ A missing prerequisite or a port conflict fails the run instead of changing
 another deployment. The fixture refuses to seed a nonempty database and never
 truncates existing tables.
 
+## Native loading contract
+
+The acceptance runner also executes the pinned OTTO CLI contract and independent
+physical-witness replay in the exact production image. Its fixture/oracle mounts
+are read-only, and no production application endpoint enables hard loading.
+`native_loading` records the tested executable checksum and must agree with
+`runtime.native.surge`. Loading-fact upload, admission, peer retrieval and honest
+EN/HU Not evaluated display are covered through the real API/browser. See
+[loading preparation](loading-preparation.md) for the activation boundary.
+
 ## What must pass
 
 - Anonymous APIs reject access, allowed login works, sessions work across
@@ -93,7 +103,7 @@ validation, before it can receive a passing report.
 
 ## Enforced deployment gate
 
-The current suite contains 104 checks. Its browser command has a 20-minute aggregate budget, with 25 minutes for the CI job including image preparation. Individual browser tests retain their 120-second limit, assertions, and zero-retry policy; skips and flaky results still block acceptance.
+The current suite contains 119 browser checks, plus the native loading contract. Its browser command has a 20-minute aggregate budget, with 25 minutes for the CI job including image preparation. Individual browser tests retain their 120-second limit, assertions, and zero-retry policy; skips and flaky results still block acceptance.
 
 Use a clean checkout for release evidence. Development runs record a dirty
 checkout, but the deployment gate rejects such reports. A stale passing report

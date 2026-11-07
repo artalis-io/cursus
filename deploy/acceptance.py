@@ -28,6 +28,9 @@ def harness_digest():
              ROOT / 'web/playwright.acceptance.config.ts', ROOT / 'web/tsconfig.acceptance.json',
              ROOT / 'web/tests/workspace-navigation.ts', ROOT / 'web/tests/compact-header.ts', ROOT / 'web/tests/solve-progress-cases.ts', ROOT / 'web/tests/public-workspace.ts', ROOT / 'web/tests/public-plan.ts', ROOT / 'web/tests/planning-recovery-cases.ts']
     paths += sorted((ROOT / 'tests/acceptance').glob('*.mjs'))
+    paths += sorted((ROOT / 'tests/acceptance').glob('*.py'))
+    paths += [ROOT / 'vendor/otto/surge/tests/test_loading_cli.py',
+              ROOT / 'vendor/otto/surge/benchmarks/loading_reference.py']
     paths += sorted((ROOT / 'web/acceptance').glob('*.ts'))
     digest = hashlib.sha256()
     for path in sorted(paths):
@@ -135,6 +138,10 @@ def main():
             dc('config', '--quiet')
             started = True
             dc('up', '-d', '--wait', 'postgres', 's3-test')
+            native = dc('run', '--rm', '-T', '--entrypoint', 'python3', 'fixture', '/acceptance/native-loading.py', capture=True)
+            report['native_loading'] = json.loads(native.stdout.strip().splitlines()[-1])
+            if report['native_loading'].get('status') != 'passed':
+                raise ValueError('native loading contract failed')
             seeded = dc('run', '--rm', '-T', 'fixture', 'seed', capture=True)
             report['fixture'] = json.loads(seeded.stdout.strip().splitlines()[-1])
             dc('up', '-d', '--wait', 'cursus-handoff-receiver', 'app-a', 'app-b')
@@ -173,6 +180,8 @@ def main():
             else:
                 report['private_workflow'] = {'status': 'not_requested'}
             report['runtime'] = json.loads(dc('run', '--rm', '-T', 'fixture', 'evidence', capture=True).stdout.strip().splitlines()[-1])
+            if report['native_loading']['surge_sha256'] != report['runtime']['native']['surge']:
+                raise ValueError('loading contract did not exercise the recorded Surge executable')
             report['status'] = 'passed'
     except BaseException as error:
         report['status'] = 'failed'

@@ -11,6 +11,8 @@ x-app: &app
   volumes:
     - ${CURSUS_ACCEPTANCE_SCRATCH:?set by runner}:/acceptance-config:ro
     - ./tests/acceptance:/acceptance:ro
+    - ./vendor/otto/surge/tests/test_loading_cli.py:/acceptance-otto/test_loading_cli.py:ro
+    - ./vendor/otto/surge/benchmarks/loading_reference.py:/acceptance-otto/loading_reference.py:ro
   environment: &environment
     CURSUS_RUNTIME_MODE: stateful
     CURSUS_INPUT_UPDATES_ENABLED: "1"

@@ -115,6 +115,17 @@ try {
       assert.equal(expired.rowCount, 1, 'expire only the freshly requested isolated test link');
     }
     result = { link };
+  } else if(action==='loading-bundle'){
+    const {loadingFixture}=await import('/app/server/dist/state/loading-fixture.js');
+    const f=loadingFixture(),row=await store.getDataset('acceptance','acceptance-dataset');
+    assert.equal(row?.status,'admitted');
+    const seeded=JSON.parse(new TextDecoder().decode(await objects.getVerified(row.manifest.artifacts.request)));
+    f.request.vehicles=seeded.vehicles; // match this environment's trusted fleet inventory
+    for(const request of f.request.requests)request.forbidden_vehicles=[99];
+    const geometry=f.document.vehicles[0];
+    f.document.vehicles=f.request.vehicles.map(vehicle=>({...structuredClone(geometry),vehicleId:vehicle.id}));
+    f.document.datasetSha256=createHash('sha256').update(JSON.stringify(f.request)).digest('hex');
+    result=f.bundle;
   } else if(action==='revised-input-bundle'){
     const row=await store.getDataset('acceptance','acceptance-dataset');assert.equal(row?.status,'admitted');
     const manifest=row.manifest,request=JSON.parse(new TextDecoder().decode(await objects.getVerified(manifest.artifacts.request)));

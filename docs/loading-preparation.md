@@ -2,7 +2,9 @@
 
 Physical loading facts can be retained with an admitted prepared JSON dataset.
 This is preparation for OTTO's loading checker, not activation of hard loading.
-There is no production rollout or native dependency update in this change.
+The native dependency is pinned to OTTO `605691491b8199376dc989e440cce13b1fcd705c`
+(including loading, cancellation and hot-path fixes). This does not activate hard
+loading in Cursus and includes no production rollout.
 Gyermelyi continues to use its existing scalar capacities and constraints.
 
 ## Import contract
@@ -77,3 +79,31 @@ carry ordered round certificates, reject UNKNOWN at publication, invalidate
 certificates after edits, and add approval/API/export regression coverage. That
 activation requires verified customer geometry and a separate implementation.
 General 3D packing, reshuffling and axle loads remain outside this milestone.
+
+## Production-image integration gate
+
+`python3 deploy/acceptance.py --report /external/evidence/report.json` builds the
+local image, runs the pinned OTTO native loading contract inside that image,
+and tests two application replicas against disposable PostgreSQL/S3 storage.
+It does not need customer data or production credentials.
+
+The native gate reuses OTTO's CLI fixtures and independent Python reference
+validator through read-only mounts. It covers stackable versus non-stackable
+units, legacy mode, budget exhaustion (UNKNOWN), reload rounds, malformed input,
+and impossible height/payload loads. Every successful solution is independently
+replayed for coverage, geometric distance, scalar capacity and physical witnesses.
+The report records the fixture hash and executable hash; the latter must match
+its ordinary runtime provenance. No solver or converter is duplicated in Cursus.
+
+`web/acceptance/zzz-loading-admission.spec.ts` uploads physical facts through
+real authenticated multipart HTTP, rejects admission before validation, admits
+through the peer, executes a native optimization, retrieves its immutable plan
+through the other replica and checks the EN/HU loading evidence. Attempting to
+set `mode: hard` remains rejected. Facts and round counts must survive, while
+status remains **Not evaluated**. This tests the current application boundary;
+it is not evidence of active stacking enforcement by Cursus HTTP handlers.
+
+The native tests exercise hard stacking directly, without exposing a bypass API.
+Activating it through Cursus still needs a separately reviewed stable-ID adapter,
+publication/approval/export validation and verified customer loading geometry.
+No loading dimensions or stacking permissions are inferred for Gyermelyi.
