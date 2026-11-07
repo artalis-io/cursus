@@ -38,7 +38,7 @@ export function planningRecoveryCases(){
    await page.getByRole('option',{name:/7 May 2026/}).click();
    await expect(page.locator('header').getByRole('combobox')).toContainText('7 May 2026');
   }finally{release();}
-  await expect(page.getByRole('button',{name:/^Optimizing/})).toHaveCount(0);
+  await expect(page.getByRole('button',{name:'Optimize',exact:true})).toBeEnabled();
   await expect(page.getByRole('dialog',{name:/Plan comparison/})).toHaveCount(0);
   await expect(page.getByRole('button',{name:'Compare candidate',exact:true})).toHaveCount(0);
   await expect(page.locator('header').getByRole('combobox')).toContainText('7 May 2026');
