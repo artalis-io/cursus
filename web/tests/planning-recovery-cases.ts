@@ -24,6 +24,26 @@ export function planningRecoveryCases(){
   await expect(page.locator('aside').last().locator('[draggable="true"]')).toHaveCount(2);
  });
 
+ test('a completed solve loading its plan cannot reopen comparison after switching days',async({page})=>{
+  const {plan,scenario}=await publicWorkspace(page);
+  await page.route('**/api/jobs/active',route=>route.fulfill({json:[]}));
+  await page.route('**/api/scenarios/*/solve',route=>route.fulfill({status:202,json:{jobId:'late-job'}}));
+  await page.route('**/api/jobs/late-job',route=>route.fulfill({json:{id:'late-job',scenarioId:scenario.id,status:'completed',planId:'late-plan',elapsedSec:1}}));
+  let release!:()=>void,entered!:()=>void;
+  const held=new Promise<void>(resolve=>{release=resolve;}),ready=new Promise<void>(resolve=>{entered=resolve;});
+  await page.route('**/api/plans/late-plan*',async route=>{entered();await held;await route.fulfill({json:{...plan,id:'late-plan'}});});
+  await page.getByRole('button',{name:'Optimize',exact:true}).click();await ready;
+  try{
+   await page.locator('header').getByRole('combobox').click();
+   await page.getByRole('option',{name:/7 May 2026/}).click();
+   await expect(page.locator('header').getByRole('combobox')).toContainText('7 May 2026');
+  }finally{release();}
+  await expect(page.getByRole('button',{name:/^Optimizing/})).toHaveCount(0);
+  await expect(page.getByRole('dialog',{name:/Plan comparison/})).toHaveCount(0);
+  await expect(page.getByRole('button',{name:'Compare candidate',exact:true})).toHaveCount(0);
+  await expect(page.locator('header').getByRole('combobox')).toContainText('7 May 2026');
+ });
+
  test('server discovery reconnects without local storage; navigating away retains Open and Stop',async({page})=>{
   const {scenario,days,plan}=await publicWorkspace(page);let active=true;
   await page.route('**/api/jobs/active',route=>route.fulfill({json:active?[{id:'durable-job',scenarioId:scenario.id,dayId:days[0].id,referencePlanId:plan.id,status:'running',elapsedSec:20}]:[]}));

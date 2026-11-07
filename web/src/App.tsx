@@ -378,20 +378,25 @@ export default function App() {
   // Follow a running job (already created) to its terminal state; apply + return
   // the plan only if still current. Shared by fresh solves and reload-resume.
   const followJob = useCallback(async (jobId: string, scenarioId: string, dayId: string, ctrl: AbortController): Promise<Plan | null> => {
+    const generation = navigationGeneration.current;
+    const current = () => !ctrl.signal.aborted && writeAccess.current.mounted &&
+      activeJobId.current === jobId && generation === navigationGeneration.current;
     activeJobId.current = jobId;
     const saved=readActiveJob(),referenceId=saved?.jobId===jobId?saved.referencePlanId:planRef.current?.id;
     persistActiveJob({ jobId, scenarioId, dayId,referencePlanId:referenceId });
     setJob(current=>({id:jobId,status:'pending',elapsedSec:current?.id===jobId||!current?.id?current?.elapsedSec??0:0,scenarioId,error:null}));
     try {
       const final = await pollJob(jobId, (j) => {
-        if (activeJobId.current !== jobId) return;
+        if (!current()) return;
         setJob((current) => ({ id: j.id, status: j.status,
           elapsedSec: Math.max(current?.elapsedSec ?? 0, j.elapsedSec), scenarioId, error: j.error }));
       }, { signal: ctrl.signal });
-      if (activeJobId.current !== jobId) return null; // superseded
+      if (!current()) return null; // superseded
       if (final.status === 'completed' && final.planId) {
         const revised = await loadPlanWithGeometry(final.planId);
+        if (!current()) return null;
         const reference=referenceId?await loadPlanWithGeometry(referenceId):planRef.current;
+        if (!current()) return null;
         if(reference){setCandidate({plan:revised,reference});setCompareOpen(true);}
         else{setError('The previous plan could not be restored. Open the saved result from Plans.');persistActiveJob(null);}
         return revised;
@@ -400,7 +405,7 @@ export default function App() {
       if (final.status === 'failed') setError(final.error ?? 'Optimization failed.');
       return null;
     } catch (e) {
-      if ((e as Error).name === 'AbortError') return null;
+      if (!current() || (e as Error).name === 'AbortError') return null;
       if(e instanceof ApiError&&[403,404].includes(e.status??0))persistActiveJob(null);
       setError(describeApiError(e, t));
       setJob((j) => (j ? { ...j, status: 'failed', error: String(e) } : j));
@@ -577,9 +582,7 @@ export default function App() {
       if (!writeAccess.current.mounted || !writeAccess.current.solve || epoch !== writeAccess.current.epoch) return;
       const current = scenarioRef.current;
       if (!current) return;
-      const wasCopy = current.kind === 'copy';
-      const revised = await runSolve(current.id, dayId);
-      if (revised && wasCopy) setCompareOpen(true);
+      await runSolve(current.id, dayId);
     } finally { solveBusyRef.current=false;setSolveActive(false);setJob(current=>current?.id===''?null:current); }
   }, [dayId, runSolve]);
 
