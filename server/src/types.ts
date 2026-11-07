@@ -221,6 +221,7 @@ export interface PlanCost {
 }
 
 export interface Plan {
+  physicalLoading?:import('./loading-contract.js').LoadingSnapshot;
   shipmentMetadata?:import('./shipment-contract.js').ShipmentSnapshot;
   assignments?: { version: 1; parentPlanId: string; layout: import('./plan/manual.js').ManualLayout };
   manual?: { version: 1; parentPlanId: string; layout: import('./plan/manual.js').ManualLayout;

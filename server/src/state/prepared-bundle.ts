@@ -1,3 +1,4 @@
+import {validateLoading} from '../loading.js';
 import {createHash} from 'node:crypto';
 import type {SurgeRequest} from '../types.js';
 import {summarizeShipments,validateShipments} from '../shipments.js';
@@ -12,6 +13,7 @@ function need(v:unknown,message:string):asserts v{if(!v)throw new Error(`Prepare
 export function preparedBundle(value:unknown){
  need(record(value)&&value.schemaVersion===1&&record(value.surgeRequest)&&Array.isArray(value.days)&&value.days.length>0&&Array.isArray(value.geocoded),'days, request and identity-bearing geocoded rows are required');
  const r=value.surgeRequest;
+ need(r.loading===undefined,'native hard loading is not enabled; supply physicalLoading metadata separately');
  need(record(r.config)&&r.dimension_count===2&&r.demand_sign_convention===1&&Array.isArray(r.locations)&&r.locations.length>0&&
   Array.isArray(r.depots)&&r.depots.length===1&&record(r.depots[0])&&r.depots[0].location_id===0&&
   Array.isArray(r.vehicles)&&r.vehicles.length>0&&Array.isArray(r.tasks)&&Array.isArray(r.requests)&&r.requests.length>0&&record(r.travel),
@@ -44,5 +46,6 @@ export function preparedBundle(value:unknown){
  for(const delivery of shipments.deliveries){const raw=geocoded.find(row=>row.request_id===delivery.requestId)!;
   need(days.find(day=>day.date===String(raw.delivery_date))?.isoDate===delivery.date,'commercial and source delivery dates disagree');
  }
- return {requestBytes,request,days,geocoded,shipments};
+ const physicalLoading=value.physicalLoading===undefined?undefined:validateLoading(value.physicalLoading,request,datasetSha256);
+ return {requestBytes,request,days,geocoded,shipments,physicalLoading};
 }

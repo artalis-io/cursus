@@ -10,6 +10,7 @@ COPY server/src/workflow-contract.ts /src/server/src/workflow-contract.ts
 COPY server/src/plan/identity.ts /src/server/src/plan/identity.ts
 COPY server/src/planning-profile-contract.ts /src/server/src/planning-profile-contract.ts
 COPY server/src/shipment-contract.ts /src/server/src/shipment-contract.ts
+COPY server/src/loading-contract.ts /src/server/src/loading-contract.ts
 COPY server/src/integration-contract.ts /src/server/src/integration-contract.ts
 COPY server/src/input-update-contract.ts /src/server/src/input-update-contract.ts
 RUN npm run build

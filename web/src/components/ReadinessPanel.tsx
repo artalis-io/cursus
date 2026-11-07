@@ -1,3 +1,4 @@
+import {LoadingEvidence} from './LoadingEvidence';
 import type {ReactNode} from 'react';
 import { ChevronDown, ClipboardCheck } from 'lucide-react';
 import { useT } from '@/i18n';
@@ -55,6 +56,7 @@ export function ReadinessPanel({ plan, baseline, scenario, pending, freshness, a
             {plan.provenance?.validation?.valid !== true && <p className="text-warning">{t('readiness.validationUnconfirmed')}</p>}
             {!!plan.provenance?.validation?.violations?.some(v => v.soft) && <p className="text-warning">{t('readiness.advisories')}</p>}
             <p className="text-muted-foreground">{t('readiness.checkScope')}</p>
+            <LoadingEvidence plan={plan}/>
           </section>
           <section aria-label={t('issues.approvedExceptions')} className="min-w-0 space-y-2">
             <h3 className="font-semibold">{t('issues.approvedExceptions')} · {review.exceptions.length}</h3>
