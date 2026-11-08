@@ -8,7 +8,7 @@ import type { Plan, Scenario } from '@/types';
 
 /** No mutations, fetching, permissions or optimistic solver previews here.
  * Every value belongs to the displayed committed plan snapshot. */
-export function ReadinessPanel({ plan, baseline, scenario, pending, freshness, approval, children, onOpenChanges, changesCount=0 }: { plan: Plan; baseline: Plan; scenario: Scenario; pending: boolean; freshness?: ReactNode; approval?: ReactNode; children?: ReactNode; onOpenChanges?:()=>void; changesCount?:number }) {
+export function ReadinessPanel({ plan, baseline, scenario, pending, freshness, approval, loadingConfirmed=false, loadingInvalidated=false,children, onOpenChanges, changesCount=0 }: { plan: Plan; baseline: Plan; scenario: Scenario; pending: boolean; freshness?: ReactNode; approval?: ReactNode;loadingConfirmed?:boolean;loadingInvalidated?:boolean; children?: ReactNode; onOpenChanges?:()=>void; changesCount?:number }) {
   const t = useT();
   const review = reviewReadiness(plan, scenario, pending);
   const comparison = reviewComparison(baseline, plan);
@@ -56,7 +56,7 @@ export function ReadinessPanel({ plan, baseline, scenario, pending, freshness, a
             {plan.provenance?.validation?.valid !== true && <p className="text-warning">{t('readiness.validationUnconfirmed')}</p>}
             {!!plan.provenance?.validation?.violations?.some(v => v.soft) && <p className="text-warning">{t('readiness.advisories')}</p>}
             <p className="text-muted-foreground">{t('readiness.checkScope')}</p>
-            <LoadingEvidence plan={plan}/>
+            <LoadingEvidence plan={plan} confirmed={loadingConfirmed} invalidated={loadingInvalidated||plan.scenarioRevision!==scenario.revision}/>
           </section>
           <section aria-label={t('issues.approvedExceptions')} className="min-w-0 space-y-2">
             <h3 className="font-semibold">{t('issues.approvedExceptions')} · {review.exceptions.length}</h3>

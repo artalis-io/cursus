@@ -12,8 +12,12 @@ on:
 
 jobs:
   acceptance:
+    strategy:
+      fail-fast: false
+      matrix:
+        loading: ['disabled', 'hard']
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 35
     steps:
       - uses: actions/checkout@v4
         with:
@@ -28,12 +32,12 @@ jobs:
       - run: npx playwright install --with-deps chromium
         working-directory: web
       - name: Production image, two replicas, real authentication and native solves
-        run: python3 deploy/acceptance.py --report /tmp/cursus-acceptance-evidence/report.json
+        run: python3 deploy/acceptance.py ${{ matrix.loading == 'hard' && '--hard-loading' || '' }} --report /tmp/cursus-acceptance-evidence/report.json
       - name: Preserve acceptance evidence and failure traces
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: stateful-acceptance-evidence
+          name: stateful-acceptance-evidence-${{ matrix.loading }}
           path: |
             /tmp/cursus-acceptance-evidence/
             web/test-results/
@@ -93,7 +97,7 @@ jobs:
         working-directory: server
         env:
           CURSUS_TEST_SURGE_BIN: ${{ github.workspace }}/vendor/otto/surge/surge_solve
-        run: node --import tsx --test src/plan/retained.test.ts src/plan/access.test.ts src/state/solver-ids.test.ts
+        run: node --import tsx --test src/plan/retained.test.ts src/plan/access.test.ts src/state/solver-ids.test.ts src/hard-loading.test.ts
       - name: Start isolated PostgreSQL and S3 protocol fixture
         run: docker compose -p cursus-ci-stateful -f compose.integration.yaml up -d --wait
       - name: Stateful concurrency and recovery integration tests

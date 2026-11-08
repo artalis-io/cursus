@@ -61,7 +61,8 @@ app.setNotFoundHandler((req, reply) => req.method === 'GET' && !req.url.startsWi
 let stopping = false;
 const workerId = `${config.statefulWorkerId}-${hostname()}-${process.pid}`;
 async function solve(lease: Lease, signal: AbortSignal): Promise<SolveOutput> {
-  const payload = lease.payload as { scenario?: Scenario;referencePlanId?:string; budgetSec?: number; objective?: 'vehicles' | 'distance'; fullBudget?: boolean };
+  const payload = lease.payload as { scenario?: Scenario;referencePlanId?:string; budgetSec?: number; objective?: 'vehicles' | 'distance'; fullBudget?: boolean;hardLoadingEnabled?:boolean };
+  if(payload.hardLoadingEnabled!==undefined&&payload.hardLoadingEnabled!==store.hardLoadingEnabled)throw new Error('Physical loading policy differs between replicas.');
   if (!payload.scenario) throw new Error('solve job has no scenario snapshot');
   const datasets = await store.listDatasets(lease.tenantId, true);
   const wantedSha = payload.scenario.deliveryDatasetSha256 ?? payload.scenario.manualDecisions?.datasetSha256 ?? payload.scenario.planningPolicy?.datasetRequestSha256;

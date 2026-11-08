@@ -1,3 +1,4 @@
+import {loadingSource,loadingRequired} from '../hard-loading.js';
 import {ObjectStoreError} from './objects.js';
 import {solveBudget} from '../solve-budget.js';
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from 'fastify';
@@ -125,7 +126,7 @@ export async function createStatefulApi(options: StatefulApiOptions): Promise<Fa
       const intent = parseManualRequest(req.body);
       const plan=await new ManualPlanPublisher(options.store, options.tenantId, options.manualPlanning)
         .publish(req.params.id, revision, intent, req.cursusPrincipal, suffix === 'manual-preview');
-      return suffix === 'manual-preview' ? {stats:plan.stats,cost:plan.cost,validation:plan.provenance.validation} : reply.code(201).send(plan);
+      return suffix === 'manual-preview' ? {stats:plan.stats,cost:plan.cost,validation:plan.provenance.validation,...(plan.physicalLoading?.mode==='hard'?{physicalLoadingPending:true}:{})} : reply.code(201).send(plan);
     } catch (error) {
       if (error instanceof ManualPublicationError) return reply.code(error.status).send({ error: error.message });
       throw error;
@@ -178,11 +179,11 @@ export async function createStatefulApi(options: StatefulApiOptions): Promise<Fa
   });
   app.get('/api/auth/me', async (req, reply) => {
     reply.header('Cache-Control', 'private, no-store');
-    if (!options.auth) return { email: 'local@cursus', tenantId: options.tenantId, tenantName: options.tenantName, role: 'admin', permissions: statefulPermissions('admin').filter(p => p !== 'role.preview'), solveLimits:{maxSeconds:config.maxSolveSeconds}, build: buildInfo,features:{planningProfiles:true,acknowledgedHandoff:true,inputUpdates:!!options.inputUpdatesEnabled&&!!options.objects&&!!options.manualPlanning} };
+    if (!options.auth) return { email: 'local@cursus', tenantId: options.tenantId, tenantName: options.tenantName, role: 'admin', permissions: statefulPermissions('admin').filter(p => p !== 'role.preview'), solveLimits:{maxSeconds:config.maxSolveSeconds}, build: buildInfo,features:{planningProfiles:true,acknowledgedHandoff:true,hardLoading:options.store.hardLoadingEnabled===true,inputUpdates:!!options.inputUpdatesEnabled&&!!options.objects&&!!options.manualPlanning} };
     const principal = await options.auth.authenticate(cookieValue(req.headers.cookie, 'cursus_session'));
     if (!principal || principal.tenantId !== options.tenantId) return reply.code(401).send({ error: 'authentication required' });
     const identity = viewIdentity(principal, req.headers.cookie);
-    return { ...identity, permissions: statefulPermissions(identity.effectiveRole), tenantName: await options.store.getTenantName(principal.tenantId), solveLimits:{maxSeconds:config.maxSolveSeconds}, build: buildInfo,features:{planningProfiles:true,acknowledgedHandoff:true,inputUpdates:!!options.inputUpdatesEnabled&&!!options.objects&&!!options.manualPlanning} };
+    return { ...identity, permissions: statefulPermissions(identity.effectiveRole), tenantName: await options.store.getTenantName(principal.tenantId), solveLimits:{maxSeconds:config.maxSolveSeconds}, build: buildInfo,features:{planningProfiles:true,acknowledgedHandoff:true,hardLoading:options.store.hardLoadingEnabled===true,inputUpdates:!!options.inputUpdatesEnabled&&!!options.objects&&!!options.manualPlanning} };
   });
   app.post('/api/auth/logout', async (req, reply) => {
     if (options.auth && req.headers.origin !== options.publicOrigin) return reply.code(403).send({ error: 'invalid request origin' });
@@ -255,10 +256,15 @@ export async function createStatefulApi(options: StatefulApiOptions): Promise<Fa
     }
     if (scenario.manualPlanId && (!options.manualPlanning || !scenario.manualDecisions))
       return reply.code(409).send({ error: 'Manual replanning requires the enabled retained-decision runtime.' });
+    let source:string|undefined,hardLoadingRequired=false;
+    try{source=await loadingSource(options.store.pool,options.tenantId,scenario);
+      hardLoadingRequired=await loadingRequired(options.store.pool,options.tenantId,scenario,source,options.store.hardLoadingEnabled===true);
+    }catch(error){if((error as Error).message.startsWith('Physical loading:'))return reply.code(409).send({error:(error as Error).message});throw error;}
+    if(hardLoadingRequired&&!source)return reply.code(409).send({error:'Physical loading: source facts required before solving.'});
     let id: string;
     try {
       id = await options.store.enqueueJob(options.tenantId, 'solve', `solve/${scenario.id}/${scenario.revision}/${randomKey()}`, {
-        scenarioId: scenario.id, scenarioRevision: scenario.revision, budgetSec, objective: req.body?.objective ?? 'vehicles', fullBudget: req.body?.fullBudget === true, scenario,referencePlanId:req.body?.referencePlanId,submittedBy:req.cursusPrincipal?.userId??null,
+        scenarioId: scenario.id, scenarioRevision: scenario.revision, budgetSec, objective: req.body?.objective ?? 'vehicles', fullBudget: req.body?.fullBudget === true, scenario:{...scenario,...(hardLoadingRequired?{hardLoadingRequired:true}:{})},referencePlanId:req.body?.referencePlanId,submittedBy:req.cursusPrincipal?.userId??null,hardLoadingEnabled:options.store.hardLoadingEnabled===true,
       }, config.maxSolveQueue, { id: scenario.id, revision: expectedRevision(req.headers)! });
     } catch (error) {
       if (error instanceof RevisionConflictError) return reply.code(409).send({ error: 'Scenario changed; reload before optimizing.' });

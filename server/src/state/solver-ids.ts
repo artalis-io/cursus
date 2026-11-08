@@ -17,6 +17,10 @@ export function nativeSolveRequest(request: SurgeRequest, sequences: Scenario['s
       ...(r.allowed_vehicles ? { allowed_vehicles: r.allowed_vehicles.filter(v => vehicles.has(v)).map(v => vehicles.get(v)!) } : {}),
       ...(r.forbidden_vehicles ? { forbidden_vehicles: r.forbidden_vehicles.filter(v => vehicles.has(v)).map(v => vehicles.get(v)!) } : {}),
     })),
+    ...(request.loading?{loading:{...request.loading,
+      vehicles:request.loading.vehicles.map(v=>({...v,vehicle_id:vehicles.get(v.vehicle_id)!})),
+      requests:request.loading.requests.map(r=>({...r,request_id:requests.get(r.request_id)!})),
+    }}:{}),
     precedences: request.precedences?.filter(p => requests.has(p.before) && requests.has(p.after))
       .map(p => ({ before: requests.get(p.before)!, after: requests.get(p.after)! })),
   };
@@ -45,9 +49,17 @@ export function nativeSolveRequest(request: SurgeRequest, sequences: Scenario['s
     }).map(id => requests.get(id)!) })).filter(route => route.request_ids.length > 0);
   for (const key of ['committed_requests', 'frozen_requests'] as const)
     if (extra[key]) extra[key] = extra[key]!.filter(id => requests.has(id)).map(id => requests.get(id)!);
-  return { request: native, restore: solution => ({ ...solution,
+  const stable=(index:number,items:{id:number}[])=>{if(!Number.isSafeInteger(index)||!items[index])throw new Error('Physical loading: invalid native loading identity');return items[index]!.id;};
+  return { request: native, restore: solution => {
+    if(solution.loading&&(!Array.isArray(solution.loading.rounds)||!Array.isArray(solution.loading.unassigned_checks)||solution.loading.rounds.some(r=>!Array.isArray(r.placements))))throw new Error('Physical loading: malformed native certificate; no plan published');
+    return ({ ...solution,
+    ...(solution.loading?{loading:{...solution.loading,
+      rounds:solution.loading.rounds.map(round=>({...round,vehicle_id:stable(round.vehicle_id,request.vehicles),
+        placements:round.placements.map(p=>({...p,request_id:stable(p.request_id,request.requests)}))})),
+      unassigned_checks:solution.loading.unassigned_checks.map(d=>({...d,request_id:stable(d.request_id,request.requests)})),
+    }}:{}),
     unassigned: solution.unassigned.map(id => request.requests[id]!.id),
     routes: solution.routes.map(route => ({ ...route, vehicle_id: request.vehicles[route.vehicle_id]!.id,
       stops: route.stops.map(stop => ({ ...stop, request_id: request.requests[stop.request_id]!.id, task_id: request.tasks[stop.task_id]!.id })) })),
-  }) };
+  }); } };
 }

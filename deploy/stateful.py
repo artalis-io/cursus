@@ -117,7 +117,7 @@ def current_harness_digest() -> str:
     return module.harness_digest()
 
 
-def acceptance_evidence(path: Path | None, image_id: str, *, fresh: bool = True) -> dict[str, Any]:
+def acceptance_evidence(path: Path | None, image_id: str, *, fresh: bool = True, hard_loading_enabled: bool = False) -> dict[str, Any]:
     if path is None: raise DeploymentError('release requires --acceptance-report from deploy/acceptance.py')
     try:
         report = json.loads(path.read_text())
@@ -127,7 +127,7 @@ def acceptance_evidence(path: Path | None, image_id: str, *, fresh: bool = True)
         passed = (report['schema_version'] == 1 and report['suite'] == 'stateful-production-image'
                   and report['status'] == 'passed' and report['image_id'] == image_id
                   and report['cleanup_completed'] is True
-                  and report['checkout_dirty'] is False and stats['expected'] >= 8
+                  and report['checkout_dirty'] is False and report.get('hard_loading_enabled',False) is hard_loading_enabled and stats['expected'] >= 8
                   and stats['unexpected'] == stats['flaky'] == stats['skipped'] == 0
                   and report['runtime']['migrations'] in ([1], [1, 2], [1, 2, 3], [1, 2, 3, 4], [1, 2, 3, 4, 5])
                   and all(len(report['runtime']['native'][name]) == 64 for name in ['surge', 'matrix', 'nexus'])

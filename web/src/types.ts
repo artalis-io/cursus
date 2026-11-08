@@ -139,7 +139,7 @@ export interface PlanCost {
 export type Objective = 'vehicles' | 'distance';
 
 export interface Plan {
-  physicalLoading?:import('../../server/src/loading-contract').LoadingSnapshot;
+  physicalLoading?:import('../../server/src/loading-contract').PhysicalLoadingEvidence;
   shipmentMetadata?:import('../../server/src/shipment-contract').ShipmentSnapshot;
   manual?: { parentPlanId:string; layout:ManualLayout };
   assignments?: { parentPlanId:string; layout:ManualLayout };
@@ -168,12 +168,13 @@ export interface ManualLayout {
 export type ManualCommand = {op:'assign';requestId:number;vehicleId:number;tripId:string;position:number}|{op:'deassign'|'release';requestId:number};
 export interface ManualIntent {parentPlanId:string;batch:{operationId:string;datasetSha256:string;commands:ManualCommand[]};vehicle?:{id:number;excluded:boolean};undo?:true}
 export interface ManualContext {enabled:boolean;reason?:'fresh_plan_required';requiresRevalidation?:boolean;datasetSha256?:string;fleet?:Vehicle[];canUndo?:boolean;actors?:Record<string,string>}
-export interface ManualPreview {stats:PlanStats;cost:PlanCost|null;validation:PlanProvenance['validation']}
+export interface ManualPreview {physicalLoadingPending?:boolean;stats:PlanStats;cost:PlanCost|null;validation:PlanProvenance['validation']}
 export interface PlacementSuggestion {
   vehicleId:number;tripId:string;position:number;newTrip:boolean;serviceStartSec:number;tripEndSec:number;
   delta:{distanceKm:number;cost:number;vehicles:number;trips:number;finishSec:number|null};
 }
 export interface PlacementSuggestions {
+ physicalLoadingPending?:boolean;
   parentPlanId:string;revision:number;datasetSha256:string;requestId:number;currency:string;checked:number;complete:boolean;feasiblePositions:number;
   baseline:{distanceKm:number;cost:number;served:number;vehicles:number;trips:number};
   suggestions:PlacementSuggestion[];

@@ -155,5 +155,19 @@ class StatefulDeploymentTests(unittest.TestCase):
                                               "authority": "herding-sparks", "evidence": "ticket-1"})
         self.assertTrue(deploy.fence("adapter", self.config()["nodes"][0], "expected")["isolated"])
 
+    def test_acceptance_policy_must_match_the_requested_loading_mode(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'acceptance.json'
+            evidence = self.acceptance()
+            evidence['hard_loading_enabled'] = True
+            path.write_text(json.dumps(evidence))
+            with self.assertRaises(deploy.DeploymentError):
+                deploy.acceptance_evidence(path, 'sha256:candidate')
+            self.assertEqual(deploy.acceptance_evidence(path, 'sha256:candidate', hard_loading_enabled=True)['status'], 'passed')
+            evidence['hard_loading_enabled'] = False
+            path.write_text(json.dumps(evidence))
+            with self.assertRaises(deploy.DeploymentError):
+                deploy.acceptance_evidence(path, 'sha256:candidate', hard_loading_enabled=True)
+
 
 if __name__ == "__main__": unittest.main()

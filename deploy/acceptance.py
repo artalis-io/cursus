@@ -52,6 +52,7 @@ def free_ports(count):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--hard-loading', action='store_true', help='certify opt-in physical loading with public fixtures; never enables production')
     parser.add_argument('--image', help='existing local image to certify; omitted builds Dockerfile locally')
     parser.add_argument('--report', required=True, type=Path)
     parser.add_argument('--gyermelyi-config', type=Path, help='external private-input JSON; never a production database or bucket')
@@ -71,7 +72,9 @@ def main():
     image = args.image or f'cursus-acceptance:{project}'
     report['checkout_revision'] = revision
     report['checkout_dirty'] = bool(run(['git', 'status', '--porcelain'], capture=True).stdout.strip())
+    report['hard_loading_enabled'] = args.hard_loading
     environment = os.environ.copy()
+    environment['CURSUS_ACCEPTANCE_HARD_LOADING_ENABLED'] = '1' if args.hard_loading else '0'
     compose = None
     private_compose = None
     started = False
@@ -158,7 +161,7 @@ def main():
                                CURSUS_ACCEPTANCE_OUTPUT_DIR=str(report_path.with_suffix('.artifacts')))
             # Aggregate budget grows with coverage; individual tests remain bounded
             # by Playwright's unchanged 120-second timeout, without retries.
-            run(['npm', '--prefix', 'web', 'run', 'test:acceptance'], env=environment, timeout=1200)
+            run(['npm', '--prefix', 'web', 'run', 'test:acceptance'], env=environment, timeout=1500)
             stats = json.loads(browser_report.read_text())['stats']
             if stats['unexpected'] or stats['flaky'] or stats['skipped'] or stats['expected'] < 8:
                 raise ValueError('release acceptance requires all eight or more tests passing without skips or retries')

@@ -91,7 +91,7 @@ test('real admitted dataset loader applies checksum-bound policy before solver p
 test('real HTTP solve submission retains full-budget flag and authoritative policy snapshot', async () => {
   let submitted: unknown;
   const s = scenario();
-  const store = { ensureTenant: async () => {}, getScenario: async () => s,
+  const store = { ensureTenant: async () => {}, getScenario: async () => s,pool:{query:async()=>({rows:[]})},
     enqueueJob: async (_t: string, _k: string, _key: string, payload: unknown) => { submitted = payload; return 'job'; } } as unknown as StatefulStore;
   const app = await createStatefulApi({ store, tenantId: 'test', tenantName: 'Public' });
   try {
