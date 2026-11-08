@@ -17,6 +17,7 @@ export interface HandoffMetadata {
   approval: { workflowVersion: number; approvedAt: string; approver: HandoffActor; exceptionsAcknowledged: boolean } | null;
   blockers: string[];
   constraints: {
+    physicalLoading?:Plan['physicalLoading'];
     evidence: 'stored-solver-and-mapped-plan';
     validation: Plan['provenance']['validation'] | null;
     scenario: Pick<Scenario, 'removedVehicleIds' | 'pins' | 'forbids' | 'vehicleOverrides' | 'sequences'> | null;
@@ -31,6 +32,7 @@ export interface HandoffMetadata {
 
 export function constraintSnapshot(plan: Plan, scenario: Scenario | null, evidence: HandoffMetadata['constraints']['scenarioEvidence']): HandoffMetadata['constraints'] {
   return {
+    ...(plan.physicalLoading?{physicalLoading:structuredClone(plan.physicalLoading)}:{}),
     evidence: 'stored-solver-and-mapped-plan', validation: plan.provenance?.validation ?? null,
     scenario: scenario ? structuredClone({ removedVehicleIds: scenario.removedVehicleIds, pins: scenario.pins,
       forbids: scenario.forbids, vehicleOverrides: scenario.vehicleOverrides, sequences: scenario.sequences }) : null,

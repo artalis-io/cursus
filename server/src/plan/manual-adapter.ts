@@ -1,3 +1,4 @@
+import {config} from '../config.js';
 import {loadingSnapshot} from '../loading.js';
 import { createHash } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
@@ -100,7 +101,7 @@ export function prepareManualInput(parent: Plan, scenario: Scenario, context: Ma
     departures.set(manualTripKey(vehicle.id, trip.manualTripId ?? `trip-${trip.index}`), trip.startSec);
   // Explicit new-trip IDs are scheduled no earlier than shift start and all
   // preceding trips, using server-owned reload data; clients cannot submit times.
-  return { layout, datasetSha256: sha!, request: full, requirements, fleet, departures, tariff,
+  return { ...(day.physicalLoading&&(config.hardLoadingEnabled||scenario.hardLoadingRequired||parent.physicalLoading?.mode==='hard')?{hardLoadingRequired:true}:{}),layout, datasetSha256: sha!, request: full, requirements, fleet, departures, tariff,
     tariffSha256: tariffIdentity(tariff) };
 }
 
@@ -135,6 +136,7 @@ export function evaluateManualInput(input: ManualEvaluationInput, parent: Manual
     if (b && (!a || before !== after || a.departureSec > b.serviceStartSec))
       evaluation.validation.violations.push({ type: 'ASSIGNMENT', vehicleId: after!, requestId: edge.after, soft: false });
   }
+  if(input.hardLoadingRequired)evaluation.physicalLoadingPending=true;
   evaluation.validation.valid = evaluation.validation.violations.length === 0;
   return evaluation;
 }
@@ -194,6 +196,10 @@ export function materializeManualPlan(parent: Plan, scenario: Scenario, input: M
   // the parent's layout. These facts still make no feasibility claim.
   delete plan.physicalLoading;
   if(context.day.physicalLoading&&context.day.physicalLoadingSha256)
-    plan.physicalLoading=loadingSnapshot(context.day.physicalLoading,context.day.physicalLoadingSha256,vehicles);
+    plan.physicalLoading=loadingSnapshot(context.day.physicalLoading,context.day.physicalLoadingSha256,vehicles,scenario.hardLoadingRequired||parent.physicalLoading?.mode==='hard'?true:undefined);
+  if(scenario.hardLoadingRequired&&!plan.physicalLoading)plan.physicalLoading={mode:'hard',status:'stale',sourceSha256:parent.physicalLoading?.sourceSha256??'',datasetSha256:input.datasetSha256,rounds:[]};
+  if(plan.physicalLoading?.mode==='hard'){
+    plan.provenance.validation={valid:false,violations:[...plan.provenance.validation.violations,{type:'PHYSICAL_LOADING',message:'Manual edits invalidate physical loading evidence; Replan before approval.'}]};
+  }
   return plan;
 }

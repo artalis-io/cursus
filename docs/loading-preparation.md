@@ -1,7 +1,8 @@
 # Physical loading preparation
 
 Physical loading facts can be retained with an admitted prepared JSON dataset.
-This is preparation for OTTO's loading checker, not activation of hard loading.
+Importing facts alone does not activate hard loading. The opt-in runtime policy
+and publication/approval guards are documented in [hard loading](hard-loading-enforcement.md).
 The native dependency is pinned to OTTO `605691491b8199376dc989e440cce13b1fcd705c`
 (including loading, cancellation and hot-path fixes). This does not activate hard
 loading in Cursus and includes no production rollout.
@@ -53,10 +54,11 @@ objects and the transactional admission boundary are reused.
 
 The physical declaration becomes a separate immutable object, listed in the
 admitted manifest as `artifacts.physicalLoading`. Loading it verifies its object
-checksum, tenant namespace and dataset identity. The native request remains
+checksum, tenant namespace and dataset identity. The uploaded native request remains
 unchanged; an embedded native `loading` field is rejected, not silently enabled.
+Only the server-controlled opt-in adapter adds loading to scoped solver input.
 
-Plans retain the physical source checksum and per-round unit counts. Open the
+With the default-off runtime, plans retain the physical source checksum and per-round unit counts. Open the
 plan status details, then Constraints → Physical loading. EN/HU text explicitly
 says **Not evaluated** and **Hard loading is disabled**. Historical plans without
 physical facts say that pallet equivalents do not prove loading feasibility.
@@ -74,11 +76,10 @@ refresh. `test:stateful` includes the real PostgreSQL/S3 two-API admission test.
 EN/HU copy and legacy fallback. Browser presentation tests use public fixtures;
 the separate stateful integration test uses actual disposable storage services.
 
-Future activation must pin merged OTTO code, map stable IDs to native indices,
-carry ordered round certificates, reject UNKNOWN at publication, invalidate
-certificates after edits, and add approval/API/export regression coverage. That
-activation requires verified customer geometry and a separate implementation.
-General 3D packing, reshuffling and axle loads remain outside this milestone.
+The opt-in implementation maps stable IDs, retains round witnesses, rejects
+UNKNOWN at fenced publication and invalidates manual evidence. Production
+activation still requires verified customer geometry and separate approval.
+General 3D packing, reshuffling and axle loads remain outside this model.
 
 ## Production-image integration gate
 
@@ -100,10 +101,12 @@ real authenticated multipart HTTP, rejects admission before validation, admits
 through the peer, executes a native optimization, retrieves its immutable plan
 through the other replica and checks the EN/HU loading evidence. Attempting to
 set `mode: hard` remains rejected. Facts and round counts must survive, while
-status remains **Not evaluated**. This tests the current application boundary;
-it is not evidence of active stacking enforcement by Cursus HTTP handlers.
+status remains **Not evaluated** in the default-off run. With `--hard-loading`,
+the same test also exercises native witnesses, manual invalidation and Replan,
+approval/export, cancellation and infeasible loading diagnostics through the API.
 
 The native tests exercise hard stacking directly, without exposing a bypass API.
-Activating it through Cursus still needs a separately reviewed stable-ID adapter,
-publication/approval/export validation and verified customer loading geometry.
+The stable-ID adapter and publication/approval/export enforcement are implemented
+behind the default-off policy. Customer activation still requires verified geometry
+and a separate deployment review.
 No loading dimensions or stacking permissions are inferred for Gyermelyi.

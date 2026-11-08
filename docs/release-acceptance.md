@@ -103,7 +103,7 @@ validation, before it can receive a passing report.
 
 ## Enforced deployment gate
 
-The current suite contains 119 browser checks, plus the native loading contract. Its browser command has a 20-minute aggregate budget, with 25 minutes for the CI job including image preparation. Individual browser tests retain their 120-second limit, assertions, and zero-retry policy; skips and flaky results still block acceptance.
+The current suite contains 121 browser checks, plus the native loading contract. Its browser command has a 20-minute aggregate budget, with 25 minutes for the CI job including image preparation. Individual browser tests retain their 120-second limit, assertions, and zero-retry policy; skips and flaky results still block acceptance.
 
 Use a clean checkout for release evidence. Development runs record a dirty
 checkout, but the deployment gate rejects such reports. A stale passing report
@@ -193,3 +193,13 @@ Add one focused regression for each new production defect. Keep dependency
 upgrades, schema changes and behavior changes in separate reviews. A passing
 small fixture proves its invariants; larger workload quality and failure recovery
 need their own recorded evidence.
+
+
+## Opt-in hard-loading certification
+
+Run the full suite a second time with `--hard-loading` before considering
+activation. CI executes both configurations. The report records
+`hard_loading_enabled`; configuration is part of the certification, not just
+image identity. Neither command changes production. See
+[hard loading](hard-loading-enforcement.md) for durable source/scenario
+requirements, rollback compatibility and native evidence boundaries.

@@ -17,6 +17,8 @@ export function WorkspaceStatus({plan,baseline,scenario,loading,saving,running,c
   {(evidence,detail)=>{
    const approval=approvalSummary(evidence.workflow,evidence.phase,scenario.revision,pending);
    return <ReadinessPanel plan={plan} baseline={baseline} scenario={scenario} pending={pending}
+    loadingInvalidated={evidence.phase==='ready'&&!!evidence.workflow&&evidence.workflow.blockers.some(b=>b.startsWith('Physical loading'))}
+    loadingConfirmed={evidence.phase==='ready'&&!!evidence.workflow&&evidence.workflow.currentRevision===plan.scenarioRevision&&evidence.workflow.scenarioRevision===plan.scenarioRevision&&!evidence.workflow.blockers.some(b=>b.startsWith('Physical loading'))}
     freshness={<>{freshness==='current'?t('readiness.current'):t(`status.freshness.${freshness}`)}{freshness==='stale'&&changesCount>0&&!conflict&&<span className="ml-1">{t('edits.pending',{n:changesCount})}</span>}</>}
     changesCount={freshness==='stale'&&!conflict&&!fresh?changesCount:0} onOpenChanges={onOpenChanges}
     approval={<span data-testid="status-approval" className="min-w-0">

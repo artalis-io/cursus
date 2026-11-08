@@ -107,6 +107,7 @@ export function ManualPlanningDialog({plan,scenario,fleet,request,onClose,onAppl
         <p className="text-muted-foreground">{t('placement.reference',{distance:km(guidance.baseline.distanceKm,1),cost:money(guidance.baseline.cost,guidance.currency)})}</p>
         {!guidance.complete&&<p className="text-warning">{t('placement.partial')}</p>}
         {!guidance.suggestions.length?<p>{t('placement.none')}</p>:<ol aria-label={t('placement.options')} className="space-y-2">
+          {guidance.physicalLoadingPending&&<li className="text-warning">{t('manual.loadingPending')}</li>}
           {guidance.suggestions.map(s=>{const v=fleet.find(v=>v.id===s.vehicleId),tr=v?.trips.find(tr=>(tr.manualTripId??`trip-${tr.index}`)===s.tripId);
             const position=s.newTrip?t('manual.newTrip'):`${t('fleet.tripLabel',{n:(tr?.index??0)+1})} · ${tr?.stops[s.position]?t('manual.before',{order:tr.stops[s.position].orderNo}):t('manual.append')}`;
             return <li key={s.vehicleId} className="rounded border bg-card p-2" data-vehicle-id={s.vehicleId}>
@@ -163,12 +164,13 @@ export function ManualPlanningDialog({plan,scenario,fleet,request,onClose,onAppl
         <dt>{t('inspector.distance')}</dt><dd>{km(plan.stats.totalDistanceKm)} → {km(preview.stats.totalDistanceKm)}</dd>
         <dt>{t('inspector.cost')}</dt><dd>{plan.cost?money(plan.cost.total,plan.cost.currency):'—'} → {preview.cost?money(preview.cost.total,preview.cost.currency):'—'}</dd>
         <dt>{t('manual.vehiclesTrips')}</dt><dd>{preview.stats.vehiclesUsed} / {preview.stats.trips}</dd></dl>
-      {!preview.validation.valid&&<div role="status" className="rounded bg-warning/10 p-2 text-warning">{t('manual.invalid')}
+      {preview.physicalLoadingPending&&<p role="status" className="rounded bg-warning/10 p-2 text-warning">{t('manual.loadingPending')}</p>}
+      {!preview.validation.valid&&(!preview.physicalLoadingPending||preview.validation.violations.some(v=>v.type!=='PHYSICAL_LOADING'))&&<div role="status" className="rounded bg-warning/10 p-2 text-warning">{t('manual.invalid')}
         <ul className="mt-1 list-inside list-disc">{preview.validation.violations.map((v,i)=><li key={i}>{violationDetail(v,t)}</li>)}</ul></div>}
     </section>}
     {error&&<p role="alert" className="text-sm text-destructive">{error}{attempted&&` ${t('manual.retry')}`}</p>}
     <div className="flex flex-wrap justify-end gap-2"><Button variant="outline" disabled={busy} onClick={onClose}>{t('manual.cancel')}</Button>
       <Button variant="outline" disabled={busy||attempted||!canEvaluate||!valid} onClick={()=>void calculate()}>{t('manual.calculate')}</Button>
-      <Button disabled={busy||!preview||!canEdit} onClick={()=>void apply()}>{t(preview&&!preview.validation.valid?'manual.saveInvalid':'manual.apply')}</Button></div>
+      <Button disabled={busy||!preview||!canEdit} onClick={()=>void apply()}>{t(preview?.physicalLoadingPending&&preview.validation.violations.every(v=>v.type==='PHYSICAL_LOADING')?'manual.saveUnverified':preview&&!preview.validation.valid?'manual.saveInvalid':'manual.apply')}</Button></div>
   </DialogContent></Dialog>;
 }

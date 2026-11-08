@@ -1,3 +1,5 @@
+import {config} from '../config.js';
+import {loadingBlockers,loadingSource,loadingRequired} from '../hard-loading.js';
 import { readFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -31,7 +33,7 @@ export class ScenarioHandoffHistoryError extends Error {
 
 export class StatefulStore {
   readonly pool: Pool;
-  constructor(connectionString: string, max = 10) {
+  constructor(connectionString: string, max = 10,readonly hardLoadingEnabled=config.hardLoadingEnabled) {
     this.pool = new pg.Pool({ connectionString, max, statement_timeout: 15_000, application_name: 'cursus' });
   }
   async close(): Promise<void> { await this.pool.end(); }
@@ -227,12 +229,29 @@ export class StatefulStore {
         if ((plan as Plan).id !== planId) throw new Error('manual replan result identity mismatch');
         assertRetainedPlan(plan as Plan, scenario.rows[0].body);
       }
+      const candidate=plan as Plan,current=scenario.rows[0]?.body;
+      const submitted=(lease.payload as {hardLoadingEnabled?:boolean})?.hardLoadingEnabled;
+      if(submitted!==undefined&&submitted!==this.hardLoadingEnabled)throw new Error('Physical loading policy differs between replicas; resubmit after configuration converges.');
+      if(current||this.hardLoadingEnabled||candidate.physicalLoading){
+        if(!current)throw new RevisionConflictError();
+        const source=await loadingSource(client,lease.tenantId,current);
+        const required=await loadingRequired(client,lease.tenantId,current,source,this.hardLoadingEnabled);
+        if((required||candidate.physicalLoading?.mode==='hard')&&(candidate.id!==planId||candidate.scenarioId!==scenarioId||candidate.scenarioRevision!==scenarioRevision))throw new Error('Physical loading result identity mismatch');
+        const issues=loadingBlockers(candidate,{...current,hardLoadingRequired:required},required?source:undefined);
+        if(required&&!source)issues.push('Physical loading source is no longer admitted.');
+        if(candidate.physicalLoading?.mode==='hard'&&!source)issues.push('Physical loading source is no longer admitted.');
+        if(issues.length)throw new Error(issues.join(' '));
+      }
       const owned = await client.query(`UPDATE jobs SET state='succeeded',result=$5,lease_owner=NULL,lease_expires_at=NULL,updated_at=now()
         WHERE tenant_id=$1 AND id=$2 AND state='running' AND lease_owner=$3 AND fence=$4 AND lease_expires_at>=clock_timestamp() RETURNING id`,
         [lease.tenantId, lease.id, lease.owner, lease.fence, { planId }]);
       if (owned.rowCount !== 1) throw new StaleFenceError();
       await client.query(`INSERT INTO plans(tenant_id,id,scenario_id,scenario_revision,body) VALUES($1,$2,$3,$4,$5)
         ON CONFLICT(tenant_id,id) DO NOTHING`, [lease.tenantId, planId, scenarioId, scenarioRevision, plan]);
+      if(candidate.physicalLoading?.mode==='hard'&&current){
+        current.hardLoadingRequired=true;
+        await client.query('UPDATE scenarios SET body=$3,updated_at=now() WHERE tenant_id=$1 AND id=$2',[lease.tenantId,scenarioId,current]);
+      }
       if (scenario.rows[0]?.body.manualPlanId&&!scenario.rows[0].body.selectedPlanId) {
         const body = { ...scenario.rows[0].body, manualPlanId: planId };
         await client.query('UPDATE scenarios SET body=$3,updated_at=now() WHERE tenant_id=$1 AND id=$2', [lease.tenantId, scenarioId, body]);

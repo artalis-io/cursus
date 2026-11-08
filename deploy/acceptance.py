@@ -52,6 +52,7 @@ def free_ports(count):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--hard-loading', action='store_true', help='certify opt-in physical loading with public fixtures; never enables production')
     parser.add_argument('--image', help='existing local image to certify; omitted builds Dockerfile locally')
     parser.add_argument('--report', required=True, type=Path)
     parser.add_argument('--gyermelyi-config', type=Path, help='external private-input JSON; never a production database or bucket')
@@ -71,7 +72,9 @@ def main():
     image = args.image or f'cursus-acceptance:{project}'
     report['checkout_revision'] = revision
     report['checkout_dirty'] = bool(run(['git', 'status', '--porcelain'], capture=True).stdout.strip())
+    report['hard_loading_enabled'] = args.hard_loading
     environment = os.environ.copy()
+    environment['CURSUS_ACCEPTANCE_HARD_LOADING_ENABLED'] = '1' if args.hard_loading else '0'
     compose = None
     private_compose = None
     started = False

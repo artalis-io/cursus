@@ -12,6 +12,13 @@ function env(name: string, fallback: string): string {
   return v && v.length > 0 ? v : fallback;
 }
 
+function hardLoadingEnabled():boolean{
+ const value=env('CURSUS_HARD_LOADING_ENABLED','0');
+ if(!['0','1'].includes(value))throw new Error('CURSUS_HARD_LOADING_ENABLED must be 0 or 1');
+ if(value==='1'&&env('CURSUS_RUNTIME_MODE','legacy')!=='stateful')throw new Error('Hard loading requires the stateful runtime');
+ return value==='1';
+}
+
 function maxSolveSeconds():number{
  const value=Number(env('DISPATCH_MAX_SOLVE_SECONDS','600'));
  if(!Number.isInteger(value)||value<1||value>86400)throw new Error('DISPATCH_MAX_SOLVE_SECONDS must be an integer from 1 to 86400');
@@ -35,6 +42,7 @@ function populationThreads(): number {
  */
 export const config = {
   runtimeMode: env('CURSUS_RUNTIME_MODE', 'legacy') as 'legacy' | 'stateful',
+  hardLoadingEnabled:hardLoadingEnabled(),
   inputUpdatesEnabled:env('CURSUS_INPUT_UPDATES_ENABLED','0')==='1',
   databaseUrl: env('CURSUS_DATABASE_URL', ''),
   databaseUrlFile: env('CURSUS_DATABASE_URL_FILE', ''),

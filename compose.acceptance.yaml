@@ -15,6 +15,7 @@ x-app: &app
     - ./vendor/otto/surge/benchmarks/loading_reference.py:/acceptance-otto/loading_reference.py:ro
   environment: &environment
     CURSUS_RUNTIME_MODE: stateful
+    CURSUS_HARD_LOADING_ENABLED: ${CURSUS_ACCEPTANCE_HARD_LOADING_ENABLED:-0}
     CURSUS_INPUT_UPDATES_ENABLED: "1"
     CURSUS_DATABASE_URL_FILE: /acceptance-config/database-url
     CURSUS_R2_ENDPOINT: http://s3-test:8333

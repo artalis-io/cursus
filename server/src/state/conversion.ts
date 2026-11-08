@@ -1,3 +1,4 @@
+import {attachHardLoading,certifyLoading} from '../hard-loading.js';
 import {validateLoading} from '../loading.js';
 import { createHash } from 'node:crypto';
 import { createReadStream } from 'node:fs';
@@ -183,8 +184,10 @@ export async function loadConvertedDay(objects: ObjectStore, tenantId: string, m
 
 export async function solveConvertedDataset(objects: ObjectStore, tenantId: string, manifest: ConvertedManifest, scenario: Scenario,
   budgetSec: number, objective: Objective, signal: AbortSignal, fullBudget = false,
-  configuredSettings?:Omit<ManualDatasetContext,'day'>,incumbent?:Plan,profiles:ApprovedProfile[]=[]): Promise<Plan> {
+  configuredSettings?:Omit<ManualDatasetContext,'day'>,incumbent?:Plan,profiles:ApprovedProfile[]=[],loadingOptions={enabled:config.hardLoadingEnabled,nodeBudget:10000}): Promise<Plan> {
   const day = await loadConvertedDay(objects, tenantId, manifest, scenario,profiles);
+  if(scenario.hardLoadingRequired&&!day.physicalLoading)throw new Error('Physical loading: verified source facts are required; cannot downgrade this scenario');
+  const enforceLoading=!!day.physicalLoading&&(loadingOptions.enabled||scenario.hardLoadingRequired===true);
   const fleetProfile=profiles.find(p=>p.kind==='fleet');
   if(fleetProfile)configuredSettings=manualSettings(fleetProfile.content.settings);
   const {travel,...mutable}=day.request;
@@ -213,8 +216,10 @@ export async function solveConvertedDataset(objects: ObjectStore, tenantId: stri
     ...(fullBudget ? { max_iterations: 2_000_000_000 } : {}) });
   const workspace = await mkdtemp(join(tmpdir(), 'cursus-converted-solve-'));
   try {
+    if(enforceLoading&&day.physicalLoading)attachHardLoading(request,day.physicalLoading,loadingOptions.nodeBudget);
     const native = nativeSolveRequest(request, scenario.sequences);
     const path = join(workspace, 'request.json'); await writeFile(path, JSON.stringify(native.request), { mode: 0o600 });
+    const solverIdentity=enforceLoading?createHash('sha256').update(await readFile(config.surgeBin)).digest('hex'):undefined;
     const startedAt = Date.now();
     const { stdout } = await run(config.surgeBin, [path], { signal, timeout: (budgetSec + config.solveWatchdogGraceSec) * 1000,
       maxBuffer: Math.max(1, config.maxSolveOutputMB) * 1024 * 1024 });
@@ -225,6 +230,11 @@ export async function solveConvertedDataset(objects: ObjectStore, tenantId: stri
     const mapped = mapSolutionToPlan({ day, request, solution, enrichment: day.enrichment, vehicleInfo, tariff:applied?policy!.tariff:undefined, scenarioId: scenario.id,
       scenarioRevision: scenario.revision, planId: `pln_${randomUUID().slice(0, 8)}`, source: 'live', createdAt: new Date().toISOString() });
     const plan = withRetainedProvenance(mapped, scenario, datasetVehicles);
+    if(enforceLoading&&day.physicalLoading){
+      const solverSha256=createHash('sha256').update(await readFile(config.surgeBin)).digest('hex');
+      if(solverSha256!==solverIdentity)throw new Error('Native executable changed during loading verification');
+      plan.physicalLoading=certifyLoading(plan,scenario,day.physicalLoading,day.physicalLoadingSha256!,createHash('sha256').update(JSON.stringify(native.request)).digest('hex'),solverSha256,solution.loading,request);
+    }
     if(scenario.inputUpdate)plan.provenance.inputUpdate=structuredClone(scenario.inputUpdate);
     if(applied)plan.provenance.tariffSha256=tariffIdentity(policy!.tariff);
     if(incumbent)plan.provenance.warmStart={planId:incumbent.id,used:seeded};

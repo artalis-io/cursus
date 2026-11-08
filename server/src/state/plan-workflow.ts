@@ -1,3 +1,4 @@
+import {loadingBlockers,loadingSource,loadingRequired} from '../hard-loading.js';
 import { createHash } from 'node:crypto';
 import type { PoolClient } from 'pg';
 import type { Principal } from '../auth.js';
@@ -21,7 +22,7 @@ export const planDigest = (plan: unknown): string => createHash('sha256').update
 
 /** This is an approval gate over recorded solver evidence, not a new feasibility certificate. */
 export function approvalBlockers(plan: Plan, revision: number, scenario?: Scenario): string[] {
-  const issues: string[] = [];
+  const issues: string[] = [...loadingBlockers(plan,scenario)];
   if (plan.scenarioRevision !== revision) issues.push('Plan does not match the current scenario revision.');
   if(scenario&&canonical(plan.provenance?.planningProfiles??[])!==canonical(scenario.planningProfiles??[]))
     issues.push('Plan uses different planning profile revisions.');
@@ -90,8 +91,16 @@ export class PlanWorkflow {
        WHERE e.tenant_id=$1 AND e.action IN ('plan.review','plan.approve')
        AND e.detail->>'planId'=$2 ORDER BY e.id DESC LIMIT 1`, [this.tenantId, id]);
     const event = events.rows[0];
-    const policyIssues=this.policyBlockers?.(plan)??[];
-    const state = event ? revision !== plan.scenarioRevision || event.detail.planSha256 !== hash || policyIssues.length>0 ? 'superseded'
+    const policyIssues=[...(this.policyBlockers?.(plan)??[])];
+    if(scenario){
+      try{const source=await loadingSource(client,this.tenantId,scenario);
+        const required=await loadingRequired(client,this.tenantId,scenario,source,this.store.hardLoadingEnabled);
+        policyIssues.push(...loadingBlockers(plan,{...scenario,hardLoadingRequired:required},required?source:undefined));
+        if(required&&!source)policyIssues.push('Physical loading source is no longer admitted.');
+        if(plan.physicalLoading?.mode==='hard'&&!source)policyIssues.push('Physical loading source is no longer admitted.');
+      }catch(error){if(!(error as Error).message.startsWith('Physical loading:'))throw error;policyIssues.push((error as Error).message);}
+    }
+    const state = event ? revision !== plan.scenarioRevision || event.detail.planSha256 !== hash || policyIssues.length>0 || loadingBlockers(plan,scenario??undefined).length>0 ? 'superseded'
       : event.action === 'plan.approve' ? 'approved' : 'reviewed' : 'draft';
     return { plan, scenario, event, workflow: { state, version: event?.detail.version ?? 0, scenarioRevision: plan.scenarioRevision,
       currentRevision: revision, planSha256: hash, actor: event?.user_id ?? null, at: event?.created_at.toISOString() ?? null,

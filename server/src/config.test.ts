@@ -69,3 +69,11 @@ test('importing the stateful conversion worker has no legacy filesystem side eff
   assert.notEqual(result.status,0);assert.match(result.stderr,/DISPATCH_MAX_SOLVE_SECONDS/);
  }
  });
+
+test('hard loading is explicit, default off, rejects malformed flags and requires stateful runtime',()=>{
+ for(const [value,runtime,ok] of [['0','legacy',true],['1','stateful',true],['1','legacy',false],['true','stateful',false],['2','stateful',false]] as const){
+  const result=spawnSync(process.execPath,['--import','tsx','--input-type=module','--eval',"const {config}=await import('./src/config.ts');console.log(config.hardLoadingEnabled)"],{cwd:process.cwd(),env:{...process.env,CURSUS_HARD_LOADING_ENABLED:value,CURSUS_RUNTIME_MODE:runtime},encoding:'utf8'});
+  assert.equal(result.status===0,ok,`${value}/${runtime}`);
+  if(ok)assert.equal(result.stdout.trim(),String(value==='1'));
+ }
+});

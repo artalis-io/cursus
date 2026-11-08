@@ -1,3 +1,4 @@
+import {loadingSource,loadingBlockers,loadingRequired} from '../hard-loading.js';
 import type { StatefulStore } from './postgres.js';
 import type { Plan } from '../types.js';
 import type { Scenario } from '../store.js';
@@ -20,6 +21,12 @@ export async function selectPlan(store: StatefulStore, tenantId: string, scenari
     if (plan.stats.servedOrders + plan.unassigned.length !== plan.stats.totalOrders)
       throw new WorkflowError(409,'Candidate coverage is inconsistent.');
     const blockers=[...approvalBlockers(plan,revision,scenario),...(policyIssues?.(plan)??[])];
+    {
+      try{const source=await loadingSource(client,tenantId,scenario);const required=await loadingRequired(client,tenantId,scenario,source,store.hardLoadingEnabled);blockers.push(...loadingBlockers(plan,{...scenario,hardLoadingRequired:required},required?source:undefined));
+        if(required&&!source)blockers.push('Physical loading source is no longer admitted.');
+        if(plan.physicalLoading?.mode==='hard'&&!source)blockers.push('Physical loading source is no longer admitted.');}
+      catch(error){blockers.push((error as Error).message);}
+    }
     const coverage='Approval requires complete, consistent order coverage.';
     if (blockers.some(issue=>issue!==coverage) || blockers.includes(coverage)&&!acknowledgeIncomplete) throw new WorkflowError(409,blockers.join(' '));
     const updated={...scenario,selectedPlanId:planId,selectionVersion:selectionVersion+1,

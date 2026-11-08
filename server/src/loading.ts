@@ -1,3 +1,4 @@
+import {config} from './config.js';
 import type {SurgeRequest} from './types.js';
 import type {LoadingDocument} from './loading-contract.js';
 const object=(v:unknown):v is Record<string,unknown>=>!!v&&typeof v==='object'&&!Array.isArray(v);
@@ -35,7 +36,7 @@ export function validateLoading(value:unknown,request:SurgeRequest,sha:string):L
  return structuredClone(value) as unknown as LoadingDocument;
 }
 
-export function loadingSnapshot(document:LoadingDocument,sourceSha256:string,vehicles:import('./types.js').PlanVehicle[]):import('./loading-contract.js').LoadingSnapshot{
+export function loadingSnapshot(document:LoadingDocument,sourceSha256:string,vehicles:import('./types.js').PlanVehicle[],required=config.hardLoadingEnabled):import('./loading-contract.js').PhysicalLoadingEvidence{
  const counts=new Map(document.requests.map(r=>[r.requestId,r.units.length]));
- return {sourceSha256,datasetSha256:document.datasetSha256,mode:'disabled',status:'not_evaluated',rounds:vehicles.flatMap(v=>v.trips.map(t=>({vehicleId:v.id,tripIndex:t.index,unitCount:t.stops.reduce((n,s)=>n+(s.requestId===undefined?0:counts.get(s.requestId)??0),0),status:'not_evaluated' as const})))};
+ return {sourceSha256,datasetSha256:document.datasetSha256,...(required?{mode:'hard' as const,status:'stale' as const}:{mode:'disabled' as const,status:'not_evaluated' as const}),rounds:vehicles.flatMap(v=>v.trips.map(t=>({vehicleId:v.id,tripIndex:t.index,unitCount:t.stops.reduce((n,s)=>n+(s.requestId===undefined?0:counts.get(s.requestId)??0),0),status:'not_evaluated' as const})))};
 }

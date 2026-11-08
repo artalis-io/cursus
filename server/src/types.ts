@@ -46,6 +46,7 @@ export interface SurgeTravel {
 }
 
 export interface SurgeRequest {
+  loading?: import('./loading-contract.js').NativeLoadingInput;
   config: Record<string, unknown>;
   dimension_count: number;
   demand_sign_convention: number;
@@ -79,6 +80,7 @@ export interface SurgeSolutionRoute {
 }
 
 export interface SurgeSolution {
+  loading?: import('./loading-contract.js').NativeLoadingResult;
   status: string; // OK | LIMIT | INFEASIBLE | ERROR | ...
   stats: {
     iterations?: number;
@@ -221,7 +223,7 @@ export interface PlanCost {
 }
 
 export interface Plan {
-  physicalLoading?:import('./loading-contract.js').LoadingSnapshot;
+  physicalLoading?:import('./loading-contract.js').PhysicalLoadingEvidence;
   shipmentMetadata?:import('./shipment-contract.js').ShipmentSnapshot;
   assignments?: { version: 1; parentPlanId: string; layout: import('./plan/manual.js').ManualLayout };
   manual?: { version: 1; parentPlanId: string; layout: import('./plan/manual.js').ManualLayout;

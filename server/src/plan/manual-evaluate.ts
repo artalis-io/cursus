@@ -6,6 +6,7 @@ import { metersToKm } from '../units.js';
 /** Internal, server-owned inputs only. Policy exceptions must already have been
  * applied/verified by the dataset adapter. No client-supplied feasibility facts. */
 export interface ManualEvaluationInput {
+  hardLoadingRequired?:boolean;
   layout: ManualLayout;
   datasetSha256: string;
   request: SurgeRequest;
@@ -34,6 +35,7 @@ export interface ManualEvaluatedTrip {
     departureSec: number; waitSec: number; lateSec: number }[];
 }
 export interface ManualEvaluation {
+  physicalLoadingPending?:boolean;
   version: 1; datasetSha256: string; tariffSha256: string;
   validation: { valid: boolean; violations: ManualViolation[] };
   vehicles: { vehicleId: number; trips: ManualEvaluatedTrip[]; distanceKm: number; cost: number }[];

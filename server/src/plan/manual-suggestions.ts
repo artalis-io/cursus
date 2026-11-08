@@ -10,6 +10,7 @@ export interface PlacementSuggestion {
   serviceStartSec:number; tripEndSec:number;
 }
 export interface PlacementSuggestions {
+ physicalLoadingPending?:boolean;
   parentPlanId:string; revision:number; datasetSha256:string; requestId:number;
   currency:string; checked:number; complete:boolean; feasiblePositions:number;
   baseline:{distanceKm:number;cost:number;served:number;vehicles:number;trips:number};
@@ -24,7 +25,7 @@ export async function suggestPlacements(input:ManualEvaluationInput,scenario:Sce
   identity:{parentPlanId:string;newTripId:string}, limits={candidates:750,milliseconds:1500}):Promise<PlacementSuggestions>{
   if(!input.layout.unassigned.includes(requestId))throw new Error('Delivery is not unassigned.');
   const baseline=evaluateManualInput(input,input.layout,scenario);
-  const result:PlacementSuggestions={parentPlanId:identity.parentPlanId,revision:scenario.revision,datasetSha256:input.datasetSha256,
+  const result:PlacementSuggestions={...(input.hardLoadingRequired?{physicalLoadingPending:true}:{}),parentPlanId:identity.parentPlanId,revision:scenario.revision,datasetSha256:input.datasetSha256,
     requestId,currency:baseline.cost.currency,checked:0,complete:true,feasiblePositions:0,
     baseline:{distanceKm:baseline.stats.totalDistanceKm,cost:baseline.cost.total,served:baseline.stats.servedOrders,vehicles:baseline.stats.vehiclesUsed,trips:baseline.stats.trips},suggestions:[],vehicles:[]};
   const started=performance.now(),at=new Date().toISOString();

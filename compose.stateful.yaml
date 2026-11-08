@@ -226,6 +226,7 @@ services:
       carta: { condition: service_healthy }
     environment:
       CURSUS_RUNTIME_MODE: stateful
+      CURSUS_HARD_LOADING_ENABLED: ${CURSUS_HARD_LOADING_ENABLED:-0}
       CURSUS_INPUT_UPDATES_ENABLED: ${CURSUS_INPUT_UPDATES_ENABLED:-0}
       CURSUS_MANUAL_SETTINGS_FILE: ${CURSUS_MANUAL_SETTINGS_FILE:-}
       CURSUS_DATABASE_URL_FILE: /run/secrets/database_url
