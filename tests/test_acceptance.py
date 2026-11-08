@@ -47,3 +47,23 @@ class AcceptanceRunnerTests(unittest.TestCase):
         self.assertIn('-master.volumePreallocate=false', compose)
         self.assertIn('s3-test-data:/data', compose)
         self.assertNotIn('tmpfs: ["/data', compose)
+
+    def test_loading_contract_and_oracle_are_bound_to_the_harness(self):
+        original = Path.read_bytes
+        for relative in ['tests/acceptance/native-loading.py',
+                         'vendor/otto/surge/tests/test_loading_cli.py',
+                         'vendor/otto/surge/benchmarks/loading_reference.py']:
+            target = ROOT / relative
+            before = acceptance.harness_digest()
+            def changed(path):
+                data = original(path)
+                return data + b'\n# changed public test\n' if path == target else data
+            with patch.object(Path, 'read_bytes', changed):
+                self.assertNotEqual(acceptance.harness_digest(), before, relative)
+
+    def test_loading_fixtures_are_read_only_and_native_identity_is_checked(self):
+        compose = (ROOT / 'compose.acceptance.yaml').read_text()
+        self.assertIn('/acceptance-otto/test_loading_cli.py:ro', compose)
+        self.assertIn('/acceptance-otto/loading_reference.py:ro', compose)
+        source = (ROOT / 'deploy/acceptance.py').read_text()
+        self.assertIn("report['native_loading']['surge_sha256'] != report['runtime']['native']['surge']", source)
