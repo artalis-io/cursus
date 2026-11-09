@@ -73,7 +73,7 @@ services:
       context: .
       dockerfile: Dockerfile
       args:
-        OTTO_REVISION: ${OTTO_REVISION:-605691491b8199376dc989e440cce13b1fcd705c}
+        OTTO_REVISION: ${OTTO_REVISION:-25a518835e864c589c104012a8e32dd127a9a1d8}
     user: ${CURSUS_UID:-10001}:${CURSUS_GID:-10001}
     depends_on:
       velo: { condition: service_healthy }
@@ -144,7 +144,7 @@ services:
       OSM_PBF_FILE: ${OSM_PBF_FILE:-hungary-latest.osm.pbf}
       OSM_PBF_URL: ${OSM_PBF_URL:-https://download.geofabrik.de/europe/hungary-latest.osm.pbf}
       OSM_ASSET_NAME: ${OSM_ASSET_NAME:-default}
-      OTTO_REVISION: ${OTTO_REVISION:-605691491b8199376dc989e440cce13b1fcd705c}
+      OTTO_REVISION: ${OTTO_REVISION:-25a518835e864c589c104012a8e32dd127a9a1d8}
     volumes:
       - type: bind
         source: ${OSM_DATA_PATH:?set OSM_DATA_PATH}

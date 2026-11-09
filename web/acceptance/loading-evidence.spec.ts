@@ -39,3 +39,18 @@ test('malformed physical certificates never crash the workspace or display Verif
  await expect(page.getByTestId('loading-evidence')).toContainText('Replan required');expect(errors).toEqual([]);
  await expect(page.getByTestId('loading-evidence')).not.toContainText('Physical loading verified');
 });
+
+test('axle status needs V2 evidence and authoritative confirmation, and invalidates in EN/HU',async({page})=>{
+ const {plan}=await publicWorkspace(page);let ready=false,changed=false;
+ const data={sourceSha256:'c'.repeat(64),datasetSha256:'a'.repeat(64),mode:'hard',status:'feasible',requiredCapabilities:['stacking','axle_loads'],rounds:[{vehicleId:plan.vehicles[0]!.id,tripIndex:0,unitCount:2,status:'feasible'}],
+  certificate:{version:2,requiredCapabilities:['stacking','axle_loads'],planId:plan.id,scenarioId:plan.scenarioId,scenarioRevision:plan.scenarioRevision,result:{version:2,mode:'hard',rounds:[],unassigned_checks:[]}}};
+ await page.route(url=>url.pathname==='/api/plans/'+plan.id||url.pathname==='/api/plans/'+plan.id+'/workflow',route=>{
+  if(new URL(route.request().url()).pathname.endsWith('/workflow'))return ready?route.fulfill({json:{state:'draft',version:0,currentRevision:plan.scenarioRevision,scenarioRevision:plan.scenarioRevision,planSha256:'a'.repeat(64),actor:null,at:null,blockers:changed?['Physical loading: axle source changed; Replan required']:[]}}):route.fulfill({status:503,json:{error:'Unavailable'}});
+  return route.fulfill({json:{...plan,physicalLoading:data}});
+ });
+ await page.reload();await page.locator('#cursus-status-details > summary').click();
+ const status=page.getByTestId('axle-loading-status');await expect(status).toHaveText('Axle loads · Not verified');
+ ready=true;await page.getByRole('button',{name:'Retry approval status',exact:true}).click();await expect(status).toHaveText('Axle loads · Verified');
+ changed=true;await expect(status).toHaveText('Axle loads · Not verified',{timeout:10000});
+ await page.getByRole('button',{name:'HU',exact:true}).click();await expect(status).toHaveText('Tengelyterhelések · Nem ellenőrzött');
+});

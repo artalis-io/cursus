@@ -1,3 +1,5 @@
+import {probeLoadingCapabilities} from './native-loading.js';
+import {validateRequirement,sameRequirement} from './axle-loading.js';
 import {solveBudget} from './solve-budget.js';
 import fastifyStatic from '@fastify/static';
 import { hostname } from 'node:os';
@@ -38,7 +40,7 @@ const objects = new ObjectStore(required('CURSUS_R2_BUCKET', config.r2Bucket), {
   endpoint: required('CURSUS_R2_ENDPOINT', config.r2Endpoint), accessKeyId, secretAccessKey,
   onEvent:event=>console.warn(JSON.stringify(event)),
 });
-try { await store.migrate(); await objects.ready(); }
+try { if(config.hardLoadingEnabled)await probeLoadingCapabilities(config.surgeBin); await store.migrate(); await objects.ready(); }
 catch(error) { objects.close(); await store.close(); throw error; }
 
 const auth = config.authRequired ? new StatefulAuthService(store, {
@@ -61,7 +63,7 @@ app.setNotFoundHandler((req, reply) => req.method === 'GET' && !req.url.startsWi
 let stopping = false;
 const workerId = `${config.statefulWorkerId}-${hostname()}-${process.pid}`;
 async function solve(lease: Lease, signal: AbortSignal): Promise<SolveOutput> {
-  const payload = lease.payload as { scenario?: Scenario;referencePlanId?:string; budgetSec?: number; objective?: 'vehicles' | 'distance'; fullBudget?: boolean;hardLoadingEnabled?:boolean };
+  const payload = lease.payload as { scenario?: Scenario;referencePlanId?:string; budgetSec?: number; objective?: 'vehicles' | 'distance'; fullBudget?: boolean;hardLoadingEnabled?:boolean;loadingRequirement?:import('./loading-contract.js').LoadingRequirement };
   if(payload.hardLoadingEnabled!==undefined&&payload.hardLoadingEnabled!==store.hardLoadingEnabled)throw new Error('Physical loading policy differs between replicas.');
   if (!payload.scenario) throw new Error('solve job has no scenario snapshot');
   const datasets = await store.listDatasets(lease.tenantId, true);
@@ -74,6 +76,11 @@ async function solve(lease: Lease, signal: AbortSignal): Promise<SolveOutput> {
   if ((payload.scenario.manualDecisions||payload.scenario.datasetBinding) && matches.length !== 1) throw new Error('replanning requires exactly one pinned admitted dataset');
   const dataset = matches[0];
   if (!dataset) throw new Error(`no admitted dataset contains day ${payload.scenario.day}`);
+  if(payload.loadingRequirement){
+    validateRequirement(payload.loadingRequirement);
+    const manifest=dataset.manifest as import('./state/conversion.js').ConvertedManifest;
+    if(payload.loadingRequirement.sourceSha256!==manifest.artifacts?.physicalLoading?.sha256||payload.loadingRequirement.version===2&&!sameRequirement(payload.loadingRequirement,manifest.loadingRequirement))throw new Error('Physical loading: queued capability/source requirement changed');
+  }
   const profiles=await new ProfileRepository(store,lease.tenantId).resolve(payload.scenario.planningProfiles??[]);
   const plan = await solveConvertedDataset(objects, lease.tenantId, dataset.manifest as never, payload.scenario,
     solveBudget(payload.budgetSec,config.solveTimeSeconds,config.maxSolveSeconds,true), payload.objective ?? 'vehicles', signal, payload.fullBudget ?? false,

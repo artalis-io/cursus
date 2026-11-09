@@ -108,5 +108,7 @@ an off-policy report for an explicitly requested hard-policy target and vice
 versa. Image identity alone does not certify a runtime configuration.
 
 Gyermelyi needs verified load-unit geometry/support facts and vehicle loading
-geometry before a separate activation review. Arbitrary 3D packing, axle loads,
+geometry before a separate activation review. Arbitrary 3D packing,
 pickups/initial cargo and automatic database failover are outside this model.
+
+Rigid two-axle V2 support is documented in [axle-load-enforcement.md](axle-load-enforcement.md). It uses the same default-off policy and does not activate customer data.

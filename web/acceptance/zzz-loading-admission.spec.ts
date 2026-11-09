@@ -7,7 +7,7 @@ function fixture(action:string){
  if(!compose)throw Error('Isolated acceptance Compose required');
  return JSON.parse(execFileSync(compose[0]!,[...compose.slice(1),'run','--rm','-T','fixture',action],{encoding:'utf8',timeout:60000}).trim().split('\n').at(-1)!);
 }
-test('physical facts follow the server policy through admission, native solve, manual edits and peer export',async({page})=>{
+for(const axles of [false,true])test(`physical facts ${axles?'V2 axle loads':'V1 stacking'} follow the server policy through admission, native solve, manual edits and peer export`,async({page})=>{
  await page.addInitScript(()=>{localStorage.setItem('otto.helpSeen','1');});await page.goto('/');
  await page.getByRole('textbox',{name:'Work email'}).fill('admin@acceptance.example.test');
  await page.getByRole('button',{name:/Email me a sign-in link/}).click();
@@ -16,7 +16,7 @@ test('physical facts follow the server policy through admission, native solve, m
  const origin=new URL(page.url()).origin,headers={origin},peer=process.env.CURSUS_ACCEPTANCE_PEER!;
  const hard=process.env.CURSUS_ACCEPTANCE_HARD_LOADING_ENABLED==='1';
  const identity=await (await page.request.get('/api/auth/me')).json();expect(identity.features.hardLoading).toBe(hard);
- const bundle=fixture('loading-bundle');
+ const bundle=fixture(axles?'axle-loading-bundle':'loading-bundle');
  async function upload(value:unknown){const r=await page.request.post('/api/import/upload',{headers,multipart:{file:{name:'public-loading.json',mimeType:'application/json',buffer:Buffer.from(JSON.stringify(value))}}});expect(r.status(),await r.text()).toBe(201);return (await r.json()).datasetId as string;}
  const id=await upload(bundle),path=`/api/import/datasets/${id}`;
  expect((await page.request.post(path+'/admit',{headers,data:{}})).status()).toBe(409);
@@ -49,11 +49,13 @@ test('physical facts follow the server policy through admission, native solve, m
  await page.evaluate(({planId,day})=>localStorage.setItem('cursus.manual-workspace.v1:acceptance',JSON.stringify({planId,day})),{planId:plan.id,day:day.id});await page.reload();
  await expect(page.getByText('Served / Total')).toBeVisible();await page.locator('#cursus-status-details > summary').click();
  const evidence=page.getByTestId('loading-evidence');await expect(evidence).toContainText(plan.physicalLoading!.sourceSha256);
+ if(axles)await expect(page.getByTestId('axle-loading-status')).toContainText(hard?'Verified':'Not verified');
  if(!hard){
   await expect(evidence).toContainText('Hard loading is disabled');await expect(evidence).toContainText('Not evaluated');
   await page.getByRole('button',{name:'HU',exact:true}).click();await expect(evidence).toContainText('a rakodhatóság nincs igazolva');return;
  }
  await expect(evidence).toContainText('Physical loading verified');
+ if(axles){expect(plan.physicalLoading?.mode==='hard'&&plan.physicalLoading.certificate?.version).toBe(2);expect(plan.physicalLoading?.mode==='hard'&&plan.physicalLoading.certificate?.nativeCapabilities?.implemented_capabilities).toContain('axle_loads');}
  for(const [action,version] of [['review',0],['approve',1]] as const){const r=await page.request.post(`${peer}/api/plans/${plan.id}/${action}`,{headers,data:{version,revision:scenario.revision,acknowledgeExceptions:true}});expect(r.status(),await r.text()).toBe(200);}
  const exported=await page.request.get(`/api/plans/${plan.id}/handoff.json?approval=required`);expect(exported.status()).toBe(200);
  const body=await exported.json();expect(body.handoff.status).toBe('Approved');expect(body.handoff.constraints.physicalLoading.certificate.sha256).toBeTruthy();
@@ -97,9 +99,9 @@ test('physical facts follow the server policy through admission, native solve, m
   expect((await (await page.request.get(`${peer}/api/plans`)).json() as {id:string}[]).map(p=>p.id).sort()).toEqual(beforeCancel.map(p=>p.id).sort());
  }finally{await page.request.delete(`/api/jobs/${cancelJob.jobId}`,{headers});}
  // Infeasible facts are a distinct admitted cycle. Native diagnostics must not be guessed by the UI.
- const impossible=fixture('loading-infeasible-bundle'),impossibleId=await upload(impossible);
+ const impossible=fixture(axles?'axle-loading-infeasible-bundle':'loading-infeasible-bundle'),impossibleId=await upload(impossible);
  for(const action of ['validate','admit'])expect((await page.request.post(`/api/import/datasets/${impossibleId}/${action}`,{headers,data:{}})).status()).toBe(200);
- const newScenario=await (await page.request.post('/api/scenarios',{headers,data:{day:'loading-no-fit',label:'Infeasible loading fixture'}})).json() as Scenario;
+ const newScenario=await (await page.request.post('/api/scenarios',{headers,data:{day:axles?'axle-loading-no-fit':'loading-no-fit',label:'Infeasible loading fixture'}})).json() as Scenario;
  const impossibleSubmit=await page.request.post(`/api/scenarios/${newScenario.id}/solve`,{headers:{...headers,'if-match':`"${newScenario.revision}"`},data:{budgetSec:1}});expect(impossibleSubmit.status()).toBe(202);
  const impossibleJob=await impossibleSubmit.json() as {jobId:string};
  await expect.poll(async()=>(await (await page.request.get(`${peer}/api/jobs/${impossibleJob.jobId}`)).json()).status,{timeout:30000}).toBe('completed');
@@ -111,8 +113,9 @@ test('physical facts follow the server policy through admission, native solve, m
  await page.keyboard.press('Escape');
  await page.locator('header').getByRole('combobox').click();
  page.once('dialog',dialog=>dialog.accept());
- await page.getByRole('option',{name:/27 October 2026/}).click();
+ await page.getByRole('option',{name:axles?/29 October 2026/:/27 October 2026/}).click();
  await page.locator('#cursus-status-details > summary').click();
+ if(axles)await expect(page.getByTestId('axle-loading-status')).toContainText('Not verified');
  await expect(page.getByTestId('loading-unassigned')).toContainText('Loading-only checks');
  await expect(page.getByTestId('loading-unassigned')).toContainText('Check physical units');
  await page.getByRole('button',{name:'HU',exact:true}).click();await expect(page.getByTestId('loading-unassigned')).toContainText('Csak rakodási vizsgálat');

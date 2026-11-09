@@ -1,5 +1,6 @@
+import {sameRequirement} from '../axle-loading.js';
 import {config} from '../config.js';
-import {loadingBlockers,loadingSource,loadingRequired} from '../hard-loading.js';
+import {loadingBlockers,loadingSource,loadingRequired,loadingRequirementForSource,assertPlanLoadingRequirement} from '../hard-loading.js';
 import { readFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -237,7 +238,14 @@ export class StatefulStore {
         const source=await loadingSource(client,lease.tenantId,current);
         const required=await loadingRequired(client,lease.tenantId,current,source,this.hardLoadingEnabled);
         if((required||candidate.physicalLoading?.mode==='hard')&&(candidate.id!==planId||candidate.scenarioId!==scenarioId||candidate.scenarioRevision!==scenarioRevision))throw new Error('Physical loading result identity mismatch');
-        const issues=loadingBlockers(candidate,{...current,hardLoadingRequired:required},required?source:undefined);
+        const queued=(lease.payload as {loadingRequirement?:import('../loading-contract.js').LoadingRequirement})?.loadingRequirement;
+        if(queued)assertPlanLoadingRequirement(candidate,queued);
+        if((required||candidate.physicalLoading?.mode==='hard')&&source){
+          const requirement=await loadingRequirementForSource(client,lease.tenantId,current,source);
+          assertPlanLoadingRequirement(candidate,requirement);
+          if(queued&&!sameRequirement(queued,requirement))throw new Error('Physical loading requirement changed while job was running');
+        }
+        const issues=loadingBlockers(candidate,{...current,hardLoadingRequired:required},required||candidate.physicalLoading?.mode==='hard'?source:undefined);
         if(required&&!source)issues.push('Physical loading source is no longer admitted.');
         if(candidate.physicalLoading?.mode==='hard'&&!source)issues.push('Physical loading source is no longer admitted.');
         if(issues.length)throw new Error(issues.join(' '));

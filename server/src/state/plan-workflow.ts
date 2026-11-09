@@ -95,7 +95,7 @@ export class PlanWorkflow {
     if(scenario){
       try{const source=await loadingSource(client,this.tenantId,scenario);
         const required=await loadingRequired(client,this.tenantId,scenario,source,this.store.hardLoadingEnabled);
-        policyIssues.push(...loadingBlockers(plan,{...scenario,hardLoadingRequired:required},required?source:undefined));
+        policyIssues.push(...loadingBlockers(plan,{...scenario,hardLoadingRequired:required},required||plan.physicalLoading?.mode==='hard'?source:undefined));
         if(required&&!source)policyIssues.push('Physical loading source is no longer admitted.');
         if(plan.physicalLoading?.mode==='hard'&&!source)policyIssues.push('Physical loading source is no longer admitted.');
       }catch(error){if(!(error as Error).message.startsWith('Physical loading:'))throw error;policyIssues.push((error as Error).message);}

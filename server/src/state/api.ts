@@ -1,4 +1,4 @@
-import {loadingSource,loadingRequired} from '../hard-loading.js';
+import {loadingSource,loadingRequired,loadingRequirementForSource} from '../hard-loading.js';
 import {ObjectStoreError} from './objects.js';
 import {solveBudget} from '../solve-budget.js';
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from 'fastify';
@@ -263,8 +263,9 @@ export async function createStatefulApi(options: StatefulApiOptions): Promise<Fa
     if(hardLoadingRequired&&!source)return reply.code(409).send({error:'Physical loading: source facts required before solving.'});
     let id: string;
     try {
+      const loadingRequirement=hardLoadingRequired&&source?await loadingRequirementForSource(options.store.pool,options.tenantId,scenario,source):undefined;
       id = await options.store.enqueueJob(options.tenantId, 'solve', `solve/${scenario.id}/${scenario.revision}/${randomKey()}`, {
-        scenarioId: scenario.id, scenarioRevision: scenario.revision, budgetSec, objective: req.body?.objective ?? 'vehicles', fullBudget: req.body?.fullBudget === true, scenario:{...scenario,...(hardLoadingRequired?{hardLoadingRequired:true}:{})},referencePlanId:req.body?.referencePlanId,submittedBy:req.cursusPrincipal?.userId??null,hardLoadingEnabled:options.store.hardLoadingEnabled===true,
+        scenarioId: scenario.id, scenarioRevision: scenario.revision, budgetSec, objective: req.body?.objective ?? 'vehicles', fullBudget: req.body?.fullBudget === true, scenario:{...scenario,...(hardLoadingRequired?{hardLoadingRequired:true}:{})},referencePlanId:req.body?.referencePlanId,submittedBy:req.cursusPrincipal?.userId??null,hardLoadingEnabled:options.store.hardLoadingEnabled===true,...(loadingRequirement?{loadingRequirement}:{}),
       }, config.maxSolveQueue, { id: scenario.id, revision: expectedRevision(req.headers)! });
     } catch (error) {
       if (error instanceof RevisionConflictError) return reply.code(409).send({ error: 'Scenario changed; reload before optimizing.' });

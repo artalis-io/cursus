@@ -22,7 +22,7 @@ export async function selectPlan(store: StatefulStore, tenantId: string, scenari
       throw new WorkflowError(409,'Candidate coverage is inconsistent.');
     const blockers=[...approvalBlockers(plan,revision,scenario),...(policyIssues?.(plan)??[])];
     {
-      try{const source=await loadingSource(client,tenantId,scenario);const required=await loadingRequired(client,tenantId,scenario,source,store.hardLoadingEnabled);blockers.push(...loadingBlockers(plan,{...scenario,hardLoadingRequired:required},required?source:undefined));
+      try{const source=await loadingSource(client,tenantId,scenario);const required=await loadingRequired(client,tenantId,scenario,source,store.hardLoadingEnabled);blockers.push(...loadingBlockers(plan,{...scenario,hardLoadingRequired:required},required||plan.physicalLoading?.mode==='hard'?source:undefined));
         if(required&&!source)blockers.push('Physical loading source is no longer admitted.');
         if(plan.physicalLoading?.mode==='hard'&&!source)blockers.push('Physical loading source is no longer admitted.');}
       catch(error){blockers.push((error as Error).message);}
