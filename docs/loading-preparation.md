@@ -3,7 +3,7 @@
 Physical loading facts can be retained with an admitted prepared JSON dataset.
 Importing facts alone does not activate hard loading. The opt-in runtime policy
 and publication/approval guards are documented in [hard loading](hard-loading-enforcement.md).
-The native dependency is pinned to OTTO `605691491b8199376dc989e440cce13b1fcd705c`
+The native dependency is pinned to OTTO `25a518835e864c589c104012a8e32dd127a9a1d8`
 (including loading, cancellation and hot-path fixes). This does not activate hard
 loading in Cursus and includes no production rollout.
 Gyermelyi continues to use its existing scalar capacities and constraints.
@@ -110,3 +110,5 @@ The stable-ID adapter and publication/approval/export enforcement are implemente
 behind the default-off policy. Customer activation still requires verified geometry
 and a separate deployment review.
 No loading dimensions or stacking permissions are inferred for Gyermelyi.
+
+V2 axle/CG metadata and its independent verification are described in [axle-load-enforcement.md](axle-load-enforcement.md); importing it remains inert until explicit hard-policy activation.

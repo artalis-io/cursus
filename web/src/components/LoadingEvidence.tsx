@@ -3,13 +3,14 @@ import type {Plan} from '@/types';
 export function LoadingEvidence({plan,confirmed=false,invalidated=false}:{plan:Plan;confirmed?:boolean;invalidated?:boolean}){
  const {lang}=useI18n(),hu=lang==='hu',data=plan.physicalLoading;
  const hard=data?.mode==='hard',certificate=hard?data.certificate:undefined;
- const verified=hard&&data.status==='feasible'&&certificate?.version===1&&certificate.planId===plan.id&&certificate.scenarioId===plan.scenarioId&&certificate.scenarioRevision===plan.scenarioRevision&&certificate.result?.mode==='hard'&&Array.isArray(certificate.result.rounds)&&confirmed;
+ const verified=hard&&data.status==='feasible'&&(certificate?.version===1||certificate?.version===2)&&certificate.planId===plan.id&&certificate.scenarioId===plan.scenarioId&&certificate.scenarioRevision===plan.scenarioRevision&&certificate.result?.mode==='hard'&&Array.isArray(certificate.result.rounds)&&confirmed;
  const stale=hard&&(data.status==='stale'||invalidated);
  const candidate=hard?data.certificate?.result?.unassigned_checks:undefined;
  const diagnostics=verified&&Array.isArray(candidate)?candidate.filter(d=>d&&Number.isSafeInteger(d.request_id)):undefined;
  const rounds=data&&Array.isArray(data.rounds)?data.rounds:[];
  return <div data-testid="loading-evidence" className="space-y-1 border-t border-divider pt-2 text-muted-foreground">
   <p className="font-medium">{hu?'Fizikai rakodhatóság':'Physical loading'}</p>
+  {Array.isArray(data?.requiredCapabilities)&&data.requiredCapabilities.includes('axle_loads')&&<p data-testid="axle-loading-status">{hu?'Tengelyterhelések':'Axle loads'} · {verified&&rounds.length>0&&certificate?.version===2&&certificate.result.version===2&&Array.isArray(certificate.requiredCapabilities)&&certificate.requiredCapabilities.includes('axle_loads')?(hu?'Igazolt':'Verified'):(hu?'Nem ellenőrzött':'Not verified')}</p>}
   <p role={hard&&!verified?'status':undefined}>{hard?(verified?
    rounds.length===0?(hu?'Nincs hozzárendelt kör. Tekintse át az alábbi rakodási vizsgálatokat.':'No assigned rounds. Review the loading-only checks below.'):(hu?'A hozzárendelt körök fizikai rakodhatósága ennél a tervverziónál igazolt.':'Physical loading verified for the assigned rounds of this plan revision.'):
    stale?(hu?'Újratervezés szükséges. A módosítások érvénytelenítették a rakodási igazolást; jóváhagyás és jóváhagyott export nem lehetséges.':'Replan required. Edits invalidated loading evidence; approval and Approved export are blocked.'):(hu?'A rakodási igazolás még nincs megerősítve. Jóváhagyás előtt várja meg az ellenőrzést.':'Loading evidence is not yet confirmed. Wait for verification before approval.')):

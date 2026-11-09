@@ -1,3 +1,6 @@
+import {probeLoadingCapabilities} from '../native-loading.js';
+import {factRequirement,validateRequirement,sameRequirement} from '../axle-loading.js';
+import type {NativeLoadingCapabilities,LoadingRequirement} from '../loading-contract.js';
 import {attachHardLoading,certifyLoading} from '../hard-loading.js';
 import {validateLoading} from '../loading.js';
 import { createHash } from 'node:crypto';
@@ -123,7 +126,7 @@ export async function workOneDatasetAdmission(store: StatefulStore, objects: Obj
 
 /** Solve directly from admitted immutable artifacts; no node-local registry is
  * authoritative. This is the stateful counterpart of loadDay/buildRequest. */
-export interface ConvertedManifest { artifacts?: { request?: ImmutableObject; geocoded?: ImmutableObject;shipments?:ImmutableObject;physicalLoading?:ImmutableObject };
+export interface ConvertedManifest { loadingRequirement?:LoadingRequirement; artifacts?: { request?: ImmutableObject; geocoded?: ImmutableObject;shipments?:ImmutableObject;physicalLoading?:ImmutableObject };
   days?: { dayId: string; date?: string; isoDate: string; label: string }[] }
 export async function loadConvertedDay(objects: ObjectStore, tenantId: string, manifest: ConvertedManifest,
   scenario: Scenario, profiles: ApprovedProfile[] = []): Promise<LoadedDay> {
@@ -149,6 +152,10 @@ export async function loadConvertedDay(objects: ObjectStore, tenantId: string, m
   let shipmentDocument:ShipmentDocument|undefined;
   if(shipmentObject)shipmentDocument=validateShipments(JSON.parse(new TextDecoder().decode(await objects.getVerified(shipmentObject))),request,requestObject.sha256);
   const physicalLoading=loadingObject?validateLoading(JSON.parse(new TextDecoder().decode(await objects.getVerified(loadingObject))),request,requestObject.sha256):undefined;
+  if(physicalLoading&&loadingObject&&(physicalLoading.schemaVersion===2||manifest.loadingRequirement)){
+    validateRequirement(manifest.loadingRequirement);
+    if(!sameRequirement(manifest.loadingRequirement,factRequirement(physicalLoading,loadingObject.sha256)))throw new Error('Physical loading: manifest capability/source mismatch');
+  }
   const dayMeta = manifest.days?.find((d) => d.dayId === (scenario.datasetBinding?.dayId??scenario.day));
   if (!dayMeta) throw new Error('dataset day is missing');
   const refs = new Set(rows.filter((r) => String(r.delivery_date ?? '') === String(dayMeta.date ?? dayMeta.isoDate))
@@ -220,6 +227,10 @@ export async function solveConvertedDataset(objects: ObjectStore, tenantId: stri
     const native = nativeSolveRequest(request, scenario.sequences);
     const path = join(workspace, 'request.json'); await writeFile(path, JSON.stringify(native.request), { mode: 0o600 });
     const solverIdentity=enforceLoading?createHash('sha256').update(await readFile(config.surgeBin)).digest('hex'):undefined;
+    let nativeCapabilities:NativeLoadingCapabilities|undefined;
+    if(request.loading?.version===2){
+      nativeCapabilities=await probeLoadingCapabilities(config.surgeBin,request.loading.node_budget,signal);
+    }
     const startedAt = Date.now();
     const { stdout } = await run(config.surgeBin, [path], { signal, timeout: (budgetSec + config.solveWatchdogGraceSec) * 1000,
       maxBuffer: Math.max(1, config.maxSolveOutputMB) * 1024 * 1024 });
@@ -233,7 +244,7 @@ export async function solveConvertedDataset(objects: ObjectStore, tenantId: stri
     if(enforceLoading&&day.physicalLoading){
       const solverSha256=createHash('sha256').update(await readFile(config.surgeBin)).digest('hex');
       if(solverSha256!==solverIdentity)throw new Error('Native executable changed during loading verification');
-      plan.physicalLoading=certifyLoading(plan,scenario,day.physicalLoading,day.physicalLoadingSha256!,createHash('sha256').update(JSON.stringify(native.request)).digest('hex'),solverSha256,solution.loading,request);
+      plan.physicalLoading=certifyLoading(plan,scenario,day.physicalLoading,day.physicalLoadingSha256!,createHash('sha256').update(JSON.stringify(native.request)).digest('hex'),solverSha256,solution.loading,request,nativeCapabilities);
     }
     if(scenario.inputUpdate)plan.provenance.inputUpdate=structuredClone(scenario.inputUpdate);
     if(applied)plan.provenance.tariffSha256=tariffIdentity(policy!.tariff);

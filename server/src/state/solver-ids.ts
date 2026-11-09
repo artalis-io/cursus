@@ -52,10 +52,12 @@ export function nativeSolveRequest(request: SurgeRequest, sequences: Scenario['s
   const stable=(index:number,items:{id:number}[])=>{if(!Number.isSafeInteger(index)||!items[index])throw new Error('Physical loading: invalid native loading identity');return items[index]!.id;};
   return { request: native, restore: solution => {
     if(solution.loading&&(!Array.isArray(solution.loading.rounds)||!Array.isArray(solution.loading.unassigned_checks)||solution.loading.rounds.some(r=>!Array.isArray(r.placements))))throw new Error('Physical loading: malformed native certificate; no plan published');
+    if(solution.loading?.version===2&&solution.loading.rounds.some(r=>!Array.isArray(r.operations)||!Array.isArray(r.stops)||!Array.isArray(r.axle_states)))throw new Error('Physical loading: malformed native V2 evidence');
     return ({ ...solution,
     ...(solution.loading?{loading:{...solution.loading,
       rounds:solution.loading.rounds.map(round=>({...round,vehicle_id:stable(round.vehicle_id,request.vehicles),
-        placements:round.placements.map(p=>({...p,request_id:stable(p.request_id,request.requests)}))})),
+        placements:round.placements.map(p=>({...p,request_id:stable(p.request_id,request.requests)})),
+        ...(solution.loading!.version===2?{operations:round.operations?.map(op=>({...op,request_id:stable(op.request_id,request.requests)})),stops:round.stops?.map(stop=>({...stop,task_id:stable(stop.task_id,request.tasks)}))}:{})})),
       unassigned_checks:solution.loading.unassigned_checks.map(d=>({...d,request_id:stable(d.request_id,request.requests)})),
     }}:{}),
     unassigned: solution.unassigned.map(id => request.requests[id]!.id),

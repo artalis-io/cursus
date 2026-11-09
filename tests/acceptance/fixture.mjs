@@ -115,17 +115,23 @@ try {
       assert.equal(expired.rowCount, 1, 'expire only the freshly requested isolated test link');
     }
     result = { link };
-  } else if(action==='loading-bundle'||action==='loading-infeasible-bundle'){
-    const {loadingFixture}=await import('/app/server/dist/state/loading-fixture.js');
-    const f=loadingFixture(),row=await store.getDataset('acceptance','acceptance-dataset');
+  } else if(action==='loading-bundle'||action==='loading-infeasible-bundle'||action==='axle-loading-bundle'||action==='axle-loading-infeasible-bundle'){
+    const {loadingFixture,axleFixture}=await import('/app/server/dist/state/loading-fixture.js');
+    const axles=action.startsWith('axle-');const f=axles?axleFixture():loadingFixture(),row=await store.getDataset('acceptance','acceptance-dataset');
     assert.equal(row?.status,'admitted');
     const seeded=JSON.parse(new TextDecoder().decode(await objects.getVerified(row.manifest.artifacts.request)));
     f.request.vehicles=seeded.vehicles; // match this environment's trusted fleet inventory
     for(const request of f.request.requests)request.forbidden_vehicles=[99];
     const geometry=f.document.vehicles[0];
     f.document.vehicles=f.request.vehicles.map(vehicle=>({...structuredClone(geometry),vehicleId:vehicle.id}));
+    if(axles){
+      f.bundle.days[0].dayId='axle-loading-day';f.bundle.days[0].isoDate='2026-10-28';for(const row of f.bundle.geocoded)row.delivery_date='2026-10-28';
+      for(const v of f.document.vehicles){const a=v.axles;const fleet=f.request.vehicles.find(row=>row.id===v.vehicleId);
+        a.frontTareG={min:1000000,max:1000000};a.rearTareG={min:500000,max:500000};a.maxGrossG=fleet.gross_weight_kg*1000;
+      }
+    }
     f.document.datasetSha256=createHash('sha256').update(JSON.stringify(f.request)).digest('hex');
-    if(action==='loading-infeasible-bundle'){f.bundle.days[0].dayId='loading-no-fit';f.bundle.days[0].isoDate='2026-10-27';for(const row of f.bundle.geocoded)row.delivery_date='2026-10-27';for(const request of f.document.requests)for(const unit of request.units)unit.heightMm=3000;}
+    if(action.endsWith('infeasible-bundle')){f.bundle.days[0].dayId=axles?'axle-loading-no-fit':'loading-no-fit';f.bundle.days[0].isoDate=axles?'2026-10-29':'2026-10-27';for(const row of f.bundle.geocoded)row.delivery_date=f.bundle.days[0].isoDate;for(const request of f.document.requests)for(const unit of request.units)unit.heightMm=3000;}
     result=f.bundle;
   } else if(action==='revised-input-bundle'){
     const row=await store.getDataset('acceptance','acceptance-dataset');assert.equal(row?.status,'admitted');

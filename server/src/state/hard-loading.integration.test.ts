@@ -7,15 +7,15 @@ import {ObjectStore} from './objects.js';
 import {createStatefulApi} from './api.js';
 import {DatasetRepository} from './datasets.js';
 import {solveConvertedDataset,type ConvertedManifest} from './conversion.js';
-import {loadingFixture} from './loading-fixture.js';
+import {loadingFixture,axleFixture} from './loading-fixture.js';
 import {digest} from '../hard-loading.js';
 import type {StatefulAuthService} from './auth.js';
 import type {Plan} from '../types.js';
 
 const enabled=!!(process.env.CURSUS_TEST_DATABASE_URL&&process.env.CURSUS_TEST_S3_ENDPOINT&&process.env.CURSUS_TEST_SURGE_BIN);
-test('hard loading: real native work, takeover, fenced publication, approval/export and edits across two HTTP replicas', {skip:!enabled},async()=>{
+for(const fixture of [loadingFixture,axleFixture])test(`hard loading ${fixture===axleFixture?'V2 axles':'V1'}: real native work, takeover, fenced publication, approval/export and edits across two HTTP replicas`, {skip:!enabled},async()=>{
  const db=process.env.CURSUS_TEST_DATABASE_URL!,endpoint=process.env.CURSUS_TEST_S3_ENDPOINT!,tenant='hard-'+randomUUID(),bucket='hard-'+randomUUID();
- const a=new StatefulStore(db,4,true),b=new StatefulStore(db,4,true),f=loadingFixture();
+ const a=new StatefulStore(db,4,true),b=new StatefulStore(db,4,true),f=fixture();
  f.context.day.physicalLoading=f.document;f.context.day.physicalLoadingSha256=createHash('sha256').update(JSON.stringify(f.document)).digest('hex');f.context.day.datasetRequestSha256=f.sha;
  const credentials={accessKeyId:'integration',secretAccessKey:'integration'};
  const objects=new ObjectStore(bucket,{endpoint,...credentials});
@@ -39,7 +39,7 @@ test('hard loading: real native work, takeover, fenced publication, approval/exp
   await assert.rejects(()=>solveConvertedDataset(objects,tenant,manifest,scenario,1,'vehicles',AbortSignal.timeout(30000),false,f.context,undefined,[],{enabled:true,nodeBudget:1}),/UNKNOWN/);
   assert.equal((await a.listPlans(tenant)).length,0);
   const submit=await request(0,`/api/scenarios/${scenario.id}/solve`,{budgetSec:1});assert.equal(submit.status,202);
-  const lease=(await a.claimJob('solve','old',30,tenant))!;assert.equal((lease.payload as {hardLoadingEnabled:boolean}).hardLoadingEnabled,true);
+  const lease=(await a.claimJob('solve','old',30,tenant))!;assert.equal((lease.payload as {hardLoadingEnabled:boolean}).hardLoadingEnabled,true);assert.equal((lease.payload as {loadingRequirement:{version:number}}).loadingRequirement.version,f.document.schemaVersion);
   const plan=await solveConvertedDataset(objects,tenant,manifest,scenario,1,'vehicles',AbortSignal.timeout(30000),false,f.context,undefined,[],{enabled:true,nodeBudget:10000});
   assert.equal(plan.physicalLoading?.mode,'hard');assert.equal(plan.physicalLoading?.status,'feasible');
   await a.pool.query("UPDATE jobs SET lease_expires_at=now()-interval '1 second' WHERE tenant_id=$1 AND id=$2",[tenant,lease.id]);

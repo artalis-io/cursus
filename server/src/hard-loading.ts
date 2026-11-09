@@ -1,7 +1,8 @@
+import {validateAxleFacts,replayAxleRound,sameCapabilities,AXLE_CAPABILITIES,requireNativeCapabilities,validateRequirement,assertAxleFleetLimits} from './axle-loading.js';
 import {createHash} from 'node:crypto';
 import {deflateSync,inflateSync} from 'node:zlib';
 import type {PoolClient,Pool} from 'pg';
-import type {LoadingDocument,PhysicalVehicle,PhysicalUnit,HardLoadingSnapshot,NativeLoadingResult} from './loading-contract.js';
+import type {LoadingDocument,PhysicalVehicle,PhysicalUnit,HardLoadingSnapshot,NativeLoadingResult,NativeLoadingCapabilities} from './loading-contract.js';
 import type {Plan,SurgeRequest,SurgeSolution} from './types.js';
 import type {Scenario} from './store.js';
 
@@ -24,11 +25,12 @@ export const layoutDigest=(plan:Plan)=>digest({routes:layout(plan),unassigned:pl
 
 /** Only immutable declarations supply physical facts; never derive them from pallets or weights. */
 export function attachHardLoading(request:SurgeRequest,facts:LoadingDocument,nodeBudget=10000){
+ assertAxleFleetLimits(facts,request.vehicles);
  need(integer(nodeBudget)&&nodeBudget>0&&nodeBudget<=100000,'invalid search budget');
  const vehicles=new Map(facts.vehicles.map(v=>[v.vehicleId,v])),orders=new Map(facts.requests.map(r=>[r.requestId,r]));
- request.loading={version:1,mode:'hard',node_budget:nodeBudget,
-  vehicles:request.vehicles.map(v=>{const f=vehicles.get(v.id);need(f,'missing vehicle facts');return {vehicle_id:v.id,access_model:f!.access,slots:f!.slots,max_layers:f!.maxLayers,clearance_mm:f!.clearanceMm,max_stack_weight_g:f!.maxStackWeightG,payload_g:f!.payloadG,allowed_top:f!.allowedTop};}),
-  requests:request.requests.map(r=>{const f=orders.get(r.id);need(f,'missing request facts');return {request_id:r.id,units:f!.units.map(u=>({height_mm:u.heightMm,weight_g:u.weightG,stack_class:u.stackClass,max_weight_above_g:u.maxWeightAboveG,max_units_above:u.maxUnitsAbove}))};})};
+ request.loading={version:facts.schemaVersion,...(facts.schemaVersion===2?{required_capabilities:[...AXLE_CAPABILITIES]}:{}),mode:'hard',node_budget:nodeBudget,
+  vehicles:request.vehicles.map(v=>{const f=vehicles.get(v.id);need(f,'missing vehicle facts');return {vehicle_id:v.id,access_model:f!.access,slots:f!.slots,max_layers:f!.maxLayers,clearance_mm:f!.clearanceMm,max_stack_weight_g:f!.maxStackWeightG,payload_g:f!.payloadG,allowed_top:f!.allowedTop,...(f!.axles?{axles:{model:f!.axles.model,profile_sha256:f!.axles.profileSha256,wheelbase_mm:f!.axles.wheelbaseMm,footprint_length_mm:f!.axles.footprintLengthMm,deck_min_mm:f!.axles.deckMinMm,deck_max_mm:f!.axles.deckMaxMm,slot_centres_mm:f!.axles.slotCentresMm,front_tare_g:f!.axles.frontTareG,rear_tare_g:f!.axles.rearTareG,front_limits_g:f!.axles.frontLimitsG,rear_limits_g:f!.axles.rearLimitsG,max_gross_g:f!.axles.maxGrossG,min_front_fraction:f!.axles.minFrontFraction}}:{})};}),
+  requests:request.requests.map(r=>{const f=orders.get(r.id);need(f,'missing request facts');return {request_id:r.id,units:f!.units.map(u=>({height_mm:u.heightMm,weight_g:u.weightG,stack_class:u.stackClass,max_weight_above_g:u.maxWeightAboveG,max_units_above:u.maxUnitsAbove,...(u.cgOffsetMm?{cg_offset_mm:u.cgOffsetMm}:{})}))};})};
 }
 
 /** Witness replay only: no packing/search or native subprocess at the write boundary. */
@@ -58,7 +60,7 @@ function replay(vehicle:PhysicalVehicle,units:(PhysicalUnit&{stop:number})[],pla
  }
 }
 function verify(plan:Plan,evidence:HardLoadingSnapshot,scenario?:Scenario){
- const certificate=evidence.certificate;need(evidence.status==='feasible'&&certificate?.version===1,'Replan required: loading evidence is missing or stale');
+ const certificate=evidence.certificate;need(evidence.status==='feasible'&&(certificate?.version===1||certificate?.version===2),'Replan required: loading evidence is missing or stale');
  const c=certificate!;const {sha256,...signed}=c;
  need(digest(signed)===sha256,'certificate checksum mismatch');
  need(c.planId===plan.id&&c.scenarioId===plan.scenarioId&&c.scenarioRevision===plan.scenarioRevision,'certificate scenario identity mismatch');
@@ -69,9 +71,11 @@ function verify(plan:Plan,evidence:HardLoadingSnapshot,scenario?:Scenario){
  const bytes=inflateSync(Buffer.from(c.facts,'base64'),{maxOutputLength:64*1024*1024});
  need(bytesHash(bytes)===evidence.sourceSha256,'source facts checksum mismatch');
  const facts=JSON.parse(bytes.toString()) as LoadingDocument;
- need(facts.schemaVersion===1&&facts.datasetSha256===evidence.datasetSha256,'source dataset binding mismatch');
+ need(facts.schemaVersion===c.version&&facts.datasetSha256===evidence.datasetSha256,'source dataset binding mismatch');
  need(new Set(c.requestIds).size===c.requestIds.length&&c.requestIds.every(integer)&&new Set(c.vehicleIds).size===c.vehicleIds.length&&c.vehicleIds.every(integer),'invalid scoped inventory');
- const result=c.result;need(result?.version===1&&result.mode==='hard'&&integer(result.node_budget)&&result.node_budget>0&&result.node_budget<=100000,'invalid native certificate');
+ const result=c.result;need(result?.version===facts.schemaVersion&&result.mode==='hard'&&integer(result.node_budget)&&result.node_budget>0&&result.node_budget<=100000,'invalid native certificate');
+ if(facts.schemaVersion===1)need((!evidence.requiredCapabilities||sameCapabilities(evidence.requiredCapabilities,['stacking']))&&(!c.requiredCapabilities||sameCapabilities(c.requiredCapabilities,['stacking']))&&(!result.required_capabilities||sameCapabilities(result.required_capabilities,['stacking'])),'V1 cannot claim axle capabilities');
+ if(facts.schemaVersion===2){validateAxleFacts(facts);need(sameCapabilities(evidence.requiredCapabilities,AXLE_CAPABILITIES)&&sameCapabilities(c.requiredCapabilities,AXLE_CAPABILITIES)&&sameCapabilities(result.required_capabilities,AXLE_CAPABILITIES),'required capability mismatch');requireNativeCapabilities(c.nativeCapabilities,result.node_budget);}
  const expected=plan.vehicles.flatMap(v=>v.trips.map(t=>({v,t}))),remaining=new Map(expected.map(r=>[r.v.id+':'+r.t.index,r]));
  need(remaining.size===expected.length&&result.rounds.length===expected.length,'missing or duplicate round certificate');
  const inventory=new Map(facts.requests.map(r=>[r.requestId,r.units])),seen=new Set<number>();
@@ -89,7 +93,8 @@ function verify(plan:Plan,evidence:HardLoadingSnapshot,scenario?:Scenario){
   });
   const supplied=new Map(r.placements.map(p=>[p.request_id+':'+p.unit_index,p]));
   need(supplied.size===r.placements.length&&supplied.size===ids.length&&ids.every(id=>supplied.has(id)),'missing/duplicate/foreign unit witness');
-  replay(geometry!,units,ids.map(id=>supplied.get(id)!));
+  if(result.version===2)replayAxleRound(geometry!,units,ids,r,round!.t.stops,facts,replay);
+  else replay(geometry!,units,ids.map(id=>supplied.get(id)!));
  }
  const unassigned=new Set(plan.unassigned.map(r=>r.requestId));
  need(seen.size+unassigned.size===c.requestIds.length&&c.requestIds.every(id=>seen.has(id)||unassigned.has(id)),'incomplete scoped request coverage');
@@ -98,19 +103,19 @@ function verify(plan:Plan,evidence:HardLoadingSnapshot,scenario?:Scenario){
  need(result.unassigned_checks.length===unassigned.size,'missing unassigned loading diagnostics');
  for(const d of result.unassigned_checks){
   need(unassigned.has(d.request_id),'duplicate or unknown unassigned diagnostic');unassigned.delete(d.request_id);
-  need(d.scope==='loading_alone_not_route_insertability'&&[d.feasible_vehicles,d.infeasible_vehicles,d.unknown_vehicles].every(integer),'invalid unassigned diagnostics');
+  need(d.scope===(result.version===2?'physical_singleton_not_route_insertability':'loading_alone_not_route_insertability')&&[d.feasible_vehicles,d.infeasible_vehicles,d.unknown_vehicles].every(integer),'invalid unassigned diagnostics');
   need(d.feasible_vehicles+d.infeasible_vehicles+d.unknown_vehicles===c.vehicleIds.length,'incomplete vehicle diagnostics');
   need(d.unknown_vehicles===0,'native loading is UNKNOWN; no plan published. Recheck facts/search budget');
  }
  need(evidence.rounds.length===expected.length&&expected.every(({v,t})=>evidence.rounds.some(r=>r.vehicleId===v.id&&r.tripIndex===t.index&&r.status==='feasible'&&r.unitCount===t.stops.reduce((n,s)=>n+(inventory.get(s.requestId!)?.length??0),0))),'round summary mismatch');
 }
-export function certifyLoading(plan:Plan,scenario:Scenario,document:LoadingDocument,sourceSha256:string,requestSha256:string,solverSha256:string,result:NativeLoadingResult|undefined,request:SurgeRequest):HardLoadingSnapshot{
+export function certifyLoading(plan:Plan,scenario:Scenario,document:LoadingDocument,sourceSha256:string,requestSha256:string,solverSha256:string,result:NativeLoadingResult|undefined,request:SurgeRequest,nativeCapabilities?:NativeLoadingCapabilities):HardLoadingSnapshot{
  need(result,'native certificate missing');
  need(result!.node_budget===request.loading?.node_budget,'native search budget identity mismatch');
  const facts=Buffer.from(JSON.stringify(document));need(bytesHash(facts)===sourceSha256,'immutable facts identity mismatch');
  const counts=new Map(document.requests.map(r=>[r.requestId,r.units.length]));
- const body={version:1 as const,planId:plan.id,scenarioId:scenario.id,scenarioRevision:scenario.revision,scenarioSha256:scenarioDigest(scenario),layoutSha256:layoutDigest(plan),requestSha256,solverSha256,requestIds:request.requests.map(r=>r.id),vehicleIds:request.vehicles.map(v=>v.id),facts:deflateSync(facts).toString('base64'),result:result!};
- const evidence:HardLoadingSnapshot={sourceSha256,datasetSha256:document.datasetSha256,mode:'hard',status:'feasible',
+ const body={version:document.schemaVersion,...(document.schemaVersion===2?{requiredCapabilities:[...AXLE_CAPABILITIES],nativeCapabilities}:{}),planId:plan.id,scenarioId:scenario.id,scenarioRevision:scenario.revision,scenarioSha256:scenarioDigest(scenario),layoutSha256:layoutDigest(plan),requestSha256,solverSha256,requestIds:request.requests.map(r=>r.id),vehicleIds:request.vehicles.map(v=>v.id),facts:deflateSync(facts).toString('base64'),result:result!};
+ const evidence:HardLoadingSnapshot={sourceSha256,datasetSha256:document.datasetSha256,...(document.schemaVersion===2?{requiredCapabilities:[...AXLE_CAPABILITIES]}:{}),mode:'hard',status:'feasible',
   rounds:plan.vehicles.flatMap(v=>v.trips.map(t=>({vehicleId:v.id,tripIndex:t.index,unitCount:t.stops.reduce((n,s)=>n+(counts.get(s.requestId!)??0),0),status:'feasible' as const}))),certificate:{...body,sha256:digest(body)}};
  verify(plan,evidence,scenario);return evidence;
 }
@@ -138,4 +143,20 @@ export async function loadingRequired(db:Pick<Pool|PoolClient,'query'>,tenant:st
  if(!source)return false;
  const found=await db.query("SELECT 1 FROM plans WHERE tenant_id=$1 AND body->'physicalLoading'->>'mode'='hard' AND body->'physicalLoading'->>'sourceSha256'=$2 LIMIT 1",[tenant,source]);
  return found.rows.length>0;
+}
+
+/** Durable requirements are generated from validated admitted facts. No R2 or
+ * executable access occurs while a scenario/lease transaction is locked. */
+export async function loadingRequirementForSource(db:Pick<Pool|PoolClient,'query'>,tenant:string,scenario:Scenario,source:string):Promise<import('./loading-contract.js').LoadingRequirement>{
+ const rows=await db.query<{id:string;manifest:import('./state/conversion.js').ConvertedManifest}>("SELECT id,manifest FROM datasets WHERE tenant_id=$1 AND status='admitted'",[tenant]);
+ const matches=rows.rows.filter(r=>(!scenario.datasetBinding||r.id===scenario.datasetBinding.datasetId)&&r.manifest.days?.some(d=>d.dayId===(scenario.datasetBinding?.dayId??scenario.day))&&r.manifest.artifacts?.physicalLoading?.sha256===source);
+ need(matches.length===1,'missing or ambiguous admitted capability source');
+ const requirement=matches[0]!.manifest.loadingRequirement??{version:1 as const,sourceSha256:source,requiredCapabilities:['stacking'] as import('./loading-contract.js').LoadingCapability[]};
+ validateRequirement(requirement);need(requirement.sourceSha256===source,'manifest requirement checksum mismatch');return requirement;
+}
+export function assertPlanLoadingRequirement(plan:Plan,requirement:import('./loading-contract.js').LoadingRequirement):void {
+ validateRequirement(requirement);
+ const evidence=plan.physicalLoading,c=evidence?.mode==='hard'?evidence.certificate:undefined;
+ need(evidence?.mode==='hard'&&evidence.sourceSha256===requirement.sourceSha256&&c?.version===requirement.version&&c.result.version===requirement.version,'hard loading required: worker result does not satisfy durable loading capabilities');
+ if(requirement.version===2)need(sameCapabilities(c?.requiredCapabilities,requirement.requiredCapabilities)&&sameCapabilities(c?.result.required_capabilities,requirement.requiredCapabilities),'worker cannot downgrade required axle capabilities');
 }
