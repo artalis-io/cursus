@@ -4,6 +4,7 @@ import datetime as dt
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -21,6 +22,32 @@ class StatefulDeploymentTests(unittest.TestCase):
                 'image_revision': 'a' * 40, 'otto_revision': 'b' * 40, 'harness_sha256': deploy.current_harness_digest(),
                 'browser': {'expected': 8, 'unexpected': 0, 'flaky': 0, 'skipped': 0},
                 'runtime': {'migrations': [1], 'native': {name: 'd' * 64 for name in ['surge', 'matrix', 'nexus']}}}
+
+    def responder(self, ssh, *, minimum=1, maximum=5, histories=None):
+        histories = histories or {}
+        def respond(node, command, **kwargs):
+            if command[:3] == ['docker', 'image', 'inspect']:
+                return SimpleNamespace(stdout=f'{minimum}|{maximum}|sha256:candidate\n')
+            if command[:2] == ['docker', 'exec']:
+                history = histories.get(node['name'], list(deploy.SUPPORTED_SCHEMAS))
+                return SimpleNamespace(stdout=json.dumps(history))
+            if command[0] == 'curl':
+                return SimpleNamespace(stdout='{"status":"ready"}')
+            if command[:2] == ['sh', '-c']:
+                return SimpleNamespace(stdout='')
+            raise AssertionError(f'unexpected command: {command}')
+        ssh.side_effect = respond
+
+    def run_update(self, *, action='rollout', migrations=None):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'report.json'
+            report = self.acceptance()
+            report['runtime']['migrations'] = migrations if migrations is not None else list(deploy.SUPPORTED_SCHEMAS)
+            path.write_text(json.dumps(report))
+            return deploy.update_application(self.config(), 'cursus-app:test', True, action, path)
+
+    def assert_no_mutation(self, ssh):
+        self.assertFalse(any('compose' in ' '.join(call.args[1]) for call in ssh.call_args_list))
 
     def test_checked_in_inventory_and_compose_are_safe(self):
         cfg = deploy.load(ROOT / "deploy/stateful.json")
@@ -81,20 +108,39 @@ class StatefulDeploymentTests(unittest.TestCase):
 
     @patch.object(deploy, "ssh")
     def test_rollout_is_secondary_first_and_requires_schema_label(self, ssh):
-        ssh.side_effect = [
-            type("R", (), {"stdout": "1|1|sha256:candidate\n"})(),
-            type("R", (), {"stdout": "1|1|sha256:candidate\n"})(),
-            *[type("R", (), {"stdout": "1\n"})() for _ in range(4)],
-            type("R", (), {"stdout": ""})(),
-            type("R", (), {"stdout": '{"status":"ready"}'})(),
-            type("R", (), {"stdout": ""})(),
-            type("R", (), {"stdout": '{"status":"ready"}'})(),
-        ]
-        with tempfile.TemporaryDirectory() as directory:
-            path = Path(directory) / 'acceptance.json'; path.write_text(json.dumps(self.acceptance()))
-            result = deploy.update_application(self.config(), "cursus-app:test", True, "rollout", path)
+        self.responder(ssh)
+        result = self.run_update()
         self.assertEqual([n["role"] for n in result["nodes"]], ["standby", "primary"])
+        self.assertTrue(all(n['database_schema'] == [1, 2, 3, 4, 5] and n['image_schema_range'] == [1, 5]
+                            for n in result['nodes']))
         self.assertEqual(ssh.call_args_list[0].args[0]["name"], "spark-3eb0")
+        commands = [call.args[1][2] for call in ssh.call_args_list if call.args[1][:2] == ['sh', '-c']]
+        self.assertEqual(len(commands), 2)
+        self.assertIn('-p cursus-stateful-staging-secondary', commands[0])
+        self.assertIn('-p cursus-stateful-staging-primary', commands[1])
+        self.assertTrue(all('--no-build --pull never --wait --wait-timeout 120' in c for c in commands))
+
+    def test_known_schemas_match_migrations_and_image_contract(self):
+        versions = sorted(int(path.name.split('_', 1)[0]) for path in (ROOT / 'server/migrations').glob('*.sql'))
+        self.assertEqual(list(deploy.SUPPORTED_SCHEMAS), versions)
+        dockerfile = (ROOT / 'Dockerfile').read_text()
+        self.assertIn(f'ARG CURSUS_SCHEMA_MIN={versions[0]}\n', dockerfile)
+        self.assertIn(f'ARG CURSUS_SCHEMA_MAX={versions[-1]}\n', dockerfile)
+
+    @patch.object(deploy, 'ssh')
+    def test_schema_five_compatible_rollback_and_non_one_minimum(self, ssh):
+        self.responder(ssh, minimum=3)
+        result = self.run_update(action='rollback')
+        self.assertEqual(len(result['nodes']), 2)
+
+    @patch.object(deploy, 'ssh')
+    def test_all_known_schema_versions_work_when_evidence_and_database_match(self, ssh):
+        for version in deploy.SUPPORTED_SCHEMAS:
+            with self.subTest(version=version):
+                ssh.reset_mock()
+                history = list(range(1, version + 1))
+                self.responder(ssh, maximum=version, histories={n['name']: history for n in self.config()['nodes']})
+                self.assertEqual(len(self.run_update(migrations=history)['nodes']), 2)
 
     def test_release_gate_rejects_missing_failed_dirty_skipped_and_old_evidence(self):
         with self.assertRaisesRegex(deploy.DeploymentError, '--acceptance-report'):
@@ -119,7 +165,7 @@ class StatefulDeploymentTests(unittest.TestCase):
     @patch.object(deploy, 'ssh')
     def test_old_image_rollback_is_blocked_after_reviewer_migration(self, ssh):
         ssh.side_effect = [type('R', (), {'stdout': '1|1|sha256:candidate'})() for _ in range(2)] + [
-            type('R', (), {'stdout': '2'})(), type('R', (), {'stdout': '1'})()]
+            type('R', (), {'stdout': '[1,2]'})()]
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / 'report.json'; path.write_text(json.dumps(self.acceptance()))
             with self.assertRaisesRegex(deploy.DeploymentError, 'incompatible'):
@@ -129,12 +175,122 @@ class StatefulDeploymentTests(unittest.TestCase):
     @patch.object(deploy, 'ssh')
     def test_reviewer_image_rollback_is_blocked_after_planner_migration(self, ssh):
         ssh.side_effect = [type('R', (), {'stdout': '1|2|sha256:candidate'})() for _ in range(2)] + [
-            type('R', (), {'stdout': '3'})(), type('R', (), {'stdout': '2'})()]
+            type('R', (), {'stdout': '[1,2,3]'})()]
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / 'report.json'; path.write_text(json.dumps(self.acceptance()))
             with self.assertRaisesRegex(deploy.DeploymentError, 'incompatible'):
                 deploy.update_application(self.config(), 'cursus-app:old', True, 'rollback', path)
         self.assertFalse(any('compose' in ' '.join(call.args[1]) for call in ssh.call_args_list))
+
+    @patch.object(deploy, 'ssh')
+    def test_every_pre_profile_or_handoff_image_cannot_roll_back_schema_five(self, ssh):
+        for maximum in (1, 2, 3, 4):
+            with self.subTest(maximum=maximum):
+                ssh.reset_mock(); self.responder(ssh, maximum=maximum)
+                with self.assertRaisesRegex(deploy.DeploymentError, 'incompatible'):
+                    self.run_update(action='rollback', migrations=list(range(1, maximum + 1)))
+                self.assert_no_mutation(ssh)
+
+    @patch.object(deploy, 'ssh')
+    def test_invalid_or_future_image_bounds_fail_before_mutation(self, ssh):
+        for lower, upper in [('', '5'), ('1', '<no value>'), ('0', '5'), ('5', '4'), ('1', '6'), ('6', '6'), ('01', '5'), ('1', '5.0')]:
+            with self.subTest(bounds=(lower, upper)):
+                ssh.reset_mock();self.responder(ssh, minimum=lower, maximum=upper)
+                with self.assertRaisesRegex(deploy.DeploymentError, 'schema compatibility'):
+                    self.run_update()
+                self.assert_no_mutation(ssh)
+
+    @patch.object(deploy, 'ssh')
+    def test_incomplete_unknown_or_malformed_database_history_fails_closed(self, ssh):
+        for history in [[], [1, 3, 5], [1, 2, 3, 4, 5, 6], [1, True], ['1'], [1, 2, 2], {'max': 5}]:
+            with self.subTest(history=history):
+                ssh.reset_mock();self.responder(ssh, histories={'spark-7468': history})
+                with self.assertRaises(deploy.DeploymentError):self.run_update()
+                self.assert_no_mutation(ssh)
+
+    @patch.object(deploy, 'ssh')
+    def test_unmigrated_or_lagging_replica_blocks_rolling_upgrade(self, ssh):
+        for node in self.config()['nodes']:
+            with self.subTest(node=node['name']):
+                ssh.reset_mock();self.responder(ssh, histories={node['name']: [1, 2, 3, 4]})
+                with self.assertRaisesRegex(deploy.DeploymentError, 'reviewed migration'):
+                    self.run_update()
+                self.assert_no_mutation(ssh)
+
+    @patch.object(deploy, 'ssh')
+    def test_acceptance_schema_must_be_inside_declared_image_range(self, ssh):
+        self.responder(ssh, maximum=4)
+        with self.assertRaisesRegex(deploy.DeploymentError, 'acceptance schema'):
+            self.run_update()
+        self.assert_no_mutation(ssh)
+
+    @patch.object(deploy, 'ssh')
+    def test_schema_below_image_minimum_is_rejected(self, ssh):
+        self.responder(ssh, minimum=4, histories={'spark-7468': [1, 2, 3]})
+        with self.assertRaisesRegex(deploy.DeploymentError, 'incompatible'):
+            self.run_update(action='rollback')
+        self.assert_no_mutation(ssh)
+
+    @patch.object(deploy, 'ssh')
+    def test_schema_is_reread_before_the_first_compose_write(self, ssh):
+        self.responder(ssh)
+        respond = ssh.side_effect
+        reads = 0
+        def change_schema(node, command, **kwargs):
+            nonlocal reads
+            if command[:2] == ['docker', 'exec']:
+                reads += 1
+                if reads == 3:return SimpleNamespace(stdout='[1,2,3,4]')
+            return respond(node, command, **kwargs)
+        ssh.side_effect = change_schema
+        with self.assertRaisesRegex(deploy.DeploymentError, 'changed after preflight'):
+            self.run_update()
+        self.assert_no_mutation(ssh)
+
+    @patch.object(deploy, 'ssh')
+    def test_database_probe_failure_on_peer_blocks_all_mutations(self, ssh):
+        self.responder(ssh); respond = ssh.side_effect
+        def fail_peer(node, command, **kwargs):
+            if command[:2] == ['docker', 'exec'] and node['role'] == 'primary':
+                raise deploy.DeploymentError('database unavailable')
+            return respond(node, command, **kwargs)
+        ssh.side_effect = fail_peer
+        with self.assertRaisesRegex(deploy.DeploymentError, 'database unavailable'):
+            self.run_update()
+        self.assert_no_mutation(ssh)
+
+    @patch.object(deploy, 'ssh')
+    def test_schema_change_before_second_node_stops_further_updates(self, ssh):
+        self.responder(ssh); respond = ssh.side_effect; reads = 0
+        def change_schema(node, command, **kwargs):
+            nonlocal reads
+            if command[:2] == ['docker', 'exec']:
+                reads += 1
+                if reads == 4:return SimpleNamespace(stdout='[1,2,3,4]')
+            return respond(node, command, **kwargs)
+        ssh.side_effect = change_schema
+        with self.assertRaisesRegex(deploy.DeploymentError, 'spark-7468: database schema changed'):
+            self.run_update()
+        writes = [call for call in ssh.call_args_list if call.args[1][:2] == ['sh', '-c']]
+        self.assertEqual(len(writes), 1)
+        self.assertEqual(writes[0].args[0]['role'], 'standby')
+
+    @patch.object(deploy, 'ssh')
+    def test_invalid_json_database_response_is_reported_without_writing(self, ssh):
+        self.responder(ssh); respond = ssh.side_effect
+        def invalid_json(node, command, **kwargs):
+            return SimpleNamespace(stdout='[1,2,') if command[:2] == ['docker', 'exec'] else respond(node, command, **kwargs)
+        ssh.side_effect = invalid_json
+        with self.assertRaisesRegex(deploy.DeploymentError, 'database schema history'):
+            self.run_update()
+        self.assert_no_mutation(ssh)
+
+    def test_acceptance_rejects_non_integer_or_incomplete_schema_history(self):
+        for history in [[], [True], [1, 3], [1, 2, 3, 4, 5, 6], ['1']]:
+            with self.subTest(history=history), tempfile.TemporaryDirectory() as directory:
+                path = Path(directory) / 'acceptance.json'; report = self.acceptance()
+                report['runtime']['migrations'] = history; path.write_text(json.dumps(report))
+                with self.assertRaises(deploy.DeploymentError):deploy.acceptance_evidence(path, 'sha256:candidate')
 
     @patch.object(deploy, 'ssh')
     def test_peer_image_mismatch_prevents_all_deployment_mutations(self, ssh):

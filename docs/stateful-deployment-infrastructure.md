@@ -165,11 +165,30 @@ updates the secondary first, requires readiness, and then updates the primary:
 
 Both operations are restricted by the checked-in staging inventory, require an
 explicit approval flag, use `--pull never`, and reject images whose declared
-schema compatibility does not include migration version 1. A rollback is not a
-database down-migration.
+schema compatibility does not include the current database version. Known
+schema versions are 1–5. Both minimum and maximum image labels must declare a
+valid range within those versions; unknown future schemas fail closed. A
+rollback is not a database down-migration.
 
 Both commands require passing [production-image acceptance](release-acceptance.md)
 for the exact image ID on both nodes before either node is changed.
+The CLI reads the complete migration history from both databases, rejects gaps,
+duplicates and replication lag across schema versions, and requires the current
+schema to match the acceptance-tested schema. Schema 5 rollouts and compatible
+rollbacks are supported; an image capped at schema 1–4 cannot roll back schema 5.
+
+These are rolling **application** updates. Before a shared-schema upgrade,
+back up staging, restore and rehearse the migrations in an isolated database,
+quiesce incompatible old workers, apply the reviewed migrations and wait for
+the standby to catch up. Then obtain acceptance evidence for the target image
+on that schema and run the CLI. It deliberately refuses to migrate the shared
+database underneath an incompatible running peer. An image rollback never
+restores a database backup over newer writes.
+
+Each update pins the inventory's Compose project, disables builds and pulls,
+waits up to 120 seconds for Compose health, and checks `/health/ready`. The
+database history is reread immediately before each application's update to
+detect changes since preflight.
 
 Before deployment, snapshot `deploy/ha.py plan`, both port-8080 listeners and
 the Hello World process/container state. After staging, repeat those reads and

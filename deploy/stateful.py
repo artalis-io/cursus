@@ -16,9 +16,36 @@ from typing import Any
 
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_CONFIG = ROOT / "deploy/stateful.json"
+SUPPORTED_SCHEMAS = (1, 2, 3, 4, 5)
 
 
 class DeploymentError(RuntimeError): pass
+
+
+def schema_history(value: Any) -> list[int]:
+    """Only a complete, known migration prefix is a compatible database."""
+    if (not isinstance(value, list) or not value or
+            any(type(version) is not int for version in value) or
+            value != list(SUPPORTED_SCHEMAS[:len(value)])):
+        raise DeploymentError("database has an incomplete, malformed, or unsupported schema history")
+    return value
+
+
+def image_schema_range(minimum: str, maximum: str) -> tuple[int, int]:
+    labels = {str(version) for version in SUPPORTED_SCHEMAS}
+    if minimum not in labels or maximum not in labels or int(minimum) > int(maximum):
+        raise DeploymentError("image does not declare supported schema compatibility")
+    return int(minimum), int(maximum)
+
+
+def database_schema(node: dict[str, Any]) -> list[int]:
+    database = ssh(node, ['docker', 'exec', f"{node['project']}-{node['postgres_service']}-1",
+                         'psql', '-U', 'cursus', '-d', 'cursus', '-Atc',
+                         "SELECT coalesce(json_agg(version ORDER BY version),'[]'::json)::text FROM schema_migrations"])
+    try:
+        return schema_history(json.loads(database.stdout))
+    except (ValueError, TypeError, DeploymentError) as exc:
+        raise DeploymentError(f"{node['name']}: malformed or unsupported database schema history") from exc
 
 
 def run(argv: list[str], timeout: int = 30, check: bool = True) -> subprocess.CompletedProcess[str]:
@@ -129,13 +156,13 @@ def acceptance_evidence(path: Path | None, image_id: str, *, fresh: bool = True,
                   and report['cleanup_completed'] is True
                   and report['checkout_dirty'] is False and report.get('hard_loading_enabled',False) is hard_loading_enabled and stats['expected'] >= 8
                   and stats['unexpected'] == stats['flaky'] == stats['skipped'] == 0
-                  and report['runtime']['migrations'] in ([1], [1, 2], [1, 2, 3], [1, 2, 3, 4], [1, 2, 3, 4, 5])
+                  and schema_history(report['runtime']['migrations'])
                   and all(len(report['runtime']['native'][name]) == 64 for name in ['surge', 'matrix', 'nexus'])
                   and len(report['image_revision']) == 40 and len(report['otto_revision']) == 40
                   and report['harness_sha256'] == current_harness_digest() and age >= 0 and (not fresh or age <= 86400))
         if not passed: raise ValueError('mismatched, dirty, incomplete, failed, or expired acceptance evidence')
         return report
-    except (OSError, ValueError, TypeError, KeyError) as exc:
+    except (OSError, ValueError, TypeError, KeyError, DeploymentError) as exc:
         raise DeploymentError(f'invalid acceptance report: {exc}') from exc
 
 
@@ -153,31 +180,44 @@ def update_application(cfg: dict[str, Any], image: str, approved: bool, action: 
                              "{{index .Config.Labels \"io.artalis.cursus.schema.minimum\"}}|"
                              "{{index .Config.Labels \"io.artalis.cursus.schema.maximum\"}}|{{.Id}}"])
         fields = inspect.stdout.strip().split("|", 2)
-        if len(fields) != 3 or fields[0] != "1" or fields[1] not in ("1", "2", "3"):
+        if len(fields) != 3:
             raise DeploymentError(f"{node['name']}: image does not declare supported schema compatibility")
-        acceptance_evidence(acceptance_report, fields[2], fresh=action != 'rollback')
-        checked.append((node, fields[2]))
-    # Inspect both images/evidence before any write, then check the actual DB.
-    # A pre-Reviewer image must never be rolled back onto schema version 2.
-    for node, image_id in checked:
-        database = ssh(node, ['docker', 'exec', f"{node['project']}-{node['postgres_service']}-1",
-                              'psql', '-U', 'cursus', '-d', 'cursus', '-Atc', 'SELECT coalesce(max(version),0) FROM schema_migrations'])
-        schema = database.stdout.strip()
-        inspect = ssh(node, ['docker', 'image', 'inspect', image_id, '--format', '{{index .Config.Labels "io.artalis.cursus.schema.maximum"}}'])
-        if schema not in ('1', '2') or not inspect.stdout.strip().isdigit() or int(schema) > int(inspect.stdout.strip()):
+        lower, upper = image_schema_range(fields[0], fields[1])
+        report = acceptance_evidence(acceptance_report, fields[2], fresh=action != 'rollback')
+        tested_schema = schema_history(report['runtime']['migrations'])[-1]
+        if not lower <= tested_schema <= upper:
+            raise DeploymentError(f"{node['name']}: acceptance schema is outside the image compatibility range")
+        checked.append((node, fields[2], lower, upper, tested_schema))
+    # Never infer compatibility from MAX(version): gaps and an out-of-date
+    # standby also block both writes. Rolling app updates do not migrate a
+    # shared schema beneath an older, still-running peer.
+    histories = []
+    for node, image_id, lower, upper, tested_schema in checked:
+        history = database_schema(node)
+        if not lower <= history[-1] <= upper:
             raise DeploymentError(f"{node['name']}: image is incompatible with the current database schema")
+        if history[-1] != tested_schema:
+            raise DeploymentError(f"{node['name']}: database must match the acceptance-tested schema; "
+                                  "complete the reviewed migration and replication checks before rolling application updates")
+        histories.append(history)
+    if histories[0] != histories[1]:
+        raise DeploymentError("database schema differs between replicas")
     # Check the image and its acceptance evidence on BOTH nodes before any write.
-    for node, image_id in checked:
+    for (node, image_id, lower, upper, _), history in zip(checked, histories):
+        if database_schema(node) != history:
+            raise DeploymentError(f"{node['name']}: database schema changed after preflight")
         remote = (
             f"cd {shlex.quote(node['deployment_dir'])} && "
             f"CURSUS_APP_IMAGE={shlex.quote(image_id)} docker compose --env-file {shlex.quote(node['env_file'])} "
-            "-f compose.stateful.yaml up -d --no-deps --pull never cursus"
+            f"-p {shlex.quote(node['project'])} -f compose.stateful.yaml "
+            "up -d --no-deps --no-build --pull never --wait --wait-timeout 120 cursus"
         )
         ssh(node, ["sh", "-c", remote], timeout=180)
         ready = ssh(node, ["curl", "--silent", "--show-error", "--fail", "--max-time", "10",
                            f"http://127.0.0.1:{node['app_port']}/health/ready"], timeout=20)
         results.append({"node": node["name"], "role": node["role"], "image": image,
-                        "image_id": image_id, "ready": json.loads(ready.stdout)})
+                        "image_id": image_id, "database_schema": history,
+                        "image_schema_range": [lower, upper], "ready": json.loads(ready.stdout)})
     return {"schema_version": 1, "action": action, "image": image, "nodes": results,
             "acceptance_report_sha256": hashlib.sha256(acceptance_report.read_bytes()).hexdigest()}
 
