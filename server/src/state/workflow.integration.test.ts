@@ -102,5 +102,11 @@ test('catalogues distinguish selected/latest and use one tenant-scoped read-only
   assert.deepEqual((await b.pool.query('SELECT count(*) FROM audit_events WHERE tenant_id=$1',[tenant])).rows,before.rows,'catalogue reads never append audit or approval events');
   await b.pool.query(`UPDATE scenarios SET body=jsonb_set(body,'{supersededBy}','{"planId":"replacement"}'::jsonb) WHERE tenant_id=$1 AND id=$2`,[tenant,scenario.id]);
   const archived=(await apps[0]!.inject('/api/plans?day=catalogue-day')).json();assert.ok(archived.every((r:typeof archived[number])=>r.identity.freshness==='archived'&&r.identity.approval!=='approved'));
+  const tieScenario={...scenario,id:'tie-scenario',day:'tie-day',selectedPlanId:undefined};await a.createScenario(tenant,tieScenario.id,tieScenario);
+  for(const id of ['Z-tie','a-tie'])await insert(a,tenant,{...p,id,scenarioId:tieScenario.id});
+  const tiedPlans=(await apps[0]!.inject('/api/plans?day=tie-day')).json();
+  const tiedScenario=(await apps[1]!.inject('/api/scenarios?day=tie-day')).json()[0];
+  assert.equal(tiedPlans.find((r:typeof tiedPlans[number])=>r.identity.latest).id,'a-tie');
+  assert.equal(tiedScenario.latestResult.id,'a-tie','scenario navigation and latest badge share the same opaque-ID tie-break');
  }finally{release();await Promise.all(apps.map(app=>app.close()));await Promise.all([a.close(),b.close()]);}
 });

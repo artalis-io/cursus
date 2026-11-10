@@ -201,7 +201,7 @@ export async function createStatefulApi(options: StatefulApiOptions): Promise<Fa
       const matching=all.filter(p=>s.supersededBy||p.scenarioRevision===s.revision),p=matching.find(p=>p.id===s.selectedPlanId)??matching[0];
       return {...s,changesCount:s.removedVehicleIds.length+s.pins.length+s.forbids.length+s.sequences.length+s.vehicleOverrides.length,
         latest:p?{planId:p.id,createdAt:p.createdAt,...p.stats,unassigned:p.unassigned.length,cost:p.cost?.total??null,currency:p.cost?.currency??null}:null,
-        latestResult:summaries.find(p=>p.id===all[0]?.id)??null,
+        latestResult:summaries.find(p=>p.scenarioId===s.id&&p.identity?.latest)??null,
         selectedResult:summaries.find(p=>p.scenarioId===s.id&&p.id===(s.selectedPlanId??s.manualPlanId))??null};});
   });
   app.post<{ Body: { day?: string; from?: string; label?: string } }>('/api/scenarios', async (req, reply) => {
