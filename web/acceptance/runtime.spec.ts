@@ -2332,6 +2332,7 @@ test('library identity: viewed, selected, latest and approval are distinct; peer
  expect((await get<Scenario>(page.request,`${peer}/api/scenarios/${scenario.id}`)).selectedPlanId).toBe(first.id);
  await selectWorkspaceAction(page,'Scenarios');const row=page.getByRole('dialog').locator(`[data-scenario-id="${scenario.id}"]`);
  await expect(row.locator(`[data-library-identity="${newer.id}"]`).getByText('Latest result',{exact:true})).toBeVisible();await expect(row.locator(`[data-library-identity="${first.id}"]`).getByText('Selected',{exact:true})).toBeVisible();
+ for(const plan of [first,newer])await expect(row.locator(`[data-library-identity="${plan.id}"]`)).toContainText(`${plan.stats.servedOrders}/${plan.stats.totalOrders} served · ${plan.stats.vehiclesUsed} vehicles`);
  await page.getByRole('dialog').getByRole('textbox',{name:'Search scenarios or plan references',exact:true}).fill(first.id);await expect(row).toBeVisible();
  await row.getByRole('button',{name:'Open selected plan',exact:true}).click();await expect(page.locator('section[aria-label="Plan approval"]')).toHaveAttribute('data-plan-id',first.id);expect(writes).toEqual([]);
 });

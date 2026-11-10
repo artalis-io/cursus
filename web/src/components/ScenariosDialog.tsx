@@ -136,9 +136,9 @@ export function ScenariosDialog({ open, onOpenChange, dayId, currentScenarioId, 
                         <button type="button" onClick={() => void del(s.id)} disabled={!library.verified} aria-label={t('scenarios.delete')} className="disabled:opacity-40 shrink-0 rounded p-0.5 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"><Trash2 className="h-3.5 w-3.5" /></button>
                       )}
                     </div>
-                    {s.latestResult&&<div className="mt-2 border-t border-divider pt-1"><p className="text-[11px] font-medium">{t('library.latestResult')}</p><LibraryPlanIdentity plan={s.latestResult} verified={library.verified} viewed={s.latestResult.id===currentPlanId}/>
+                    {s.latestResult&&<div className="mt-2 border-t border-divider pt-1"><p className="text-[11px] font-medium">{t('library.latestResult')}</p><LibraryPlanIdentity coverage plan={s.latestResult} verified={library.verified} viewed={s.latestResult.id===currentPlanId}/>
                       <button type="button" className="mt-1 text-xs underline" disabled={s.latestResult.id===currentPlanId} onClick={()=>{onOpen(s.latestResult!.id);onOpenChange(false);}}>{t('library.openLatest')}</button></div>}
-                    {s.selectedResult&&s.selectedResult.id!==s.latestResult?.id&&<div className="mt-2 border-t border-divider pt-1"><p className="text-[11px] font-medium">{t('library.selectedResult')}</p><LibraryPlanIdentity plan={s.selectedResult} verified={library.verified} viewed={s.selectedResult.id===currentPlanId}/>
+                    {s.selectedResult&&s.selectedResult.id!==s.latestResult?.id&&<div className="mt-2 border-t border-divider pt-1"><p className="text-[11px] font-medium">{t('library.selectedResult')}</p><LibraryPlanIdentity coverage plan={s.selectedResult} verified={library.verified} viewed={s.selectedResult.id===currentPlanId}/>
                       <button type="button" className="mt-1 text-xs underline" disabled={s.selectedResult.id===currentPlanId} onClick={()=>{onOpen(s.selectedResult!.id);onOpenChange(false);}}>{t('library.openSelected')}</button></div>}
                     <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-0.5 pl-6 text-[11px] text-muted-foreground">
                       {s.changesCount > 0 && <span>{t('scenarios.changes', { n: s.changesCount })}</span>}
