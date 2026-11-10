@@ -7,6 +7,7 @@ RUN npm ci
 COPY web/ ./
 COPY server/src/roles.ts /src/server/src/roles.ts
 COPY server/src/workflow-contract.ts /src/server/src/workflow-contract.ts
+COPY server/src/library-contract.ts /src/server/src/library-contract.ts
 COPY server/src/plan/identity.ts /src/server/src/plan/identity.ts
 COPY server/src/planning-profile-contract.ts /src/server/src/planning-profile-contract.ts
 COPY server/src/shipment-contract.ts /src/server/src/shipment-contract.ts
