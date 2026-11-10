@@ -940,7 +940,7 @@ export default function App() {
       />
       <WeekDialog open={weekOpen} onOpenChange={setWeekOpen} />
       <IssuesDialog open={issuesOpen} onOpenChange={setIssuesOpen} plan={plan} onSelect={navigate} />
-      <ScenariosDialog open={scenariosOpen} onOpenChange={setScenariosOpen} dayId={dayId} currentScenarioId={scenario.id} onOpen={(id) => { if (okToSwitch()) void reopenPlan(id); }} onImport={(s) => void onImportScenario(s)} />
+      <ScenariosDialog open={scenariosOpen} onOpenChange={setScenariosOpen} dayId={dayId} currentScenarioId={scenario.id} currentPlanId={plan.id} onOpen={(id) => { if (okToSwitch()) void reopenPlan(id); }} onImport={(s) => void onImportScenario(s)} />
       <HelpOverlay open={helpOpen} onClose={closeHelp} />
       {features.planningProfiles&&<ProfilesDialog open={profilesOpen} onOpenChange={setProfilesOpen} plan={plan} scenario={scenario} onBound={s=>void onImportScenario(s)}/>}
       {features.acknowledgedHandoff&&<HandoffDialog key={plan.id} open={handoffOpen} onOpenChange={setHandoffOpen} plan={plan} scenario={scenario}/>}

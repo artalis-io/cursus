@@ -1,3 +1,5 @@
+import {LibraryPlanIdentity} from '@/components/LibraryPlanIdentity';
+import {matchesPlan,searchText} from '@/lib/library-identity';
 import {useLibraryList} from '@/hooks/useLibraryList';
 import {LibraryStatus} from '@/components/LibraryStatus';
 import { useCallback, useEffect, useLayoutEffect, useState } from 'react';
@@ -15,8 +17,8 @@ import { usePermission } from '@/permissions';
 /* The what-if workspace: the day's scenarios (base + edited copies) with their
  * latest result. Rename to tell them apart, open to switch to one, delete
  * copies, and select 2-3 to compare their KPIs side by side. */
-export function ScenariosDialog({ open, onOpenChange, dayId, currentScenarioId, onOpen, onImport }: {
-  open: boolean; onOpenChange: (o: boolean) => void; dayId: string; currentScenarioId: string;
+export function ScenariosDialog({ open, onOpenChange, dayId, currentScenarioId, currentPlanId, onOpen, onImport }: {
+  open: boolean; onOpenChange: (o: boolean) => void; dayId: string; currentScenarioId: string;currentPlanId:string;
   onOpen: (planId: string) => void; onImport: (s: Scenario) => void;
 }) {
   const t = useT();
@@ -30,9 +32,10 @@ export function ScenariosDialog({ open, onOpenChange, dayId, currentScenarioId, 
   const [err, setErr] = useState<string | null>(null);
   const [sel, setSel] = useState<Set<string>>(new Set());
   const [editing, setEditing] = useState<string | null>(null);
+  const [query,setQuery]=useState('');
   const [editLabel, setEditLabel] = useState('');
 
-  useLayoutEffect(()=>{setErr(null);setSel(new Set());setEditing(null);},[open,library.key]);
+  useLayoutEffect(()=>{setQuery('');setErr(null);setSel(new Set());setEditing(null);},[open,library.key]);
   useEffect(()=>{
     if(list)setSel(previous=>new Set([...previous].filter(id=>list.some(s=>s.id===id))));
   },[list]);
@@ -77,6 +80,7 @@ export function ScenariosDialog({ open, onOpenChange, dayId, currentScenarioId, 
     } catch (e) { if(currentScope())setErr(e instanceof SyntaxError ? t('scenarios.importBad') : describeApiError(e, t)); }
   };
 
+  const filtered=(list??[]).filter(s=>!query.trim()||searchText([s.id,s.label].join(' ')).includes(searchText(query.trim()))||[s.latestResult,s.selectedResult].some(p=>p&&matchesPlan(p,query)));
   const selected = (list ?? []).filter((s) => sel.has(s.id) && s.latest);
   const currency = selected.find((s) => s.latest?.currency)?.latest?.currency ?? 'HUF';
 
@@ -95,13 +99,17 @@ export function ScenariosDialog({ open, onOpenChange, dayId, currentScenarioId, 
         {err && <p role="alert" className="rounded border border-destructive/40 bg-destructive/10 px-2 py-1 text-xs text-destructive">{err}</p>}
 
         <LibraryStatus phase={library.phase} error={library.error} hasSnapshot={list!==null} onRefresh={refresh}/>
+        <div className="space-y-1"><Input aria-label={t('library.searchScenarios')} placeholder={t('library.searchScenarios')} value={query} onChange={e=>{setQuery(e.target.value);setSel(new Set());setEditing(null);}}/>
+          {query&&<button type="button" className="text-xs underline" onClick={()=>setQuery('')}>{t('library.clearSearch')}</button>}
+          <p className="text-[10px] text-muted-foreground">{t('library.snapshotHint')}</p></div>
         {selected.length >= 2 && <CompareTable selected={selected} currency={currency} t={t} />}
 
         <ScrollArea aria-busy={library.pending} data-testid="scenarios-library" className="max-h-[56vh]">
           <div className="space-y-1.5 pr-3">
             {list == null ? null
               : list.length === 0 && library.verified ? <p className="py-8 text-center text-sm text-muted-foreground">{t('scenarios.none')}</p>
-              : list.map((s) => {
+              : filtered.length===0&&library.verified?<p role="status" className="py-8 text-center text-sm text-muted-foreground">{t('library.noMatches')}</p>
+              : filtered.map((s) => {
                 const L = s.latest;
                 const isCurrent = s.id === currentScenarioId;
                 return (
@@ -109,18 +117,18 @@ export function ScenariosDialog({ open, onOpenChange, dayId, currentScenarioId, 
                     <div className="flex items-center gap-2">
                       <input type="checkbox" checked={sel.has(s.id)} onChange={() => toggleSel(s.id)} disabled={!L} className="h-3.5 w-3.5 shrink-0" aria-label={t('scenarios.select')} />
                       {canRename && editing === s.id ? (
-                        <Input autoFocus disabled={!library.verified} value={editLabel} onChange={(e) => setEditLabel(e.target.value)}
+                        <Input aria-label={t('scenarios.rename')} autoFocus disabled={!library.verified} value={editLabel} onChange={(e) => setEditLabel(e.target.value)}
                           onBlur={() => void rename(s.id)} onKeyDown={(e) => { if (e.key === 'Enter') void rename(s.id); if (e.key === 'Escape') setEditing(null); }}
                           className="h-6 flex-1 text-xs" />
                       ) : (
-                        <span className="min-w-0 flex-1 truncate text-sm font-medium">{s.label}</span>
+                        <><span className="min-w-0 flex-1 truncate text-sm font-medium">{s.label}</span><span className="text-[10px] text-muted-foreground">r{s.revision}</span></>
                       )}
                       {s.kind === 'base' && <Badge variant="outline" className="shrink-0 text-[9px]">{t('scenarios.base')}</Badge>}
-                      {isCurrent && <Badge variant="default" className="shrink-0 bg-primary text-[9px]">{t('scenarios.current')}</Badge>}
+                      {isCurrent && <Badge variant="default" className="shrink-0 bg-primary text-[9px]">{t('library.workspaceScenario')}</Badge>}
                       {canRename && !s.supersededBy && s.kind === 'copy' && editing !== s.id && (
                         <button type="button" onClick={() => { setEditing(s.id); setEditLabel(s.label); }} disabled={!library.verified} aria-label={t('scenarios.rename')} className="disabled:opacity-40 shrink-0 rounded p-0.5 text-muted-foreground hover:bg-accent hover:text-foreground"><Pencil className="h-3 w-3" /></button>
                       )}
-                      {L && !isCurrent && (
+                      {L && !s.latestResult && !isCurrent && (
                         <button type="button" onClick={() => { onOpen(L.planId); onOpenChange(false); }} aria-label={t('scenarios.open')} title={t('scenarios.open')} className="disabled:opacity-40 shrink-0 rounded p-0.5 text-muted-foreground hover:bg-accent hover:text-foreground"><FolderOpen className="h-3.5 w-3.5" /></button>
                       )}
                       <button type="button" onClick={() => void exportOne(s.id, s.label)} disabled={!canExport} aria-label={t('scenarios.export')} title={t('scenarios.export')} className="disabled:opacity-40 shrink-0 rounded p-0.5 text-muted-foreground hover:bg-accent hover:text-foreground"><Download className="h-3.5 w-3.5" /></button>
@@ -128,6 +136,10 @@ export function ScenariosDialog({ open, onOpenChange, dayId, currentScenarioId, 
                         <button type="button" onClick={() => void del(s.id)} disabled={!library.verified} aria-label={t('scenarios.delete')} className="disabled:opacity-40 shrink-0 rounded p-0.5 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"><Trash2 className="h-3.5 w-3.5" /></button>
                       )}
                     </div>
+                    {s.latestResult&&<div className="mt-2 border-t border-divider pt-1"><p className="text-[11px] font-medium">{t('library.latestResult')}</p><LibraryPlanIdentity coverage plan={s.latestResult} verified={library.verified} viewed={s.latestResult.id===currentPlanId}/>
+                      <button type="button" className="mt-1 text-xs underline" disabled={s.latestResult.id===currentPlanId} onClick={()=>{onOpen(s.latestResult!.id);onOpenChange(false);}}>{t('library.openLatest')}</button></div>}
+                    {s.selectedResult&&s.selectedResult.id!==s.latestResult?.id&&<div className="mt-2 border-t border-divider pt-1"><p className="text-[11px] font-medium">{t('library.selectedResult')}</p><LibraryPlanIdentity coverage plan={s.selectedResult} verified={library.verified} viewed={s.selectedResult.id===currentPlanId}/>
+                      <button type="button" className="mt-1 text-xs underline" disabled={s.selectedResult.id===currentPlanId} onClick={()=>{onOpen(s.selectedResult!.id);onOpenChange(false);}}>{t('library.openSelected')}</button></div>}
                     <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-0.5 pl-6 text-[11px] text-muted-foreground">
                       {s.changesCount > 0 && <span>{t('scenarios.changes', { n: s.changesCount })}</span>}
                       {L ? (

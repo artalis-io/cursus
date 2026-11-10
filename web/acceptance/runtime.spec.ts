@@ -493,9 +493,10 @@ test('chaos: open rename/upload dialogs lose their privileged controls immediate
     await selectWorkspaceAction(page,'Scenarios');
     const row = page.getByText('Chaos original', { exact: true }).locator('..');
     await row.getByRole('button', { name: 'Rename', exact: true }).click();
-    await page.getByRole('dialog').getByRole('textbox').fill('Must not be committed');
+    await page.getByRole('dialog').getByRole('textbox',{name:'Rename',exact:true}).fill('Must not be committed');
     chaosRole('reviewer'); await page.evaluate(() => window.dispatchEvent(new Event('focus')));
-    await expect(page.getByRole('dialog').getByRole('textbox')).toHaveCount(0);
+    await expect(page.getByRole('dialog').getByRole('textbox',{name:'Rename',exact:true})).toHaveCount(0);
+    await expect(page.getByRole('dialog').getByRole('textbox',{name:'Search scenarios or plan references',exact:true})).toBeEditable();
     await expect(page.getByRole('button', { name: /Rename|Delete/ })).toHaveCount(0);
     expect((await get<Scenario>(page.request, `${peer}/api/scenarios/${copy.id}`)).label).toBe('Chaos original');
     await page.keyboard.press('Escape');
@@ -549,12 +550,25 @@ test('chaos: failed preview request remains recoverable and rapid double clicks 
   } finally { chaosRole('planner'); }
 });
 
+// Catalogue verification time advances on reads; every authoritative field
+// (including identity/hash/approval/selection) must still compare unchanged.
+function withoutCatalogueReadTimes(rows:unknown[]):unknown[]{
+ return JSON.parse(JSON.stringify(rows,(key,value:unknown)=>{
+  if(key==='identity'&&value&&typeof value==='object'&&'checkedAt' in value){
+   const {checkedAt,...identity}=value as Record<string,unknown>;
+   expect(typeof checkedAt).toBe('string');expect(Number.isFinite(Date.parse(String(checkedAt)))).toBe(true);
+   return identity;
+  }
+  return value;
+ })) as unknown[];
+}
+
 test('chaos: client role tampering and mixed API verbs cannot mutate Reviewer state through either replica', async ({ page, context }) => {
   await chaosLogin(page, 'reviewer');
   try {
     const base = await baseline(page);
     const before = await get<Scenario>(page.request, `/api/scenarios/${base.scenarioId}`);
-    const scenariosBefore = await get<unknown[]>(page.request, '/api/scenarios');
+    const scenariosBefore = withoutCatalogueReadTimes(await get<unknown[]>(page.request, '/api/scenarios'));
     await page.evaluate(() => { localStorage.setItem('role', 'admin'); localStorage.setItem('permissions', JSON.stringify(['scenario.edit', 'dataset.admit'])); });
     await context.addCookies([{ name: 'cursus_view_as', value: 'admin', url: page.url() }]);
     await page.reload(); await expect(page.getByText('Read-only access', { exact: true })).toBeVisible();
@@ -574,7 +588,7 @@ test('chaos: client role tampering and mixed API verbs cannot mutate Reviewer st
         expect(response.status(), `${method} ${path}`).toBe(403);
       }
       expect(await get<Scenario>(page.request, `${origin}/api/scenarios/${base.scenarioId}`)).toEqual(before);
-      expect(await get<unknown[]>(page.request, `${origin}/api/scenarios`)).toEqual(scenariosBefore);
+      expect(withoutCatalogueReadTimes(await get<unknown[]>(page.request, `${origin}/api/scenarios`))).toEqual(scenariosBefore);
       expect((await page.request.get(`${origin}/api/plans/${base.id}/handoff.json`)).status()).toBe(200);
     }
     const identity = await get<{ role: string; effectiveRole: string }>(page.request, '/api/auth/me');
@@ -1679,7 +1693,7 @@ test('approved handoff is durable across replicas, read-only for Planner/Reviewe
 test('workspace navigation: keyboard and dialog focus preserve state without writes',async({page},testInfo)=>{
  await login(page);
  const writes:string[]=[];page.on('request',r=>{if(new URL(r.url()).pathname.startsWith('/api/')&&!['GET','HEAD','OPTIONS'].includes(r.method()))writes.push(r.method()+' '+new URL(r.url()).pathname);});
- const before=await get<Scenario[]>(page.request,'/api/scenarios');
+ const before=withoutCatalogueReadTimes(await get<unknown[]>(page.request,'/api/scenarios'));
  const workspaceKey=await savedWorkspaceKey(page);
  const selected=await page.evaluate(key=>localStorage.getItem(key),workspaceKey);
  const nav=page.getByRole('navigation',{name:'Workspace tools'}),prepare=nav.getByRole('button',{name:'Prepare',exact:true});
@@ -1697,7 +1711,7 @@ test('workspace navigation: keyboard and dialog focus preserve state without wri
  }
  await selectWorkspaceAction(page,'Plan approval');await expect(page.locator('#cursus-plan-review')).toBeFocused();
  await prepare.click();await page.locator('header').getByText('Cursus',{exact:true}).click();await expect(page.getByRole('menu')).toHaveCount(0);
- expect(await get<Scenario[]>(page.request,'/api/scenarios')).toEqual(before);expect(await page.evaluate(key=>localStorage.getItem(key),workspaceKey)).toBe(selected);expect(writes).toEqual([]);
+ expect(withoutCatalogueReadTimes(await get<unknown[]>(page.request,'/api/scenarios'))).toEqual(before);expect(await page.evaluate(key=>localStorage.getItem(key),workspaceKey)).toBe(selected);expect(writes).toEqual([]);
  await page.screenshot({path:testInfo.outputPath('workspace-desktop.png')});
 });
 
@@ -2308,4 +2322,45 @@ for(const kind of ['plans','scenarios'] as const)test(`library ${kind}: hung ini
   await expect(dialog.locator(selector)).toHaveCount(1);await expect(dialog.getByRole('button',{name:'Retry',exact:true})).toBeEnabled();
   hold=false;await dialog.getByRole('button',{name:'Retry',exact:true}).click();await expect(dialog.getByRole('alert')).toHaveCount(0);await expect(dialog.locator(selector)).toHaveCount(1);
  }finally{held.release();}
+});
+
+test('library identity: viewed, selected, latest and approval are distinct; peer edits invalidate badges and opening never adopts',async({page})=>{
+ await login(page);await shortBudget(page);
+ const base=await baseline(page),vehicle=base.vehicles[0]!;
+ await page.locator('aside').first().locator('[data-inspect-vehicle]').getByText(vehicle.ref,{exact:true}).click();
+ await page.getByRole('button',{name:`Mark ${vehicle.ref} unavailable`}).click();
+ const first=await finishSolve(page,()=>page.getByRole('button',{name:'Replan',exact:true}).click());
+ const newer=await finishSolve(page,()=>page.getByRole('button',{name:'Replan',exact:true}).click(),{keep:true});
+ expect(newer.scenarioId).toBe(first.scenarioId);const scenario=await get<Scenario>(page.request,`/api/scenarios/${first.scenarioId}`),origin=new URL(page.url()).origin;
+ expect(scenario.selectedPlanId).toBe(first.id);
+ for(const [action,version] of [['review',0],['approve',1]] as const){const r=await page.request.post(`${peer}/api/plans/${first.id}/${action}`,{headers:{origin},data:{version,revision:scenario.revision,acknowledgeExceptions:true}});expect(r.status(),await r.text()).toBe(200);}
+ const writes:string[]=[];page.on('request',r=>{if(new URL(r.url()).pathname.startsWith('/api/')&&!['GET','HEAD','OPTIONS'].includes(r.method()))writes.push(r.url());});
+ await selectWorkspaceAction(page,'Plans');const dialog=page.getByRole('dialog'),old=dialog.locator(`[data-plan-id="${first.id}"]`),latest=dialog.locator(`[data-plan-id="${newer.id}"]`);
+ await expect(old.locator('[data-library-approval]')).toHaveAttribute('data-library-approval','approved');await expect(old.getByText('Viewed',{exact:true})).toBeVisible();await expect(old.getByText('Selected',{exact:true})).toBeVisible();await expect(old.getByText('Latest result',{exact:true})).toHaveCount(0);
+ await expect(latest.getByText('Latest result',{exact:true})).toBeVisible();await expect(latest.locator('[data-library-approval]')).toHaveAttribute('data-library-approval','draft');await expect(latest.getByText('Selected',{exact:true})).toHaveCount(0);
+ const search=dialog.getByRole('textbox',{name:'Search scenario name or plan reference',exact:true});await search.fill(first.id.toUpperCase());await expect(dialog.locator('[data-plan-id]')).toHaveCount(1);await expect(old).toBeVisible();
+ await search.fill('no-such-plan-reference');await expect(dialog.getByText('No matching results for this day.',{exact:true})).toBeVisible();await dialog.getByRole('button',{name:'Clear search',exact:true}).click();await expect(old).toBeVisible();
+ await page.route('**/api/plans?day=*',route=>route.fulfill({status:503,json:{error:'Temporary outage'}}));await dialog.getByRole('button',{name:'Refresh',exact:true}).click();
+ await expect(dialog.getByRole('alert')).toBeVisible();await expect(old.locator('[data-library-approval]')).toHaveAttribute('data-library-approval','unknown');await expect(old.locator('[data-library-freshness]')).toHaveAttribute('data-library-freshness','unknown');await expect(old.getByText('Selected',{exact:true})).toHaveCount(0);
+ await page.unroute('**/api/plans?day=*');
+ const edited=await page.request.post(`${peer}/api/scenarios/${scenario.id}/edit`,{headers:{origin,'if-match':`"${scenario.revision}"`},data:{edit:{op:'removeVehicle',vehicleId:first.vehicles[0]!.id}}});expect(edited.status(),await edited.text()).toBe(200);
+ await dialog.getByRole('button',{name:'Retry',exact:true}).click();await expect(old.locator('[data-library-approval]')).toHaveAttribute('data-library-approval','superseded');await expect(old.locator('[data-library-freshness]')).toHaveAttribute('data-library-freshness','stale');
+ page.once('dialog',d=>d.accept());await latest.getByRole('button',{name:'Reopen',exact:true}).click();await expect(page.locator('section[aria-label="Plan approval"]')).toHaveAttribute('data-plan-id',newer.id);
+ expect((await get<Scenario>(page.request,`${peer}/api/scenarios/${scenario.id}`)).selectedPlanId).toBe(first.id);
+ await selectWorkspaceAction(page,'Scenarios');const row=page.getByRole('dialog').locator(`[data-scenario-id="${scenario.id}"]`);
+ await expect(row.locator(`[data-library-identity="${newer.id}"]`).getByText('Latest result',{exact:true})).toBeVisible();await expect(row.locator(`[data-library-identity="${first.id}"]`).getByText('Selected',{exact:true})).toBeVisible();
+ for(const plan of [first,newer])await expect(row.locator(`[data-library-identity="${plan.id}"]`)).toContainText(`${plan.stats.servedOrders}/${plan.stats.totalOrders} served · ${plan.stats.vehiclesUsed} vehicles`);
+ await page.getByRole('dialog').getByRole('textbox',{name:'Search scenarios or plan references',exact:true}).fill(first.id);await expect(row).toBeVisible();
+ page.once('dialog',d=>d.accept());await row.getByRole('button',{name:'Open selected plan',exact:true}).click();await expect(page.locator('section[aria-label="Plan approval"]')).toHaveAttribute('data-plan-id',first.id);expect(writes).toEqual([]);
+});
+
+test('library identity: missing or borrowed evidence remains Unknown and Reviewer search stays read-only',async({page})=>{
+ await login(page,'reviewer@acceptance.example.test');const base=await librarySource(page);
+ const list=await get<Array<import('../src/lib/api').PlanSummary>>(page.request,`/api/plans?day=${base.dayId}`),source=list.find(p=>p.id===base.id)!;let mode:'missing'|'borrowed'='missing';
+ await page.route(`**/api/plans?day=${base.dayId}`,route=>route.fulfill({json:[{...source,identity:mode==='missing'?undefined:{...source.identity!,planId:'unrelated-plan',approval:'approved',freshness:'current'}}]}));
+ const writes:string[]=[];page.on('request',r=>{if(new URL(r.url()).pathname.startsWith('/api/')&&!['GET','HEAD','OPTIONS'].includes(r.method()))writes.push(r.url());});
+ await selectWorkspaceAction(page,'Plans');const dialog=page.getByRole('dialog');await expect(dialog.locator('[data-library-approval]')).toHaveAttribute('data-library-approval','unknown');
+ await dialog.getByRole('textbox',{name:'Search scenario name or plan reference',exact:true}).fill(base.id);await expect(dialog.locator('[data-plan-id]')).toHaveCount(1);
+ mode='borrowed';await dialog.getByRole('button',{name:'Refresh',exact:true}).click();await expect(dialog.locator('[data-library-approval]')).toHaveAttribute('data-library-approval','unknown');
+ await expect(dialog.getByRole('button',{name:/Approve|Review|Select plan/})).toHaveCount(0);expect(writes).toEqual([]);
 });

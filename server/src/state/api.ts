@@ -193,12 +193,16 @@ export async function createStatefulApi(options: StatefulApiOptions): Promise<Fa
   app.get('/api/days', async () => statefulDaySummaries(
     await scenarios.list(), await options.store.listPlans(options.tenantId),
   ));
-  app.get<{ Querystring: { day?: string } }>('/api/scenarios', async (req) => {
-    const rows=await scenarios.list(req.query.day),plans=await options.store.listPlans(options.tenantId);
-    return rows.map(s=>{const matching=plans.filter(p=>p.scenarioId===s.id&&(s.supersededBy||p.scenarioRevision===s.revision)).sort((a,b)=>b.createdAt.localeCompare(a.createdAt));
-      const p=matching.find(p=>p.id===s.selectedPlanId)??matching[0];
+  app.get<{ Querystring: { day?: string } }>('/api/scenarios', async (req,reply) => {
+    reply.header('Cache-Control','private, no-store');
+    const {scenarios:rows,plans,identities}=await workflow.catalogue(req.query.day);
+    const summaries=statefulPlanSummaries(rows,plans,req.query.day).map(p=>({...p,identity:identities.get(p.id)}));
+    return rows.map(s=>{const all=plans.filter(p=>p.scenarioId===s.id).sort((a,b)=>b.createdAt.localeCompare(a.createdAt)||b.id.localeCompare(a.id));
+      const matching=all.filter(p=>s.supersededBy||p.scenarioRevision===s.revision),p=matching.find(p=>p.id===s.selectedPlanId)??matching[0];
       return {...s,changesCount:s.removedVehicleIds.length+s.pins.length+s.forbids.length+s.sequences.length+s.vehicleOverrides.length,
-        latest:p?{planId:p.id,createdAt:p.createdAt,...p.stats,unassigned:p.unassigned.length,cost:p.cost?.total??null,currency:p.cost?.currency??null}:null};});
+        latest:p?{planId:p.id,createdAt:p.createdAt,...p.stats,unassigned:p.unassigned.length,cost:p.cost?.total??null,currency:p.cost?.currency??null}:null,
+        latestResult:summaries.find(p=>p.scenarioId===s.id&&p.identity?.latest)??null,
+        selectedResult:summaries.find(p=>p.scenarioId===s.id&&p.id===(s.selectedPlanId??s.manualPlanId))??null};});
   });
   app.post<{ Body: { day?: string; from?: string; label?: string } }>('/api/scenarios', async (req, reply) => {
     if (req.body?.from) { const parent = await scenarios.get(req.body.from); if (!parent) return reply.code(404).send({ error: 'parent scenario not found' });
@@ -344,9 +348,11 @@ export async function createStatefulApi(options: StatefulApiOptions): Promise<Fa
         vehicleInfo: settings?.vehicleInfo??loadVehicleInfo(),tariff:settings?.tariff }) };
     },
   );
-  app.get<{ Querystring: { day?: string } }>('/api/plans', async (req) => statefulPlanSummaries(
-    await scenarios.list(), await options.store.listPlans(options.tenantId), req.query.day,
-  ));
+  app.get<{ Querystring: { day?: string } }>('/api/plans', async (req,reply) => {
+    reply.header('Cache-Control','private, no-store');
+    const {scenarios:rows,plans,identities}=await workflow.catalogue(req.query.day);
+    return statefulPlanSummaries(rows,plans,req.query.day).map(p=>({...p,identity:identities.get(p.id)}));
+  });
   app.get<{ Querystring: { base?: string; revised?: string } }>('/api/compare', async (req, reply) => {
     const [base, revised] = await Promise.all([
       req.query.base ? options.store.getPlan(options.tenantId, req.query.base) : undefined,

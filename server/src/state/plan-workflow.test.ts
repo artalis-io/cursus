@@ -36,3 +36,8 @@ test('approval fails closed on stale, incomplete and missing evidence and hard c
     (p: Plan) => { p.vehicles[0]!.trips[0]!.stops[0]!.maxTonnage = undefined as unknown as null; },
   ]) { const p = validPlan(); mutate(p); assert.ok(approvalBlockers(p, 1).length); }
 });
+
+test('legacy catalogue evidence never infers approval from a validated plan',async()=>{
+ const {legacyLibraryPlan}=await import('../library.js');const p=validPlan();const item=legacyLibraryPlan(p,undefined,p.id);
+ assert.equal(item.identity.approval,'unknown');assert.equal(item.identity.freshness,'unknown');assert.equal(item.identity.planSha256,null);
+});
