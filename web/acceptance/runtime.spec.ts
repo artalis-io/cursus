@@ -493,9 +493,10 @@ test('chaos: open rename/upload dialogs lose their privileged controls immediate
     await selectWorkspaceAction(page,'Scenarios');
     const row = page.getByText('Chaos original', { exact: true }).locator('..');
     await row.getByRole('button', { name: 'Rename', exact: true }).click();
-    await page.getByRole('dialog').getByRole('textbox').fill('Must not be committed');
+    await page.getByRole('dialog').getByRole('textbox',{name:'Rename',exact:true}).fill('Must not be committed');
     chaosRole('reviewer'); await page.evaluate(() => window.dispatchEvent(new Event('focus')));
-    await expect(page.getByRole('dialog').getByRole('textbox')).toHaveCount(0);
+    await expect(page.getByRole('dialog').getByRole('textbox',{name:'Rename',exact:true})).toHaveCount(0);
+    await expect(page.getByRole('dialog').getByRole('textbox',{name:'Search scenarios or plan references',exact:true})).toBeEditable();
     await expect(page.getByRole('button', { name: /Rename|Delete/ })).toHaveCount(0);
     expect((await get<Scenario>(page.request, `${peer}/api/scenarios/${copy.id}`)).label).toBe('Chaos original');
     await page.keyboard.press('Escape');

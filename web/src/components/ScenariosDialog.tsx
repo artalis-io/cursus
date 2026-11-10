@@ -117,7 +117,7 @@ export function ScenariosDialog({ open, onOpenChange, dayId, currentScenarioId, 
                     <div className="flex items-center gap-2">
                       <input type="checkbox" checked={sel.has(s.id)} onChange={() => toggleSel(s.id)} disabled={!L} className="h-3.5 w-3.5 shrink-0" aria-label={t('scenarios.select')} />
                       {canRename && editing === s.id ? (
-                        <Input autoFocus disabled={!library.verified} value={editLabel} onChange={(e) => setEditLabel(e.target.value)}
+                        <Input aria-label={t('scenarios.rename')} autoFocus disabled={!library.verified} value={editLabel} onChange={(e) => setEditLabel(e.target.value)}
                           onBlur={() => void rename(s.id)} onKeyDown={(e) => { if (e.key === 'Enter') void rename(s.id); if (e.key === 'Escape') setEditing(null); }}
                           className="h-6 flex-1 text-xs" />
                       ) : (
