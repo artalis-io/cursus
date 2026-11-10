@@ -2527,3 +2527,28 @@ test('change review: saved manual decisions are distinguished from future Replan
  await dialog.getByRole('button',{name:'Reload instructions',exact:true}).click();await expect(saved).toContainText(manual.id);expect(writes).toEqual([]);
  await page.keyboard.press('Escape');await expectPlanTotals(page,manual);expect(await get<Plan>(page.request,`${peer}/api/plans/${manual.id}`)).toEqual(manual);
 });
+test('change review: late route geometry cannot discard an acknowledged exact Undo',async({page})=>{
+ const {scenario,plan}=await changeReviewFixture(page);await page.keyboard.press('Escape');
+ const key=await savedWorkspaceKey(page);await expect.poll(()=>page.evaluate(k=>JSON.parse(localStorage.getItem(k)??'null')?.planId,key)).toBe(plan.id);
+ const geometry=gate(),geometryStarted=gate(),undo=gate(),undoStarted=gate();
+ await page.route(url=>url.pathname===`/api/plans/${plan.id}`,async route=>{
+  const response=await route.fetch(),body=await response.json() as Plan;
+  if(new URL(route.request().url()).searchParams.get('geometry')==='stored'){
+   for(const v of body.vehicles)for(const trip of v.trips)trip.geometry=null;
+  }else{
+   geometryStarted.release();await geometry.wait;
+   for(const v of body.vehicles)for(const trip of v.trips)trip.geometry={type:'LineString',coordinates:[[19,47],[19.1,47.1]]};
+  }
+  await route.fulfill({response,json:body});
+ });
+ await page.route('**/undo-instruction',async route=>{const response=await route.fetch();expect(response.status()).toBe(200);undoStarted.release();await undo.wait;await route.fulfill({response});});
+ try{
+  await page.reload();await geometryStarted.wait;await expectPlanTotals(page,plan);await selectWorkspaceAction(page,'Changes');const dialog=page.getByRole('dialog');
+  await dialog.locator('[data-request-id="130"]').getByRole('button').click();await undoStarted.wait;
+  const enriched=page.waitForResponse(r=>new URL(r.url()).pathname===`/api/plans/${plan.id}`&&!new URL(r.url()).searchParams.has('geometry'));
+  geometry.release();await settleResponse(page,await enriched);
+  undo.release();await expect(dialog.locator('[data-request-id="130"]')).toHaveCount(0);await expect(dialog.locator('[data-request-id="170"]')).toBeVisible();
+  expect((await get<Scenario>(page.request,`${peer}/api/scenarios/${scenario.id}`)).pins.map(p=>p.requestId)).toEqual([170]);
+  await page.keyboard.press('Escape');await expectPlanTotals(page,plan);expect(await get<Plan>(page.request,`${peer}/api/plans/${plan.id}`)).toEqual(plan);
+ }finally{geometry.release();undo.release();}
+});

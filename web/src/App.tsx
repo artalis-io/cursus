@@ -566,18 +566,20 @@ export default function App() {
   }, [showToast, t, rejectStaleIntent]);
 
   const undoBusy = useRef(false);
-  const undoInstruction = useCallback(async (instruction:Instruction) => {
+  const undoInstruction = useCallback(async (instruction:Instruction, displayed:{scenarioId:string;revision:number;planId:string}) => {
     const snapshot=scenarioRef.current,viewedPlan=planRef.current;
-    if(!snapshot||!viewedPlan||undoBusy.current||pendingEditsRef.current>0||manualBusyRef.current||!writeAccess.current.edit||!writeAccess.current.mounted)return;
+    if(!snapshot||!viewedPlan||snapshot.id!==displayed.scenarioId||snapshot.revision!==displayed.revision||viewedPlan.id!==displayed.planId||undoBusy.current||pendingEditsRef.current>0||manualBusyRef.current||!writeAccess.current.edit||!writeAccess.current.mounted)return;
     undoBusy.current=true;
     const epoch=writeAccess.current.epoch;
     setPendingEdits(n=>n+1);
     const queued=editQueue.current.then(async()=>{
+      // The rendered revision is authoritative, even before a queued React render
+      // catches up with a completed local edit. Geometry is cosmetic: compare plan IDs.
       // Captured intent must not follow a navigation, role change, or queued edit.
-      if(!writeAccess.current.mounted||!writeAccess.current.edit||epoch!==writeAccess.current.epoch||scenarioRef.current!==snapshot||planRef.current!==viewedPlan)return false;
+      if(!writeAccess.current.mounted||!writeAccess.current.edit||epoch!==writeAccess.current.epoch||scenarioRef.current!==snapshot||planRef.current?.id!==viewedPlan.id)return false;
       try{
-        const updated=await api.undoInstruction(snapshot.id,snapshot.revision,{instruction,datasetSha256:snapshot.deliveryDatasetSha256});
-        if(writeAccess.current.mounted&&epoch===writeAccess.current.epoch&&scenarioRef.current===snapshot&&planRef.current===viewedPlan){scenarioRef.current=updated;setScenario(updated);setError(null);}
+        const updated=await api.undoInstruction(displayed.scenarioId,displayed.revision,{instruction,datasetSha256:snapshot.deliveryDatasetSha256});
+        if(writeAccess.current.mounted&&epoch===writeAccess.current.epoch&&scenarioRef.current===snapshot&&planRef.current?.id===viewedPlan.id){scenarioRef.current=updated;setScenario(updated);setError(null);}
         return true;
       }catch(e){if(scenarioRef.current===snapshot){rejectStaleIntent(e);setError(describeApiError(e,t));}return false;}
     });
@@ -590,10 +592,10 @@ export default function App() {
     if(!snapshot||!viewedPlan||pendingEditsRef.current>0||undoBusy.current||manualBusyRef.current)return;
     try{
       const latest=await api.scenario(snapshot.id);
-      if(writeAccess.current.mounted&&navigationGeneration.current===generation&&scenarioRef.current===snapshot&&planRef.current===viewedPlan&&pendingEditsRef.current===0&&!undoBusy.current&&!manualBusyRef.current){
+      if(writeAccess.current.mounted&&navigationGeneration.current===generation&&scenarioRef.current===snapshot&&planRef.current?.id===viewedPlan.id&&pendingEditsRef.current===0&&!undoBusy.current&&!manualBusyRef.current){
         writeAccess.current.epoch++;scenarioRef.current=latest;setScenario(latest);setFreshnessError(null);setError(null);
       }
-    }catch(e){if(scenarioRef.current===snapshot&&planRef.current===viewedPlan)setError(describeApiError(e,t));}
+    }catch(e){if(scenarioRef.current===snapshot&&planRef.current?.id===viewedPlan.id)setError(describeApiError(e,t));}
   },[t]);
 
   // Apply several staged edits at once (bulk actions); one fork + one revision.
@@ -967,7 +969,7 @@ export default function App() {
       <ChangesDialog
         open={changesOpen} onOpenChange={setChangesOpen}
         plan={plan} scenario={scenario} dirty={dirty} solving={!!solving || pendingEdits > 0 || manualBusy || !!candidate || !!freshnessError || workspaceLoading || !!scenario.supersededBy}
-        onUndo={(instruction) => void undoInstruction(instruction)}
+        onUndo={(instruction) => void undoInstruction(instruction,{scenarioId:scenario.id,revision:scenario.revision,planId:plan.id})}
         notice={freshnessError?t(freshnessError):error}
         onReload={() => void reloadInstructions()} reloadDisabled={pendingEdits > 0 || manualBusy || !!solving}
         onDiscardAll={() => { setChangesOpen(false); resetToBaseline(); }}
