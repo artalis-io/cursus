@@ -5,7 +5,8 @@ original or handwritten plan is required or introduced. Existing comparisons
 continue to use saved plans and scenario revisions.
 
 For status-labelled operational exports and the approved-only download contract,
-see [Approved plan handoff](approved-plan-handoff.md).
+see [Approved plan handoff](approved-plan-handoff.md). For individual Replan
+instructions, see [Changes review and Undo](changes-review-and-undo.md).
 
 ## Permissions
 

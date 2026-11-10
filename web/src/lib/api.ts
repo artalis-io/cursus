@@ -99,6 +99,8 @@ export const api = {
     jsend<Scenario>('/api/scenarios', 'POST', { from, removeVehicleId, label }),
 
   /** Apply a manual override; the backend forks a copy from a base scenario. */
+  undoInstruction: (id:string,revision:number,body:import('../../../server/src/change-review-contract').UndoInstruction) =>
+    jsend<Scenario>(`/api/scenarios/${id}/undo-instruction`, 'POST', body, revision),
   editScenario: (id: string, revision: number, edit: ScenarioEdit, label?: string) =>
     jsend<Scenario>(`/api/scenarios/${id}/edit`, 'POST', { edit, label }, revision),
 

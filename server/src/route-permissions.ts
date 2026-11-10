@@ -19,7 +19,7 @@ routes('workspace.export', 'GET', ['/api/scenarios/:id/export', '/api/plans/:id/
   '/api/plans/:id/routes.csv', '/api/plans/:id/routesheet.html', '/api/plans/:id/handoff.json']);
 routes('scenario.create', 'POST', ['/api/scenarios']);
 routes('scenario.rename', 'POST', ['/api/scenarios/:id/rename']);
-routes('scenario.edit', 'POST', ['/api/scenarios/:id/edit', '/api/scenarios/:id/edits']);
+routes('scenario.edit', 'POST', ['/api/scenarios/:id/edit', '/api/scenarios/:id/edits', '/api/scenarios/:id/undo-instruction']);
 routes('scenario.edit', 'POST', ['/api/scenarios/:id/manual-plan']);
 routes('scenario.edit', 'POST', ['/api/scenarios/:id/select-plan']);
 routes('plan.evaluate', 'POST', ['/api/scenarios/:id/manual-preview']);
