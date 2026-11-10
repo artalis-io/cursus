@@ -2331,13 +2331,13 @@ test('library identity: viewed, selected, latest and approval are distinct; peer
  await page.unroute('**/api/plans?day=*');
  const edited=await page.request.post(`${peer}/api/scenarios/${scenario.id}/edit`,{headers:{origin,'if-match':`"${scenario.revision}"`},data:{edit:{op:'removeVehicle',vehicleId:first.vehicles[0]!.id}}});expect(edited.status(),await edited.text()).toBe(200);
  await dialog.getByRole('button',{name:'Retry',exact:true}).click();await expect(old.locator('[data-library-approval]')).toHaveAttribute('data-library-approval','superseded');await expect(old.locator('[data-library-freshness]')).toHaveAttribute('data-library-freshness','stale');
- await latest.getByRole('button',{name:'Reopen',exact:true}).click();await expect(page.locator('section[aria-label="Plan approval"]')).toHaveAttribute('data-plan-id',newer.id);
+ page.once('dialog',d=>d.accept());await latest.getByRole('button',{name:'Reopen',exact:true}).click();await expect(page.locator('section[aria-label="Plan approval"]')).toHaveAttribute('data-plan-id',newer.id);
  expect((await get<Scenario>(page.request,`${peer}/api/scenarios/${scenario.id}`)).selectedPlanId).toBe(first.id);
  await selectWorkspaceAction(page,'Scenarios');const row=page.getByRole('dialog').locator(`[data-scenario-id="${scenario.id}"]`);
  await expect(row.locator(`[data-library-identity="${newer.id}"]`).getByText('Latest result',{exact:true})).toBeVisible();await expect(row.locator(`[data-library-identity="${first.id}"]`).getByText('Selected',{exact:true})).toBeVisible();
  for(const plan of [first,newer])await expect(row.locator(`[data-library-identity="${plan.id}"]`)).toContainText(`${plan.stats.servedOrders}/${plan.stats.totalOrders} served · ${plan.stats.vehiclesUsed} vehicles`);
  await page.getByRole('dialog').getByRole('textbox',{name:'Search scenarios or plan references',exact:true}).fill(first.id);await expect(row).toBeVisible();
- await row.getByRole('button',{name:'Open selected plan',exact:true}).click();await expect(page.locator('section[aria-label="Plan approval"]')).toHaveAttribute('data-plan-id',first.id);expect(writes).toEqual([]);
+ page.once('dialog',d=>d.accept());await row.getByRole('button',{name:'Open selected plan',exact:true}).click();await expect(page.locator('section[aria-label="Plan approval"]')).toHaveAttribute('data-plan-id',first.id);expect(writes).toEqual([]);
 });
 
 test('library identity: missing or borrowed evidence remains Unknown and Reviewer search stays read-only',async({page})=>{
