@@ -178,6 +178,7 @@ export interface PlanUnassigned {
 }
 
 export interface PlanProvenance {
+  costing?:import('./cost-review-contract.js').CostingSnapshot;
   inputUpdate?:import('./input-update-contract.js').InputUpdateLineage;
   shipmentSha256?:string;
   planningProfiles?: import('./planning-profiles.js').ProfileRef[];

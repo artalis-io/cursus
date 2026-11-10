@@ -20,10 +20,10 @@ function Delta({ value, goodWhenNegative, unit = '', suffix,allowImprovement=tru
   );
 }
 
-function Kpi({ name, label, value, detail, compact, warning=false }: { name:string; label:string; value:string; detail?:React.ReactNode; compact:boolean; warning?:boolean }) {
+function Kpi({ name, label, value, detail, compact, warning=false, onClick, actionLabel }: { name:string; label:string; value:string; detail?:React.ReactNode; compact:boolean; warning?:boolean; onClick?:()=>void; actionLabel?:string }) {
   return <div data-kpi={name} className={`min-w-0 border-divider px-3 ${compact?'py-1.5':'py-2.5'} [&:not(:nth-child(3n+1))]:border-l sm:[&:not(:first-child)]:border-l`}>
     <dt className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground sm:text-[11px]">{label}</dt>
-    <dd data-kpi-value className={`tnum mt-0.5 break-words font-semibold leading-tight ${compact?'text-base':'text-xl'} ${warning?'text-warning':''}`}>{value}</dd>
+    <dd data-kpi-value className={`tnum mt-0.5 break-words font-semibold leading-tight ${compact?'text-base':'text-xl'} ${warning?'text-warning':''}`}>{onClick?<button type="button" onClick={onClick} aria-label={actionLabel} className="rounded text-left underline decoration-dotted underline-offset-4 hover:decoration-solid focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary">{value}</button>:value}</dd>
     {detail&&<dd className="mt-1 text-[11px] text-muted-foreground">{detail}</dd>}
   </div>;
 }
@@ -32,10 +32,10 @@ function Kpi({ name, label, value, detail, compact, warning=false }: { name:stri
  * previewDistanceKm/previewCostTotal, when set, reflect staged-but-not-replanned
  * reorders: saved totals remain authoritative, with a separately labeled
  * preview beside them until Replan commits it. Compact never hides core metrics. */
-export function KpiStrip({ plan, baseline, compare, job, previewDistanceKm, previewCostTotal, compact=false, onToggleDetails }: {
+export function KpiStrip({ plan, baseline, compare, job, previewDistanceKm, previewCostTotal, compact=false, onToggleDetails, onOpenCost }: {
   plan: Plan; baseline: Plan; compare: boolean; job: JobView | null;
   previewDistanceKm?: number | null; previewCostTotal?: number | null;
-  compact?:boolean; onToggleDetails?:()=>void;
+  compact?:boolean; onToggleDetails?:()=>void; onOpenCost?:()=>void;
 }) {
   const t = useT();
   const s = plan.stats;
@@ -68,7 +68,7 @@ export function KpiStrip({ plan, baseline, compare, job, previewDistanceKm, prev
       <Kpi name="distance" compact={compact} label={t('kpi.totalDistance')} value={km(s.totalDistanceKm)}
         detail={distPreview?<span>{t('kpi.previewTotal')}: {km(previewDistanceKm!)} · {t('kpi.preview')}</span>
           :!compact&&compare?<Delta value={Math.round(s.totalDistanceKm-b.totalDistanceKm)} goodWhenNegative allowImprovement={allowImprovement} unit=" km"/>:undefined}/>
-      <Kpi name="cost" compact={compact} label={t('kpi.cost')} value={plan.cost?money(plan.cost.total,plan.cost.currency,true):'—'}
+      <Kpi name="cost" onClick={onOpenCost} actionLabel={t('costReview.open')} compact={compact} label={t('kpi.cost')} value={plan.cost?money(plan.cost.total,plan.cost.currency,true):'—'}
         detail={costPreview&&plan.cost?<span>{t('kpi.previewTotal')}: {money(previewCostTotal!,plan.cost.currency,true)} · {t('kpi.preview')}</span>
           :!compact&&costDelta!=null&&plan.cost?<span className={allowImprovement&&costDelta<0?'text-primary':costDelta>0?'text-warning':'text-muted-foreground'}>{costDelta>0?'+':costDelta<0?'−':'±'}{money(Math.abs(costDelta),plan.cost.currency,true)} {t('kpi.vsBaseline')}</span>
           :!compact&&plan.cost?t(plan.cost.source==='demo'?'kpi.demoTariff':'kpi.extTariff'):undefined}/>

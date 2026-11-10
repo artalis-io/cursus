@@ -133,6 +133,7 @@ test('snapshot replacement through two APIs is atomic, idempotent, tenant-scoped
   assert.deepEqual(race.map(r=>r.statusCode).sort(),[201,409],race.map(r=>r.body).join('\n'));
   const winner=race.findIndex(r=>r.statusCode===201),updated=race[winner]!.json() as Plan;
   const replay=await post<Plan>(1-winner,path+'apply',winner===0?apply:{intent:other,previewSha256:otherPreview.previewSha256,acknowledgeSupersession:true},scenario.revision);
+  const costResponse=await apps[1-winner]!.inject({url:`/api/plans/${updated.id}/cost-breakdown`});assert.equal(costResponse.statusCode,200);assert.equal(costResponse.json().status,'verified');assert.equal(costResponse.json().total,updated.cost!.total);
   assert.equal(replay.id,updated.id);assert.equal((await a.listPlans(tenant)).length,4);
   const current=(await b.getScenario(tenant,updated.scenarioId))!;
   assert.equal((await new ScenarioRepository(a,tenant).ensureBase(current.day,'Ignored duplicate')).id,current.parentId,'logical aliases reuse their actual base');

@@ -111,6 +111,16 @@ function rateForClass(table: Record<string, number>, vehicleClass: string | null
   return fallback;
 }
 
+/** Effective rates from the exact same class selection and multiplier rules as
+ * the existing calculator. Capture these before persistence reorders map keys. */
+export function effectiveCostRates(tariff:Tariff,vehicle:{vehicleClass:string|null;isSubcontractor:boolean}) {
+  const perTrip=tariff.model==='per_trip';
+  return {fixedBase:perTrip?tariff.perTripBase:rateForClass(tariff.fixedByClass,vehicle.vehicleClass,tariff.fixedPerVehicle),
+    perKm:perTrip?tariff.perKm:rateForClass(tariff.perKmByClass,vehicle.vehicleClass,tariff.perKmDefault),
+    perDrop:perTrip?tariff.perDrop:0,includedDrops:perTrip?tariff.includedDrops:0,
+    multiplier:vehicle.isSubcontractor?tariff.subcontractorMultiplier:perTrip?tariff.ownFleetMultiplier:1};
+}
+
 export interface VehicleCost { fixed: number; variable: number; total: number }
 export interface TripShape { distanceKm: number; drops: number } // drops = delivery stops on the trip
 

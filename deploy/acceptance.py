@@ -9,6 +9,7 @@ import json
 import os
 from pathlib import Path
 import socket
+import shutil
 import signal
 import subprocess
 import sys
@@ -50,9 +51,26 @@ def free_ports(count):
         for sock in sockets: sock.close()
 
 
+def create_s3_scratch(parent: Path, project: str) -> Path:
+    """Own a fresh child only; never reuse or empty an operator-supplied folder."""
+    if not parent.is_dir():
+        raise ValueError('--scratch-root must be an existing test scratch directory')
+    child = Path(tempfile.mkdtemp(prefix=project + '-s3-', dir=parent.resolve()))
+    child.chmod(0o755)
+    return child
+
+
+def cleanup_s3_scratch(child: Path, project_stopped: bool) -> bool:
+    if not project_stopped:
+        return False  # preserve storage while any test container might use it
+    shutil.rmtree(child)
+    return True
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--hard-loading', action='store_true', help='certify opt-in physical loading with public fixtures; never enables production')
+    parser.add_argument('--scratch-root', type=Path, help='existing host scratch parent; creates a fresh disposable S3 child and removes it only after Compose teardown')
     parser.add_argument('--image', help='existing local image to certify; omitted builds Dockerfile locally')
     parser.add_argument('--report', required=True, type=Path)
     parser.add_argument('--gyermelyi-config', type=Path, help='external private-input JSON; never a production database or bucket')
@@ -74,11 +92,17 @@ def main():
     report['checkout_dirty'] = bool(run(['git', 'status', '--porcelain'], capture=True).stdout.strip())
     report['hard_loading_enabled'] = args.hard_loading
     environment = os.environ.copy()
+    environment.pop('CURSUS_TEST_S3_STORAGE', None)  # only our fresh child may override the volume
     environment['CURSUS_ACCEPTANCE_HARD_LOADING_ENABLED'] = '1' if args.hard_loading else '0'
     compose = None
     private_compose = None
     started = False
+    s3_scratch = None
     try:
+        if args.scratch_root:
+            s3_scratch = create_s3_scratch(args.scratch_root, project)
+            environment['CURSUS_TEST_S3_STORAGE'] = str(s3_scratch)
+        report['s3_storage'] = 'disposable_host_directory' if s3_scratch else 'project_volume'
         if not args.image:
             run(['docker', 'build', '--build-arg', f'CURSUS_REVISION={revision}', '--build-arg',
                  f'OTTO_REVISION={otto_revision}', '-t', image, '.'])
@@ -204,6 +228,14 @@ def main():
                                      check=False, timeout=120)
             report['cleanup_completed'] = cleaned.returncode == 0
             if cleaned.returncode: report['status'] = 'failed'
+        if s3_scratch:
+            try:
+                report['s3_scratch_cleanup_completed'] = cleanup_s3_scratch(s3_scratch, not started or report.get('cleanup_completed', False))
+            except OSError:
+                report['s3_scratch_cleanup_completed'] = False
+            if not report['s3_scratch_cleanup_completed']:
+                report['status'] = 'failed'
+                report['retained_s3_scratch'] = str(s3_scratch)
         report['finished_at'] = dt.datetime.now(dt.timezone.utc).isoformat()
         report_path.write_text(json.dumps(report, indent=2, sort_keys=True) + '\n')
     if report['status'] != 'passed': raise ValueError('acceptance teardown did not complete')

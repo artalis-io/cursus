@@ -2552,3 +2552,61 @@ test('change review: late route geometry cannot discard an acknowledged exact Un
   await page.keyboard.press('Escape');await expectPlanTotals(page,plan);expect(await get<Plan>(page.request,`${peer}/api/plans/${plan.id}`)).toEqual(plan);
  }finally{geometry.release();undo.release();}
 });
+
+const fullCost=(amount:number,currency:string,lang='en')=>`${new Intl.NumberFormat(lang==='hu'?'hu-HU':'en-US',{maximumFractionDigits:20}).format(amount)} ${currency==='HUF'?'Ft':currency}`;
+async function openCosts(page:Page){await page.getByRole('button',{name:'Explain estimated cost',exact:true}).click();const dialog=page.getByRole('dialog',{name:'Estimated cost breakdown',exact:true});await expect(dialog.getByText('Calculation reconciles with the saved totals',{exact:false})).toBeVisible();return dialog;}
+test('cost review: Cost KPI opens a keyboard-accessible reconciled breakdown without writes or KPI changes',async({page})=>{
+ await login(page);const plan=await baseline(page);const writes:string[]=[];page.on('request',r=>{if(new URL(r.url()).pathname.startsWith('/api/')&&!['GET','HEAD','OPTIONS'].includes(r.method()))writes.push(r.url());});
+ const button=page.getByRole('button',{name:'Explain estimated cost',exact:true});await button.focus();await page.keyboard.press('Enter');const dialog=page.getByRole('dialog',{name:'Estimated cost breakdown',exact:true});
+ await expect(dialog.getByText('Calculation reconciles with the saved totals',{exact:false})).toBeVisible();await expect(dialog.locator('[data-cost-summary="total"]')).toHaveText(fullCost(plan.cost!.total,plan.cost!.currency));
+ await expect(dialog).toContainText(plan.id);await expect(dialog).toContainText(plan.provenance.costing!.tariffSha256);
+ for(const vehicle of plan.vehicles){const row=dialog.locator(`[data-cost-vehicle="${vehicle.id}"]`);await row.locator('summary').click();await expect(row.locator('[data-cost-formula]')).toBeVisible();expect(vehicle.trips.reduce((sum,t)=>sum+t.costFt!,0)).toBe(plan.cost!.perVehicle.find(c=>c.vehicleId===vehicle.id)!.totalCost);await expect(row.locator('[data-cost-trip]')).toHaveCount(vehicle.trips.length);}
+ await dialog.getByRole('button',{name:'Refresh evidence',exact:true}).click();await expect(dialog.getByText('Calculation reconciles with the saved totals',{exact:false})).toBeVisible();
+ await page.keyboard.press('Escape');await expect(button).toBeFocused();await expectPlanTotals(page,plan);expect(await get<Plan>(page.request,`${peer}/api/plans/${plan.id}`)).toEqual(plan);expect(writes).toEqual([]);
+});
+test('cost review: saved manual costs reconcile and reduced service never becomes a savings claim',async({page})=>{
+ await login(page);const base=await baseline(page),first=base.vehicles.flatMap(v=>v.trips.flatMap(t=>t.stops))[0]!;
+ await page.getByRole('button',{name:'Manual planning',exact:true}).click();await manualStop(page,base,first.orderNo);await page.getByRole('button',{name:'Return to unassigned',exact:true}).click();const plan=await applyManualDialog(page);
+ const dialog=await openCosts(page);await expect(dialog.locator('[data-cost-summary="total"]')).toHaveText(fullCost(plan.cost!.total,plan.cost!.currency));
+ const comparison=dialog.getByRole('region',{name:'Saved-plan comparison',exact:true});await expect(comparison).toContainText(base.id);await expect(comparison).toContainText('not a like-for-like efficiency comparison');await expect(comparison).not.toContainText(/\d+% saved|savings/i);
+ expect((await get<import('../../server/src/cost-review-contract').CostReview>(page.request,`${peer}/api/plans/${plan.id}/cost-breakdown`)).status).toBe('verified');
+ await page.keyboard.press('Escape');await expectPlanTotals(page,plan);
+});
+test('cost review: missing historical evidence and failed refresh keep saved totals while withholding formulas',async({page})=>{
+ await login(page);const plan=await baseline(page);let phase='partial';
+ await page.route(`**/api/plans/${plan.id}/cost-breakdown`,async route=>{
+  if(phase==='error'){await route.fulfill({status:503,json:{error:'Temporary pricing outage'}});return;}
+  const response=await route.fetch(),body=await response.json() as import('../../server/src/cost-review-contract').CostReview;
+  if(phase==='partial'){body.status='partial';body.evidence='missing';body.model=null;body.issues=['missing_rates'];body.tariffFreshness='unknown';body.vehicles.forEach(v=>{v.rates=null;v.trips.forEach(t=>{t.extraDrops=null;t.referenceEstimate=null;t.allocationAdjustment=null;});});}
+  if(phase==='changed'){body.tariffFreshness='changed';body.currentTariffSha256='b'.repeat(64);}
+  await route.fulfill({response,json:body});
+ });
+ await page.getByRole('button',{name:'Explain estimated cost',exact:true}).click();const dialog=page.getByRole('dialog');await expect(dialog).toContainText('Historical explanation is incomplete');await expect(dialog.locator('[data-cost-formula]')).toHaveCount(0);
+ await expect(dialog.locator('[data-cost-summary="total"]')).toHaveText(fullCost(plan.cost!.total,plan.cost!.currency));phase='error';await dialog.getByRole('button',{name:'Refresh evidence',exact:true}).click();await expect(dialog.getByRole('alert')).toBeVisible();await expect(dialog.locator('[data-cost-vehicle]')).toHaveCount(0);
+ phase='changed';await dialog.getByRole('button',{name:'Retry',exact:true}).click();await expect(dialog).toContainText('Configured pricing differs');await expect(dialog.getByText('Calculation reconciles with the saved totals',{exact:false})).toBeVisible();await expect(dialog.locator('[data-cost-summary="total"]')).toHaveText(fullCost(plan.cost!.total,plan.cost!.currency));
+ await page.keyboard.press('Escape');await expectPlanTotals(page,plan);
+});
+test('cost review: borrowed evidence is rejected and a peer edit is shown without repricing the saved plan',async({page})=>{
+ await login(page);const {plan,scenario,headers}=await statusScenario(page,'Pricing evidence race');await reopenStatusPlan(page,plan.id);
+ await page.route(`**/api/plans/${plan.id}/cost-breakdown`,async route=>{const response=await route.fetch(),body=await response.json();body.planId='borrowed';await route.fulfill({response,json:body});},{times:1});
+ await page.getByRole('button',{name:'Explain estimated cost',exact:true}).click();const dialog=page.getByRole('dialog');await expect(dialog.getByRole('alert')).toBeVisible();await expect(dialog.locator('[data-cost-formula]')).toHaveCount(0);
+ const edit=await page.request.post(`${peer}/api/scenarios/${scenario.id}/edit`,{headers:{...headers,'if-match':`"${scenario.revision}"`},data:{edit:{op:'removeVehicle',vehicleId:999}}});expect(edit.status()).toBe(200);
+ await dialog.getByRole('button',{name:'Retry',exact:true}).click();await expect(dialog).toContainText('The scenario has changed');await expect(dialog.getByText('Calculation reconciles with the saved totals',{exact:false})).toBeVisible();
+ await expect(dialog.locator('[data-cost-summary="total"]')).toHaveText(fullCost(plan.cost!.total,plan.cost!.currency));expect(await get<Plan>(page.request,`${peer}/api/plans/${plan.id}`)).toEqual(plan);
+});
+test('cost review: Reviewer inspects effective rates in EN/HU at narrow width without mutation controls',async({page})=>{
+ await login(page,'reviewer@acceptance.example.test');const plan=await baseline(page),writes:string[]=[];page.on('request',r=>{if(new URL(r.url()).pathname.startsWith('/api/')&&!['GET','HEAD','OPTIONS'].includes(r.method()))writes.push(r.url());});
+ const dialog=await openCosts(page);await expect(dialog.getByRole('textbox')).toHaveCount(0);await expect(dialog.getByRole('spinbutton')).toHaveCount(0);await dialog.locator('[data-cost-vehicle]').first().locator('summary').click();await expect(dialog.locator('[data-cost-formula]').first()).toBeVisible();
+ await page.keyboard.press('Escape');await page.getByRole('button',{name:'HU',exact:true}).click();await page.setViewportSize({width:430,height:820});await page.getByRole('button',{name:'Becsült költség részletezése',exact:true}).click();const hu=page.getByRole('dialog',{name:'A becsült költség részletei',exact:true});await expect(hu).toContainText('A számítás egyezik a mentett összegekkel');await expect(hu.locator('[data-cost-summary="total"]')).toHaveText(fullCost(plan.cost!.total,plan.cost!.currency,'hu'));
+ expect(await hu.evaluate(e=>e.scrollWidth>e.clientWidth)).toBe(false);expect(writes).toEqual([]);
+});
+test('cost review: late previous-day response cannot replace another plan or its totals',async({page})=>{
+ await login(page);const before=await baseline(page),held=gate(),started=gate(),finished=gate();
+ await page.route(`**/api/plans/${before.id}/cost-breakdown`,async route=>{const response=await route.fetch();started.release();await held.wait;await route.fulfill({response}).catch(()=>{});finished.release();});
+ try{
+  await page.getByRole('button',{name:'Explain estimated cost',exact:true}).click();await started.wait;await expect(page.getByRole('dialog').getByText('Loading pricing evidence…',{exact:true})).toBeVisible();await page.keyboard.press('Escape');
+  const day=(await get<DaySummary[]>(page.request,'/api/days')).find(d=>d.id==='acceptance-day-two')!,next=await get<Plan>(page.request,`/api/plans/${day.baselinePlanId}`);
+  await page.getByRole('combobox').first().click();await page.getByRole('option',{name:/7 May 2026/}).click();await expect(page.getByText('2 / 2',{exact:true})).toBeVisible();
+  const dialog=await openCosts(page);await expect(dialog).toContainText(next.id);held.release();await finished.wait;await expect(dialog).not.toContainText(before.id);await expect(dialog.locator('[data-cost-summary="total"]')).toHaveText(fullCost(next.cost!.total,next.cost!.currency));await page.keyboard.press('Escape');await expectPlanTotals(page,next);
+ }finally{held.release();}
+});

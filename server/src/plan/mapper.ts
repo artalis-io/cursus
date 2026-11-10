@@ -1,3 +1,4 @@
+import {captureCosting} from '../cost-review.js';
 import {loadingSnapshot} from '../loading.js';
 import { createHash } from 'node:crypto';
 import type {
@@ -230,7 +231,7 @@ export function mapSolutionToPlan(inp: MapInputs): Plan {
   const deliveries=document?.deliveries.filter(d=>ids.has(d.requestId));
   const shipmentIds=new Set(deliveries?.map(d=>d.shipmentId));
 
-  return {
+  const plan:Plan = {
     ...(inp.day.physicalLoading&&inp.day.physicalLoadingSha256?{physicalLoading:loadingSnapshot(inp.day.physicalLoading,inp.day.physicalLoadingSha256,vehicles)}:{}),
     ...(document&&inp.day.shipmentSha256?{shipmentMetadata:{datasetSha256:document.datasetSha256,sourceSha256:inp.day.shipmentSha256,
       loadingFeasibility:'not_evaluated' as const,deliveries:structuredClone(deliveries!),shipments:structuredClone(document.shipments.filter(s=>shipmentIds.has(s.id)))}}:{}),
@@ -268,4 +269,6 @@ export function mapSolutionToPlan(inp: MapInputs): Plan {
     vehicles,
     unassigned,
   };
+  plan.provenance.costing=captureCosting(plan,tariff);
+  return plan;
 }

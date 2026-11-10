@@ -45,8 +45,26 @@ class AcceptanceRunnerTests(unittest.TestCase):
     def test_s3_fixture_does_not_preallocate_customer_scale_disk_or_ram(self):
         compose = (ROOT / 'compose.integration.yaml').read_text()
         self.assertIn('-master.volumePreallocate=false', compose)
-        self.assertIn('s3-test-data:/data', compose)
+        self.assertIn('${CURSUS_TEST_S3_STORAGE:-s3-test-data}:/data', compose)
+        self.assertIn('-master.volumeSizeLimitMB=128', compose)
+        self.assertIn('-volume.max=0', compose)
         self.assertNotIn('tmpfs: ["/data', compose)
+
+    def test_external_scratch_owns_only_a_fresh_child_and_waits_for_teardown(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            keep = root / 'keep.txt'
+            keep.write_text('unrelated data')
+            child = acceptance.create_s3_scratch(root, 'cursus-test-owned')
+            (child / 'fixture.txt').write_text('public fixture')
+            self.assertFalse(acceptance.cleanup_s3_scratch(child, False))
+            self.assertTrue(child.exists())
+            self.assertTrue(acceptance.cleanup_s3_scratch(child, True))
+            self.assertFalse(child.exists())
+            self.assertEqual(keep.read_text(), 'unrelated data')
+            with self.assertRaisesRegex(ValueError, 'existing test scratch'):
+                acceptance.create_s3_scratch(root / 'missing', 'cursus-test-owned')
+            self.assertFalse((root / 'missing').exists())
 
     def test_loading_contract_and_oracle_are_bound_to_the_harness(self):
         original = Path.read_bytes

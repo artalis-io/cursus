@@ -1,3 +1,4 @@
+import {captureCosting} from '../cost-review.js';
 import {randomUUID} from 'node:crypto';
 import {isDeepStrictEqual} from 'node:util';
 import type {Principal} from '../auth.js';
@@ -146,8 +147,10 @@ export class InputUpdates{
   const scenario:Scenario={...x.result.scenario,id:scenarioId,day:alias,parentId:baseId,label:`${x.source.scenario.label} — updated inputs`,createdAt:now,inputUpdate:lineage,manualPlanId:planId,selectedPlanId:planId,selectionVersion:1};
   if(scenario.planningPolicy)scenario.planningPolicy.approvedAt=now;
   const plan={...x.result.plan,id:planId,scenarioId,createdAt:now,provenance:{...x.result.plan.provenance,inputUpdate:lineage,...(scenario.planningPolicy?{planningPolicy:scenario.planningPolicy}:{})}};
+  plan.provenance.costing=captureCosting(plan,scenario.manualDecisions!.tariff!);
   const baseScenario:Scenario={...structuredClone(scenario),id:baseId,parentId:null,kind:'base',label:`${x.source.plan.day} · updated inputs`,manualPlanId:basePlanId,selectedPlanId:basePlanId};
   const basePlan={...structuredClone(plan),id:basePlanId,scenarioId:baseId};
+  basePlan.provenance.costing=captureCosting(basePlan,scenario.manualDecisions!.tariff!);
   return this.store.tx(async client=>{
    const again=await receipt(client);if(again)return again;
    await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))',[`input-day/${this.tenant}/${x.source.scenario.day}`]);
