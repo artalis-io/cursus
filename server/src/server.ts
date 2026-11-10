@@ -1,3 +1,4 @@
+import {legacyLibraryPlan} from './library.js';
 import {solveBudget} from './solve-budget.js';
 import Fastify, { type FastifyReply, type FastifyRequest } from 'fastify';
 import fastifyStatic from '@fastify/static';
@@ -295,6 +296,7 @@ app.get<{ Params: { id: string } }>('/api/scenarios/:id/plans', async (req, repl
 /* ---- Scenario workspace (what-if): list a day's scenarios with their latest
  * result, rename, and delete copies. ---- */
 app.get<{ Querystring: { day?: string } }>('/api/scenarios', async (req, reply) => {
+  reply.header('Cache-Control','private, no-store');
   const day = req.query.day;
   if (!day) return reply.code(400).send({ error: 'day query param required' });
   // A what-if is worth listing once it has a result to compare (or it's the
@@ -303,7 +305,9 @@ app.get<{ Querystring: { day?: string } }>('/api/scenarios', async (req, reply) 
     const latest = store.latestPlanForScenario(s.id);
     const changesCount = s.removedVehicleIds.length + s.pins.length + s.forbids.length + s.vehicleOverrides.length + s.sequences.length;
     return {
-      id: s.id, label: s.label, kind: s.kind, revision: s.revision, changesCount,
+      id: s.id, label: s.label, kind: s.kind, revision: s.revision, createdAt:s.createdAt,changesCount,
+      latestResult:latest?legacyLibraryPlan(latest,s,latest.id):null,
+      selectedResult:(()=>{const p=store.getPlan(s.selectedPlanId??s.manualPlanId??'');return p&&p.scenarioId===s.id?legacyLibraryPlan(p,s,latest?.id):null;})(),
       latest: latest ? {
         planId: latest.id, createdAt: latest.createdAt,
         servedOrders: latest.stats.servedOrders, totalOrders: latest.stats.totalOrders,
@@ -378,18 +382,13 @@ app.delete<{ Params: { id: string } }>('/api/jobs/:id', async (req, reply) => {
 
 /* ---- Plans ---- */
 // List saved plans (baseline + persisted live plans), optionally by day, for reopen.
-app.get<{ Querystring: { day?: string } }>('/api/plans', async (req) => {
+app.get<{ Querystring: { day?: string } }>('/api/plans', async (req,reply) => {
+  reply.header('Cache-Control','private, no-store');
   const out = [];
   for (const p of store.plans.values()) {
     const sc = store.getScenario(p.scenarioId);
     if (req.query.day && sc?.day !== req.query.day) continue;
-    out.push({
-      id: p.id, scenarioId: p.scenarioId, day: sc?.day ?? null,
-      label: sc?.label ?? p.scenarioId, source: p.source, createdAt: p.createdAt,
-      termination: p.provenance.termination,
-      servedOrders: p.stats.servedOrders, totalOrders: p.stats.totalOrders,
-      vehiclesUsed: p.stats.vehiclesUsed, totalDistanceKm: p.stats.totalDistanceKm,
-    });
+    out.push(legacyLibraryPlan(p,sc,store.latestPlanForScenario(p.scenarioId)?.id));
   }
   out.sort((a, b) => (a.source === 'saved' ? 0 : 1) - (b.source === 'saved' ? 0 : 1) || a.createdAt.localeCompare(b.createdAt));
   return out;

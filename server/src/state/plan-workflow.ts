@@ -6,9 +6,14 @@ import type { Plan } from '../types.js';
 import type { Scenario } from '../store.js';
 import type { StatefulStore } from './postgres.js';
 import type { Workflow } from '../workflow-contract.js';
+import type {PlanIdentity} from '../library-contract.js';
 import { constraintSnapshot, type HandoffActor, type HandoffMetadata } from '../handoff.js';
 import { withNormalizedPlanStats } from '../plan/stats.js';
 export type { Workflow } from '../workflow-contract.js';
+
+interface ReviewEvent { action: string; detail: { version: number; planSha256: string; scenarioRevision: number;
+      scenarioSnapshot?: Scenario; actor?: { userId: string; email: string }; acknowledgedExceptions?: boolean };
+      user_id: string | null; email: string | null; created_at: Date }
 
 export class WorkflowError extends Error {
   constructor(public status: number, message: string) { super(message); }
@@ -75,26 +80,25 @@ export function approvalBlockers(plan: Plan, revision: number, scenario?: Scenar
 export class PlanWorkflow {
   constructor(private store: StatefulStore, private tenantId: string,private policyBlockers?:(plan:Plan)=>string[]) {}
 
-  private async snapshot(client: PoolClient, id: string, lock: boolean, allowMissingScenario = false) {
-    const found = await client.query<{ body: Plan }>('SELECT body FROM plans WHERE tenant_id=$1 AND id=$2', [this.tenantId, id]);
-    const plan = found.rows[0]?.body;
+  private async snapshot(client: PoolClient, id: string, lock: boolean, allowMissingScenario = false,
+    prepared?:{plan:Plan;scenario:Scenario;revision:number;event:ReviewEvent|undefined;loading:()=>Promise<{source:string|undefined;required:boolean}>}) {
+    const found = prepared?null:await client.query<{ body: Plan }>('SELECT body FROM plans WHERE tenant_id=$1 AND id=$2', [this.tenantId, id]);
+    const plan = prepared?.plan??found?.rows[0]?.body;
     if (!plan) throw new WorkflowError(404, 'plan not found');
-    const scenarios = await client.query<{ revision: string; body: Scenario }>(`SELECT revision,body FROM scenarios WHERE tenant_id=$1 AND id=$2${lock ? ' FOR UPDATE' : ''}`, [this.tenantId, plan.scenarioId]);
-    if (!scenarios.rows[0] && !allowMissingScenario) throw new WorkflowError(409, 'Plan scenario no longer exists.');
-    const scenario = scenarios.rows[0]?.body ?? null;
-    const revision = scenarios.rows[0] ? Number(scenarios.rows[0].revision) : -1;
+    const scenarios = prepared?null:await client.query<{ revision: string; body: Scenario }>(`SELECT revision,body FROM scenarios WHERE tenant_id=$1 AND id=$2${lock ? ' FOR UPDATE' : ''}`, [this.tenantId, plan.scenarioId]);
+    if (!prepared&&!scenarios?.rows[0] && !allowMissingScenario) throw new WorkflowError(409, 'Plan scenario no longer exists.');
+    const scenario = prepared?.scenario??scenarios?.rows[0]?.body??null;
+    const revision = prepared?.revision??(scenarios?.rows[0] ? Number(scenarios.rows[0].revision) : -1);
     const hash = planDigest(plan);
-    const events = await client.query<{ action: string; detail: { version: number; planSha256: string; scenarioRevision: number;
-      scenarioSnapshot?: Scenario; actor?: { userId: string; email: string }; acknowledgedExceptions?: boolean };
-      user_id: string | null; email: string | null; created_at: Date }>(
+    const events = prepared?null:await client.query<ReviewEvent>(
       `SELECT e.action,e.detail,e.user_id,e.created_at,u.email FROM audit_events e LEFT JOIN users u ON u.id=e.user_id
        WHERE e.tenant_id=$1 AND e.action IN ('plan.review','plan.approve')
        AND e.detail->>'planId'=$2 ORDER BY e.id DESC LIMIT 1`, [this.tenantId, id]);
-    const event = events.rows[0];
+    const event = prepared?prepared.event:events?.rows[0];
     const policyIssues=[...(this.policyBlockers?.(plan)??[])];
     if(scenario){
-      try{const source=await loadingSource(client,this.tenantId,scenario);
-        const required=await loadingRequired(client,this.tenantId,scenario,source,this.store.hardLoadingEnabled);
+      try{const context=prepared?await prepared.loading():await this.loadingContext(client,scenario);
+        const {source,required}=context;
         policyIssues.push(...loadingBlockers(plan,{...scenario,hardLoadingRequired:required},required||plan.physicalLoading?.mode==='hard'?source:undefined));
         if(required&&!source)policyIssues.push('Physical loading source is no longer admitted.');
         if(plan.physicalLoading?.mode==='hard'&&!source)policyIssues.push('Physical loading source is no longer admitted.');
@@ -102,9 +106,50 @@ export class PlanWorkflow {
     }
     const state = event ? revision !== plan.scenarioRevision || event.detail.planSha256 !== hash || policyIssues.length>0 || loadingBlockers(plan,scenario??undefined).length>0 ? 'superseded'
       : event.action === 'plan.approve' ? 'approved' : 'reviewed' : 'draft';
-    return { plan, scenario, event, workflow: { state, version: event?.detail.version ?? 0, scenarioRevision: plan.scenarioRevision,
+    const freshness:PlanIdentity['freshness']=!scenario?'unknown':scenario.supersededBy?'archived':revision!==plan.scenarioRevision||policyIssues.length>0||canonical(plan.provenance?.planningProfiles??[])!==canonical(scenario.planningProfiles??[])?'stale':'current';
+    return { plan, scenario, event, freshness, workflow: { state, version: event?.detail.version ?? 0, scenarioRevision: plan.scenarioRevision,
       currentRevision: revision, planSha256: hash, actor: event?.user_id ?? null, at: event?.created_at.toISOString() ?? null,
       blockers: [...approvalBlockers(plan, revision, scenario ?? undefined),...policyIssues] } satisfies Workflow };
+  }
+
+  private async loadingContext(client:PoolClient,scenario:Scenario){
+    const source=await loadingSource(client,this.tenantId,scenario);
+    const required=await loadingRequired(client,this.tenantId,scenario,source,this.store.hardLoadingEnabled);
+    return {source,required};
+  }
+
+  /** No row locks, object storage or native execution. Events and pointers come
+   * from one MVCC snapshot. Loading-policy lookups are cached per scenario. */
+  async catalogue(day?:string){
+    return this.store.tx(async client=>{
+      await client.query('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY');
+      const clock=await client.query<{at:Date}>('SELECT transaction_timestamp() AS at');
+      const rows=await client.query<{body:Scenario;revision:string}>("SELECT body,revision FROM scenarios WHERE tenant_id=$1 AND ($2::text IS NULL OR body->>'day'=$2)",[this.tenantId,day??null]);
+      const scenarios=rows.rows.map(r=>({...r.body,revision:Number(r.revision)}));
+      const found=await client.query<{body:Plan}>(`SELECT p.body FROM plans p JOIN scenarios s ON s.tenant_id=p.tenant_id AND s.id=p.scenario_id
+        WHERE p.tenant_id=$1 AND ($2::text IS NULL OR s.body->>'day'=$2)`,[this.tenantId,day??null]);
+      const plans=found.rows.map(r=>r.body),ids=plans.map(p=>p.id);
+      const events=await client.query<ReviewEvent&{plan_id:string}>(`SELECT DISTINCT ON(e.detail->>'planId') e.detail->>'planId' AS plan_id,e.action,e.detail,e.user_id,e.created_at,u.email
+        FROM audit_events e LEFT JOIN users u ON u.id=e.user_id
+        WHERE e.tenant_id=$1 AND e.action IN ('plan.review','plan.approve') AND e.detail->>'planId'=ANY($2::text[])
+        ORDER BY e.detail->>'planId',e.id DESC`,[this.tenantId,ids]);
+      const byScenario=new Map(scenarios.map(s=>[s.id,s])),byEvent=new Map(events.rows.map(e=>[e.plan_id,e]));
+      const loading=new Map<string,ReturnType<PlanWorkflow['loadingContext']>>();
+      const identities=new Map<string,PlanIdentity>(),latest=new Map<string,Plan>();
+      for(const p of plans){const old=latest.get(p.scenarioId);if(!old||p.createdAt>old.createdAt||p.createdAt===old.createdAt&&p.id>old.id)latest.set(p.scenarioId,p);}
+      for(const plan of plans){
+        const scenario=byScenario.get(plan.scenarioId);if(!scenario)continue;
+        const current=await this.snapshot(client,plan.id,false,false,{plan,scenario,revision:scenario.revision,event:byEvent.get(plan.id),loading:()=>{
+          let value=loading.get(scenario.id);if(!value){value=this.loadingContext(client,scenario);loading.set(scenario.id,value);}return value;
+        }});
+        const state=current.workflow.state;
+        identities.set(plan.id,{version:1,planId:plan.id,scenarioId:scenario.id,planRevision:plan.scenarioRevision,scenarioRevision:scenario.revision,
+          selected:(scenario.selectedPlanId??scenario.manualPlanId)===plan.id,latest:latest.get(scenario.id)?.id===plan.id,
+          approval:(state==='approved'||state==='reviewed')&&(current.freshness!=='current'||current.workflow.blockers.length>0)?'superseded':state,
+          freshness:current.freshness,checkedAt:clock.rows[0]!.at.toISOString(),planSha256:current.workflow.planSha256});
+      }
+      return {scenarios,plans:plans.map(withNormalizedPlanStats),identities};
+    });
   }
 
   async get(id: string): Promise<Workflow> {

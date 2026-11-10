@@ -2309,3 +2309,40 @@ for(const kind of ['plans','scenarios'] as const)test(`library ${kind}: hung ini
   hold=false;await dialog.getByRole('button',{name:'Retry',exact:true}).click();await expect(dialog.getByRole('alert')).toHaveCount(0);await expect(dialog.locator(selector)).toHaveCount(1);
  }finally{held.release();}
 });
+
+test('library identity: viewed, selected, latest and approval are distinct; peer edits invalidate badges and opening never adopts',async({page})=>{
+ await login(page);await shortBudget(page);
+ const first=await finishSolve(page,()=>page.getByRole('button',{name:'Optimize',exact:true}).click());
+ const newer=await finishSolve(page,()=>page.getByRole('button',{name:'Replan',exact:true}).click(),{keep:true});
+ expect(newer.scenarioId).toBe(first.scenarioId);const scenario=await get<Scenario>(page.request,`/api/scenarios/${first.scenarioId}`),origin=new URL(page.url()).origin;
+ expect(scenario.selectedPlanId).toBe(first.id);
+ for(const [action,version] of [['review',0],['approve',1]] as const){const r=await page.request.post(`${peer}/api/plans/${first.id}/${action}`,{headers:{origin},data:{version,revision:scenario.revision,acknowledgeExceptions:true}});expect(r.status(),await r.text()).toBe(200);}
+ const writes:string[]=[];page.on('request',r=>{if(new URL(r.url()).pathname.startsWith('/api/')&&!['GET','HEAD','OPTIONS'].includes(r.method()))writes.push(r.url());});
+ await selectWorkspaceAction(page,'Plans');const dialog=page.getByRole('dialog'),old=dialog.locator(`[data-plan-id="${first.id}"]`),latest=dialog.locator(`[data-plan-id="${newer.id}"]`);
+ await expect(old.locator('[data-library-approval]')).toHaveAttribute('data-library-approval','approved');await expect(old.getByText('Viewed',{exact:true})).toBeVisible();await expect(old.getByText('Selected',{exact:true})).toBeVisible();await expect(old.getByText('Latest result',{exact:true})).toHaveCount(0);
+ await expect(latest.getByText('Latest result',{exact:true})).toBeVisible();await expect(latest.locator('[data-library-approval]')).toHaveAttribute('data-library-approval','draft');await expect(latest.getByText('Selected',{exact:true})).toHaveCount(0);
+ const search=dialog.getByRole('textbox',{name:'Search scenario name or plan reference',exact:true});await search.fill(first.id.toUpperCase());await expect(dialog.locator('[data-plan-id]')).toHaveCount(1);await expect(old).toBeVisible();
+ await search.fill('no-such-plan-reference');await expect(dialog.getByText('No matching results for this day.',{exact:true})).toBeVisible();await dialog.getByRole('button',{name:'Clear search',exact:true}).click();await expect(old).toBeVisible();
+ await page.route('**/api/plans?day=*',route=>route.fulfill({status:503,json:{error:'Temporary outage'}}));await dialog.getByRole('button',{name:'Refresh',exact:true}).click();
+ await expect(dialog.getByRole('alert')).toBeVisible();await expect(old.locator('[data-library-approval]')).toHaveAttribute('data-library-approval','unknown');await expect(old.locator('[data-library-freshness]')).toHaveAttribute('data-library-freshness','unknown');await expect(old.getByText('Selected',{exact:true})).toHaveCount(0);
+ await page.unroute('**/api/plans?day=*');
+ const edited=await page.request.post(`${peer}/api/scenarios/${scenario.id}/edit`,{headers:{origin,'if-match':`"${scenario.revision}"`},data:{edit:{op:'removeVehicle',vehicleId:first.vehicles[0]!.id}}});expect(edited.status(),await edited.text()).toBe(200);
+ await dialog.getByRole('button',{name:'Retry',exact:true}).click();await expect(old.locator('[data-library-approval]')).toHaveAttribute('data-library-approval','superseded');await expect(old.locator('[data-library-freshness]')).toHaveAttribute('data-library-freshness','stale');
+ await latest.getByRole('button',{name:'Reopen',exact:true}).click();await expect(page.locator('section[aria-label="Plan approval"]')).toHaveAttribute('data-plan-id',newer.id);
+ expect((await get<Scenario>(page.request,`${peer}/api/scenarios/${scenario.id}`)).selectedPlanId).toBe(first.id);
+ await selectWorkspaceAction(page,'Scenarios');const row=page.getByRole('dialog').locator(`[data-scenario-id="${scenario.id}"]`);
+ await expect(row.locator(`[data-library-identity="${newer.id}"]`).getByText('Latest result',{exact:true})).toBeVisible();await expect(row.locator(`[data-library-identity="${first.id}"]`).getByText('Selected',{exact:true})).toBeVisible();
+ await page.getByRole('dialog').getByRole('textbox',{name:'Search scenarios or plan references',exact:true}).fill(first.id);await expect(row).toBeVisible();
+ await row.getByRole('button',{name:'Open selected plan',exact:true}).click();await expect(page.locator('section[aria-label="Plan approval"]')).toHaveAttribute('data-plan-id',first.id);expect(writes).toEqual([]);
+});
+
+test('library identity: missing or borrowed evidence remains Unknown and Reviewer search stays read-only',async({page})=>{
+ await login(page,'reviewer@acceptance.example.test');const base=await librarySource(page);
+ const list=await get<Array<import('../src/lib/api').PlanSummary>>(page.request,`/api/plans?day=${base.dayId}`),source=list.find(p=>p.id===base.id)!;let mode:'missing'|'borrowed'='missing';
+ await page.route(`**/api/plans?day=${base.dayId}`,route=>route.fulfill({json:[{...source,identity:mode==='missing'?undefined:{...source.identity!,planId:'unrelated-plan',approval:'approved',freshness:'current'}}]}));
+ const writes:string[]=[];page.on('request',r=>{if(new URL(r.url()).pathname.startsWith('/api/')&&!['GET','HEAD','OPTIONS'].includes(r.method()))writes.push(r.url());});
+ await selectWorkspaceAction(page,'Plans');const dialog=page.getByRole('dialog');await expect(dialog.locator('[data-library-approval]')).toHaveAttribute('data-library-approval','unknown');
+ await dialog.getByRole('textbox',{name:'Search scenario name or plan reference',exact:true}).fill(base.id);await expect(dialog.locator('[data-plan-id]')).toHaveCount(1);
+ mode='borrowed';await dialog.getByRole('button',{name:'Refresh',exact:true}).click();await expect(dialog.locator('[data-library-approval]')).toHaveAttribute('data-library-approval','unknown');
+ await expect(dialog.getByRole('button',{name:/Approve|Review|Select plan/})).toHaveCount(0);expect(writes).toEqual([]);
+});

@@ -161,7 +161,8 @@ test('both sync and async runtimes deny all Reviewer mutation methods before han
 });
 
 test('stateful Reviewer API rejects edits, uploads, compute and future writes without touching repositories', async () => {
-  const store = { ensureTenant: async () => {}, listScenarios: async () => [],listPlans:async()=>[] } as unknown as StatefulStore;
+  const store = { ensureTenant: async () => {}, listScenarios: async () => [],listPlans:async()=>[],
+    tx:async (read:(client:unknown)=>Promise<unknown>)=>read({query:async(sql:string)=>({rows:sql.includes('transaction_timestamp()')?[{at:new Date()}]:[]})}) } as unknown as StatefulStore;
   const auth = { initialize: async () => {}, authenticate: async () => ({ userId: 'u', tenantId: 't', email: 'reader@example.test', role: 'reviewer' }) } as unknown as StatefulAuthService;
   const app = await createStatefulApi({ store, auth, tenantId: 't', tenantName: 'Tenant', publicOrigin: 'https://cursus.example.test' });
   try {

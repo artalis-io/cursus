@@ -1,4 +1,5 @@
-import type { Comparison, DaySummary, Job, Objective, Plan, Scenario, ScenarioEdit, Trip, ManualPreview } from '@/types';
+import type {PlanIdentity} from '../../../server/src/library-contract';
+import type { Comparison, DaySummary, Job, Objective, Plan, Scenario, ScenarioEdit, Trip, ManualPreview } from '../types';
 import type {ProfileContent,ProfileRef,ProfileRevision,ProfileKind} from '../../../server/src/planning-profile-contract';
 import type {InputUpdateIntent,InputUpdateDiff,UpdateDelivery} from '../../../server/src/input-update-contract';
 
@@ -62,13 +63,13 @@ export const api = {
   activateProfile:(id:string,revision:number,version:number)=>jsend<ProfileRef&{version:number}>(`/api/profiles/${encodeURIComponent(id)}/activate`,'POST',{revision},version),
   bindProfiles:(scenario:Scenario,profiles:ProfileRef[])=>jsend<Scenario>(`/api/scenarios/${encodeURIComponent(scenario.id)}/profiles`,'POST',{profiles},scenario.revision),
   selectPlan:(id:string,revision:number,planId:string,selectionVersion:number,acknowledgeIncomplete=false)=>jsend<Scenario>(`/api/scenarios/${encodeURIComponent(id)}/select-plan`,'POST',{planId,selectionVersion,acknowledgeIncomplete},revision),
-  manualContext:(id:string)=>jget<import('@/types').ManualContext>(`/api/plans/${encodeURIComponent(id)}/manual-context`),
-  manualPreview:(id:string,revision:number,intent:import('@/types').ManualIntent)=>jsend<import('@/types').ManualPreview>(`/api/scenarios/${encodeURIComponent(id)}/manual-preview`,'POST',intent,revision),
-  placements:(id:string,revision:number,body:{parentPlanId:string;datasetSha256:string;requestId:number})=>jsend<import('@/types').PlacementSuggestions>(`/api/scenarios/${encodeURIComponent(id)}/placements`,'POST',body,revision),
+  manualContext:(id:string)=>jget<import('../types').ManualContext>(`/api/plans/${encodeURIComponent(id)}/manual-context`),
+  manualPreview:(id:string,revision:number,intent:import('../types').ManualIntent)=>jsend<import('../types').ManualPreview>(`/api/scenarios/${encodeURIComponent(id)}/manual-preview`,'POST',intent,revision),
+  placements:(id:string,revision:number,body:{parentPlanId:string;datasetSha256:string;requestId:number})=>jsend<import('../types').PlacementSuggestions>(`/api/scenarios/${encodeURIComponent(id)}/placements`,'POST',body,revision),
   inputUpdateOptions:(scenarioId:string,planId:string,datasetId?:string,dayId?:string)=>jget<InputUpdateOptions>(`/api/scenarios/${encodeURIComponent(scenarioId)}/input-update-options?${new URLSearchParams({planId,...(datasetId&&dayId?{datasetId,dayId}:{})})}`),
   inputUpdatePreview:(scenario:Scenario,intent:InputUpdateIntent)=>jsend<InputUpdatePreview>(`/api/scenarios/${encodeURIComponent(scenario.id)}/input-update-preview`,'POST',intent,scenario.revision),
   inputUpdateApply:(scenario:Scenario,intent:InputUpdateIntent,previewSha256:string)=>jsend<Plan>(`/api/scenarios/${encodeURIComponent(scenario.id)}/input-update-apply`,'POST',{intent,previewSha256,acknowledgeSupersession:true},scenario.revision),
-  manualApply:(id:string,revision:number,intent:import('@/types').ManualIntent)=>jsend<Plan>(`/api/scenarios/${encodeURIComponent(id)}/manual-plan`,'POST',intent,revision),
+  manualApply:(id:string,revision:number,intent:import('../types').ManualIntent)=>jsend<Plan>(`/api/scenarios/${encodeURIComponent(id)}/manual-plan`,'POST',intent,revision),
   approvedHandoff: async (id: string, revision: number) => {
     const value = await jget<{ handoff?: { status: string; planId: string; scenarioRevision: number; planSha256: string; checkedAt: string;
       approval?: { workflowVersion: number } } } & Record<string, unknown>>(`/api/plans/${encodeURIComponent(id)}/handoff.json?approval=required`);
@@ -168,6 +169,7 @@ export interface ScenarioExport {
 }
 
 export interface ScenarioSummary {
+  createdAt?:string;latestResult?:PlanSummary|null;selectedResult?:PlanSummary|null;
   supersededBy?:Scenario['supersededBy'];inputUpdate?:Scenario['inputUpdate'];
   id: string; label: string; kind: 'base' | 'copy'; revision: number; changesCount: number;
   latest: {
@@ -230,6 +232,7 @@ export interface ImportSummary {
   scope: { rawOrderLines: number; inScopeHungarian: number; day1: number; day2: number };
 }
 export interface PlanSummary {
+  identity?:PlanIdentity;
   id: string; scenarioId: string; day: string | null; label: string;
   source: 'saved' | 'live' | 'sample'; createdAt: string; termination: string;
   servedOrders: number; totalOrders: number; vehiclesUsed: number; totalDistanceKm: number;
