@@ -1,3 +1,4 @@
+import {workspaceBookmarkKey} from '../src/lib/workspace-resume';
 import {expect,type Page} from '@playwright/test';
 
 export async function openWorkspaceMenu(page:Page,label:string){
@@ -13,3 +14,11 @@ export async function workspaceAction(page:Page,label:string){
  return menu.getByRole('menuitem',{name:label,exact:true});
 }
 export async function selectWorkspaceAction(page:Page,label:string){await (await workspaceAction(page,label)).click();}
+
+export async function savedWorkspaceKey(page:Page):Promise<string>{
+ const response=await page.request.get('/api/auth/me');expect(response.status()).toBe(200);
+ const me=await response.json() as {tenantId:string;userId?:string;email:string};
+ const key=workspaceBookmarkKey(me.tenantId,me.userId??me.email);
+ if(!key)throw Error('Acceptance identity must have a scoped workspace key');
+ return key;
+}

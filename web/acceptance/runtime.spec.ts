@@ -1,3 +1,4 @@
+import {savedWorkspaceKey} from '../tests/workspace-navigation';
 import {compactHeaderChecks,dismissPolicyChecks,stalePolicyResponse} from '../tests/compact-header';
 import {km,money} from '../src/lib/format';
 import type {Workflow} from '../../server/src/workflow-contract';
@@ -1554,7 +1555,7 @@ test('saved manual workspace survives failed metadata reads and slow road geomet
  await login(page);const base=await baseline(page);
  await page.getByRole('button',{name:'Manual planning',exact:true}).click();await manualStop(page,base,'PUBLIC-2');
  await page.getByRole('button',{name:'Return to unassigned',exact:true}).click();const saved=await applyManualDialog(page);
- const key='cursus.manual-workspace.v1:acceptance';await expect.poll(()=>page.evaluate(k=>JSON.parse(localStorage.getItem(k)??'null')?.planId,key)).toBe(saved.id);
+ const me=await get<{tenantId:string;userId:string}>(page.request,'/api/auth/me');const key=`cursus.workspace.v1:${encodeURIComponent(me.tenantId)}:${encodeURIComponent(me.userId)}`;await expect.poll(()=>page.evaluate(k=>JSON.parse(localStorage.getItem(k)??'null')?.planId,key)).toBe(saved.id);
  let failStored=true;const roads=gate(),finished=gate();
  await page.route(`**/api/plans/${saved.id}*`,async route=>{
   const url=new URL(route.request().url());
@@ -1679,7 +1680,8 @@ test('workspace navigation: keyboard and dialog focus preserve state without wri
  await login(page);
  const writes:string[]=[];page.on('request',r=>{if(new URL(r.url()).pathname.startsWith('/api/')&&!['GET','HEAD','OPTIONS'].includes(r.method()))writes.push(r.method()+' '+new URL(r.url()).pathname);});
  const before=await get<Scenario[]>(page.request,'/api/scenarios');
- const selected=await page.evaluate(()=>localStorage.getItem('cursus.manual-workspace.v1:acceptance'));
+ const workspaceKey=await savedWorkspaceKey(page);
+ const selected=await page.evaluate(key=>localStorage.getItem(key),workspaceKey);
  const nav=page.getByRole('navigation',{name:'Workspace tools'}),prepare=nav.getByRole('button',{name:'Prepare',exact:true});
  await prepare.focus();await page.keyboard.press('ArrowDown');await expect(page.getByRole('menuitem',{name:'Data',exact:true})).toBeFocused();
  await page.keyboard.press('End');await expect(page.getByRole('menuitem').last()).toBeFocused();
@@ -1695,7 +1697,7 @@ test('workspace navigation: keyboard and dialog focus preserve state without wri
  }
  await selectWorkspaceAction(page,'Plan approval');await expect(page.locator('#cursus-plan-review')).toBeFocused();
  await prepare.click();await page.locator('header').getByText('Cursus',{exact:true}).click();await expect(page.getByRole('menu')).toHaveCount(0);
- expect(await get<Scenario[]>(page.request,'/api/scenarios')).toEqual(before);expect(await page.evaluate(()=>localStorage.getItem('cursus.manual-workspace.v1:acceptance'))).toBe(selected);expect(writes).toEqual([]);
+ expect(await get<Scenario[]>(page.request,'/api/scenarios')).toEqual(before);expect(await page.evaluate(key=>localStorage.getItem(key),workspaceKey)).toBe(selected);expect(writes).toEqual([]);
  await page.screenshot({path:testInfo.outputPath('workspace-desktop.png')});
 });
 
@@ -2092,4 +2094,62 @@ const nativeCount="const fs=require('node:fs');let n=0;for(const pid of fs.readd
   expect((await get<Plan[]>(page.request,`${peer}/api/plans`)).map(p=>p.id).sort()).toEqual(before.map(p=>p.id).sort());
   await expect(page.getByRole('region',{name:'Plan candidate',exact:true})).toHaveCount(0);
  }finally{await page.request.delete(`${peer}/api/jobs/${jobId}`,{headers:{origin:new URL(page.url()).origin}});}
+});
+
+test('ordinary native plans resume exactly without adoption, and tabs never navigate each other',async({page,context})=>{
+ await login(page);await shortBudget(page);
+ const candidate=await finishSolve(page,()=>page.getByRole('button',{name:'Optimize',exact:true}).click(),{keep:true});
+ const me=await get<{tenantId:string;userId:string}>(page.request,'/api/auth/me');
+ const key=`cursus.workspace.v1:${encodeURIComponent(me.tenantId)}:${encodeURIComponent(me.userId)}`;
+ // A library view can be different from the scenario's selected plan. Restore
+ // that exact historical view, without publishing an adoption or approval.
+ await reopenStatusPlan(page,candidate.id);
+ await expect.poll(()=>page.evaluate(k=>JSON.parse(localStorage.getItem(k)??'null')?.planId,key)).toBe(candidate.id);
+ const selection=(await get<Scenario>(page.request,`/api/scenarios/${candidate.scenarioId}`)).selectedPlanId;
+ await page.reload();
+ await expect(page.locator('section[aria-label="Plan approval"]')).toHaveAttribute('data-plan-id',candidate.id);
+ await expectPlanTotals(page,candidate);
+ expect((await get<Scenario>(page.request,`/api/scenarios/${candidate.scenarioId}`)).selectedPlanId).toBe(selection);
+ const second=await context.newPage();
+ try{
+  await second.goto('/');await expect(second.locator('section[aria-label="Plan approval"]')).toHaveAttribute('data-plan-id',candidate.id);
+  const days=await get<DaySummary[]>(page.request,'/api/days'),other=days.find(d=>d.id==='acceptance-day-two')!;
+  await second.evaluate(({key,other})=>localStorage.setItem(key,JSON.stringify({version:1,planId:other.baselinePlanId,day:other.id})),{key,other});
+  await second.reload();await expect(second.locator('section[aria-label="Plan approval"]')).toHaveAttribute('data-plan-id',other.baselinePlanId);
+  await expect(page.locator('section[aria-label="Plan approval"]')).toHaveAttribute('data-plan-id',candidate.id);
+  // Another account's bookmark cannot become this account's initial context.
+  await page.evaluate(({key,id,day})=>{localStorage.removeItem(key);localStorage.setItem('cursus.workspace.v1:acceptance:other-user',JSON.stringify({version:1,planId:id,day}));},{key,id:candidate.id,day:candidate.day});
+  await page.reload();await expect(page.locator('section[aria-label="Plan approval"]')).toHaveAttribute('data-plan-id',(await baseline(page)).id);
+ }finally{await second.close();}
+});
+
+test('unavailable saved plans fall back safely while transient errors retain a retryable bookmark',async({page})=>{
+ await login(page);const base=await baseline(page);
+ const me=await get<{tenantId:string;userId:string}>(page.request,'/api/auth/me');
+ const key=`cursus.workspace.v1:${encodeURIComponent(me.tenantId)}:${encodeURIComponent(me.userId)}`;
+ const bookmark={version:1,planId:base.id,day:base.day};
+ await page.evaluate(({key,bookmark})=>localStorage.setItem(key,JSON.stringify(bookmark)),{key,bookmark});
+ await page.route(`**/api/plans/${base.id}?geometry=stored`,route=>route.fulfill({status:503,json:{error:'Temporary outage'}}));
+ await page.reload();await expect(page.getByRole('button',{name:'Retry',exact:true})).toBeVisible();
+ expect(await page.evaluate(k=>JSON.parse(localStorage.getItem(k)!),key)).toEqual(bookmark);
+ await page.unroute(`**/api/plans/${base.id}?geometry=stored`);
+ await page.getByRole('button',{name:'Retry',exact:true}).click();await expectPlanTotals(page,base);
+ for(const status of [403,404]){
+  await page.evaluate(({key,day})=>localStorage.setItem(key,JSON.stringify({version:1,planId:'unavailable-plan',day})),{key,day:base.day});
+  await page.route('**/api/plans/unavailable-plan?geometry=stored',route=>route.fulfill({status,json:{error:'Unavailable'}}));
+  await page.reload();await expect(page.getByText('The last plan is no longer available. Showing the day baseline.',{exact:true})).toBeVisible();
+  await expectPlanTotals(page,base);await page.unroute('**/api/plans/unavailable-plan?geometry=stored');
+ }
+});
+
+test('changing planning days persists ordinary baseline views across reload and reopening',async({page,context})=>{
+ await login(page);
+ const days=await get<DaySummary[]>(page.request,'/api/days'),day=days.find(d=>d.id==='acceptance-day-two')!;
+ const me=await get<{tenantId:string;userId:string}>(page.request,'/api/auth/me');
+ const key=`cursus.workspace.v1:${encodeURIComponent(me.tenantId)}:${encodeURIComponent(me.userId)}`;
+ await page.getByRole('combobox').first().click();await page.getByRole('option',{name:/7 May 2026/}).click();
+ await expect(page.locator('section[aria-label="Plan approval"]')).toHaveAttribute('data-plan-id',day.baselinePlanId);
+ await expect.poll(()=>page.evaluate(k=>JSON.parse(localStorage.getItem(k)??'null')?.planId,key)).toBe(day.baselinePlanId);
+ await page.reload();await expect(page.locator('section[aria-label="Plan approval"]')).toHaveAttribute('data-plan-id',day.baselinePlanId);
+ const reopened=await context.newPage();try{await reopened.goto('/');await expect(reopened.locator('section[aria-label="Plan approval"]')).toHaveAttribute('data-plan-id',day.baselinePlanId);}finally{await reopened.close();}
 });

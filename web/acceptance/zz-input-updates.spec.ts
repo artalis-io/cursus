@@ -1,3 +1,4 @@
+import {savedWorkspaceKey} from '../tests/workspace-navigation';
 import {selectWorkspaceAction,workspaceAction,openWorkspaceMenu} from '../tests/workspace-navigation';
 import {test,expect,type Page,type Dialog} from '@playwright/test';
 import {execFileSync} from 'node:child_process';
@@ -13,7 +14,7 @@ async function login(page:Page,email='admin@acceptance.example.test'){
 }
 
 test('reviewed snapshot update preserves manual delivery identity, recalculates KPIs, reloads and replans through the real worker',async({page},testInfo)=>{
- await login(page);
+ await login(page);const workspaceKey=await savedWorkspaceKey(page);
  const origin=new URL(page.url()).origin,days=await (await page.request.get('/api/days')).json() as DaySummary[];
  const oldDay=days.find(d=>d.id==='acceptance-day-two')!;
  const base=await (await page.request.get(`/api/plans/${oldDay.baselinePlanId}?geometry=stored`)).json() as Plan;
@@ -25,7 +26,7 @@ test('reviewed snapshot update preserves manual delivery identity, recalculates 
  const upload=await page.request.post('/api/import/upload',{headers:{origin},multipart:{file:{name:'public-revised.json',mimeType:'application/json',buffer:Buffer.from(JSON.stringify(bundle))}}});
  expect(upload.status()).toBe(201);const {datasetId}=await upload.json() as {datasetId:string};
  for(const action of ['validate','admit']){const r=await page.request.post(`/api/import/datasets/${datasetId}/${action}`,{headers:{origin},data:{}});expect(r.ok(),await r.text()).toBe(true);}
- await page.evaluate(({planId,day})=>localStorage.setItem('cursus.manual-workspace.v1:acceptance',JSON.stringify({planId,day})),{planId:source.id,day:oldDay.id});await page.reload();
+ await page.evaluate(({key,planId,day})=>localStorage.setItem(key,JSON.stringify({version:1,planId,day})),{key:workspaceKey,planId:source.id,day:oldDay.id});await page.reload();
  await expect(await workspaceAction(page,'Update input snapshot')).toBeEnabled();
  await selectWorkspaceAction(page,'Update input snapshot');
  const dialog=page.getByRole('dialog',{name:'Update input snapshot',exact:true});
@@ -77,7 +78,7 @@ test('reviewed snapshot update preserves manual delivery identity, recalculates 
  const scenario=await (await page.request.get(`/api/scenarios/${updated.scenarioId}`)).json() as Scenario;
  expect(scenario.datasetBinding?.datasetId).toBe(datasetId);
  expect((await page.request.get(`/api/plans/${updated.id}/handoff.json`)).ok()).toBe(true);
- await page.reload();await expect.poll(()=>page.evaluate(()=>JSON.parse(localStorage.getItem('cursus.manual-workspace.v1:acceptance')??'null')?.planId)).toBe(updated.id);
+ await page.reload();await expect.poll(()=>page.evaluate(key=>JSON.parse(localStorage.getItem(key)??'null')?.planId,workspaceKey)).toBe(updated.id);
  const solve=await page.request.post(`/api/scenarios/${scenario.id}/solve`,{headers:{origin,'if-match':`"${scenario.revision}"`},data:{budgetSec:1}});expect(solve.status()).toBe(202);
  const {jobId}=await solve.json() as {jobId:string};
  await expect.poll(async()=>{const r=await page.request.get(`/api/jobs/${jobId}`);return (await r.json()).status;},{timeout:30000}).toBe('completed');
@@ -124,5 +125,5 @@ test('reviewed snapshot update preserves manual delivery identity, recalculates 
   await expect(page.getByRole('menuitem',{name:'Update input snapshot',exact:true})).toBeEnabled();
  }finally{releaseCapabilities();await page.unroute('**/api/plans/*/manual-context');}
 
- await expect.poll(()=>page.evaluate(()=>JSON.parse(localStorage.getItem('cursus.manual-workspace.v1:acceptance')??'null')?.planId)).toBe(job.planId);
+ await expect.poll(()=>page.evaluate(key=>JSON.parse(localStorage.getItem(key)??'null')?.planId,workspaceKey)).toBe(job.planId);
 });
