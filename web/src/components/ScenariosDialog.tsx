@@ -95,10 +95,9 @@ export function ScenariosDialog({ open, onOpenChange, dayId, currentScenarioId, 
         {err && <p role="alert" className="rounded border border-destructive/40 bg-destructive/10 px-2 py-1 text-xs text-destructive">{err}</p>}
 
         <LibraryStatus phase={library.phase} error={library.error} hasSnapshot={list!==null} onRefresh={refresh}/>
-        <div aria-busy={library.pending} data-testid="scenarios-library">
         {selected.length >= 2 && <CompareTable selected={selected} currency={currency} t={t} />}
 
-        <ScrollArea className="max-h-[56vh]">
+        <ScrollArea aria-busy={library.pending} data-testid="scenarios-library" className="max-h-[56vh]">
           <div className="space-y-1.5 pr-3">
             {list == null ? null
               : list.length === 0 && library.verified ? <p className="py-8 text-center text-sm text-muted-foreground">{t('scenarios.none')}</p>
@@ -146,7 +145,6 @@ export function ScenariosDialog({ open, onOpenChange, dayId, currentScenarioId, 
               })}
           </div>
         </ScrollArea>
-        </div>
         <p className="text-[10px] text-muted-foreground">{t('scenarios.hint')}</p>
       </DialogContent>
     </Dialog>

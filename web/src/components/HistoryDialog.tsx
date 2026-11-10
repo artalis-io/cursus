@@ -24,11 +24,10 @@ export function HistoryDialog({ open, onOpenChange, dayId, currentPlanId, onReop
       <DialogContent className="max-w-xl">
         <DialogHeader><DialogTitle>{t('history.title')}</DialogTitle></DialogHeader>
         <LibraryStatus phase={library.phase} error={library.error} hasSnapshot={plans!==null} onRefresh={library.refresh}/>
-        <div aria-busy={library.pending} data-testid="plans-library">
         {plans===null ? null
           : plans.length === 0 && library.verified ? <p className="py-6 text-center text-sm text-muted-foreground">{t('history.none')}</p>
           : (
-            <ScrollArea className="max-h-[60vh]">
+            <ScrollArea aria-busy={library.pending} data-testid="plans-library" className="max-h-[60vh]">
               <div className="space-y-1.5 pr-3">
                 {plans.map((p) => {
                   const current = p.id === currentPlanId;
@@ -55,7 +54,6 @@ export function HistoryDialog({ open, onOpenChange, dayId, currentPlanId, onReop
               </div>
             </ScrollArea>
           )}
-        </div>
       </DialogContent>
     </Dialog>
   );
