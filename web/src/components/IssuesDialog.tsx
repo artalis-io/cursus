@@ -98,7 +98,7 @@ function Group({ title, count, icon, warn, children }: { title: string; count: n
 
 function Row({ label, detail, onClick }: { label: string; detail: string; onClick?: () => void }) {
   const t=useT();
-  if(!onClick)return <div className="rounded border border-divider px-2 py-1.5 text-xs"><p>{label} · {detail}</p><p className="text-muted-foreground">{t('review.targetUnavailable')}</p></div>;
+  if(!onClick)return <div className="break-words rounded border border-divider px-2 py-1.5 text-xs"><p>{label} · {detail}</p><p className="text-muted-foreground">{t('review.targetUnavailable')}</p></div>;
   return (
     <button type="button" onClick={onClick}
       className="flex w-full items-center gap-2 rounded border border-divider px-2 py-1.5 text-left text-xs hover:bg-accent">

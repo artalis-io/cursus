@@ -120,6 +120,7 @@ test('catalogues distinguish selected/latest and use one tenant-scoped read-only
   invalid.stats.servedOrders=2;invalid.stats.totalOrders=2;invalid.stats.deliveryStops=2;await insert(a,tenant,invalid);
   for(const app of apps){const details=(await app.inject(`/api/plans/${invalid.id}/workflow`)).json();
    assert.equal(details.blockers.filter((b:string)=>b==='GVW evidence is missing or violated.').length,1);
+   const forged=await app.inject({method:'POST',url:`/api/plans/${invalid.id}/review`,payload:{version:0,revision:1,acknowledgeExceptions:true,blockers:[],blockerDetails:{items:[]}}});assert.equal(forged.statusCode,409,'client descriptions cannot bypass the authoritative gate');
    assert.deepEqual(details.blockerDetails.items.filter((i:{code:string})=>i.code==='gvw').map((i:{target:{requestId:number}})=>i.target.requestId),[101,102]);
   }
   const policy=await new PlanWorkflow(a,tenant,()=>['Public fixture settings changed.']).get(invalid.id);

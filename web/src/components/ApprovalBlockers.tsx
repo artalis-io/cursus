@@ -11,13 +11,13 @@ export function ApprovalBlockers({workflow,plan,revision,onSelect,onSection,onRe
  if(!details)return <div className="mt-2 space-y-1 text-muted-foreground"><p>{t('review.detailsUnavailable')}</p>{lang==='en'&&<p>{workflow.blockers.join(' ')}</p>}{onRetry&&<button type="button" className="underline" onClick={onRetry}>{t('review.retry')}</button>}</div>;
  const seen=new Set<string>(),items=details.items.filter(i=>{const k=JSON.stringify([i.code,i.target]);if(seen.has(k))return false;seen.add(k);return true;});
  return <ul aria-label={t('review.blockers')} className="mt-2 max-h-56 space-y-2 overflow-y-auto">
-  {items.map((issue,index)=>{
+  {items.map(issue=>{
    const target=issue.target,selection=blockerSelection(plan,target);
    const vehicle=target.kind!=='section'?plan.vehicles.find(v=>v.id===target.vehicleId):null;
    const label=target.kind==='stop'?`${target.orderNo}${target.requestId!==undefined?` · ${t('review.delivery',{id:target.requestId})}`:''} · ${vehicle?.ref??target.vehicleId}`:
     target.kind==='trip'?`${vehicle?.ref??target.vehicleId} · ${t('fleet.tripLabel',{n:target.tripIndex+1})}`:target.kind==='vehicle'?vehicle?.ref??String(target.vehicleId):null;
    const needsReload=target.kind==='section'&&target.section==='changes'&&workflow.currentRevision!==revision;
-   return <li key={index} data-review-blocker={issue.code} className="rounded border border-divider p-2">
+   return <li key={JSON.stringify([issue.code,issue.target])} data-review-blocker={issue.code} className="rounded border border-divider p-2">
     <p>{t(`review.${issue.code}`)}</p>{label&&<p className="break-words text-muted-foreground">{label}</p>}
     {selection&&onSelect?<button type="button" className="mt-1 underline" onClick={()=>onSelect(selection)}>{t(`review.view.${selection.kind}`)}</button>:
      target.kind==='section'&&onSection&&!needsReload?<button type="button" className="mt-1 underline" onClick={()=>onSection(target.section)}>{t(`review.view.${target.section}`)}</button>:

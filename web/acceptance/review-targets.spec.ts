@@ -18,7 +18,7 @@ test('review navigation resolves stable delivery identities and never guesses du
 test('structured review evidence is bound to the plan, revisions and hash and cannot omit blockers',()=>{
  const workflow:Workflow={state:'draft',version:0,scenarioRevision:1,currentRevision:1,planSha256:'a'.repeat(64),actor:null,at:null,blockers:['GVW'],blockerDetails:{version:1,planId:'p',scenarioId:'s',planRevision:1,currentRevision:1,planSha256:'a'.repeat(64),items:[{code:'gvw',message:'GVW',target}]}};
  expect(isWorkflowEvidence(workflow,'p',plan)).toBe(true);
- for(const patch of [{planId:'foreign'},{scenarioId:'foreign'},{planRevision:2},{currentRevision:2},{planSha256:'b'.repeat(64)},{version:2},{items:[]},{items:[{code:'gvw',message:'GVW',target:{...target,vehicleId:-1}}]}])expect(isWorkflowEvidence({...workflow,blockerDetails:{...workflow.blockerDetails,...patch}},'p',plan)).toBe(false);
+ for(const patch of [{planId:'foreign'},{scenarioId:'foreign'},{planRevision:2},{currentRevision:2},{planSha256:'b'.repeat(64)},{version:2},{items:[]},{items:[{code:'gvw',message:'GVW',target:{...target,vehicleId:-1}}]},{items:[{code:'gvw',message:'GVW',target:{kind:'section',section:{toString:null,valueOf:null}}}]}])expect(isWorkflowEvidence({...workflow,blockerDetails:{...workflow.blockerDetails,...patch}},'p',plan)).toBe(false);
  expect(isWorkflowEvidence({...workflow,blockerDetails:undefined},'p',plan),'older server remains compatible and blocked').toBe(true);
  expect(isWorkflowEvidence({...workflow,blockers:[]},'p',plan)).toBe(false);
 });

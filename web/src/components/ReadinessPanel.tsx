@@ -46,7 +46,7 @@ export function ReadinessPanel({ plan, baseline, scenario, pending, freshness, a
             {plan.unassigned.length > 0 && <>
               <p className="text-muted-foreground">{t('readiness.inferred')}</p>
               <ul className="max-h-40 space-y-2 overflow-y-auto">
-                {plan.unassigned.map((order, i) => <li key={`${order.orderNo}-${i}`} className="break-words">{onSelect&&unassignedReviewSelection(plan,order)?<button type="button" className="font-medium underline" onClick={()=>onSelect(unassignedReviewSelection(plan,order))}>{order.orderNo} · {order.customer}{order.requestId!==undefined?` · ${t('review.delivery',{id:order.requestId})}`:''}</button>:<span className="font-medium">{order.orderNo} · {order.customer}</span>}<p className="text-muted-foreground">{order.reason ?? t(`unassigned.${order.reasonCode ?? 'CONSTRAINED'}`)}</p></li>)}
+                {plan.unassigned.map((order, i) => <li key={order.requestId??`${order.orderNo}-${i}`} className="break-words">{onSelect&&unassignedReviewSelection(plan,order)?<button type="button" className="font-medium underline" onClick={()=>onSelect(unassignedReviewSelection(plan,order))}>{order.orderNo} · {order.customer}{order.requestId!==undefined?` · ${t('review.delivery',{id:order.requestId})}`:''}</button>:<span className="font-medium">{order.orderNo} · {order.customer}</span>}<p className="text-muted-foreground">{order.reason ?? t(`unassigned.${order.reasonCode ?? 'CONSTRAINED'}`)}</p></li>)}
               </ul>
             </>}
           </section>
