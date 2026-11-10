@@ -220,6 +220,7 @@ const en: Dict = {
   'import.tab.orders': 'orders', 'import.tab.vehicles': 'vehicles', 'import.tab.routes': 'routes',
 
   'library.refresh': 'Refresh', 'library.refreshing': 'Checking latest changes…', 'library.retry': 'Retry',
+  'library.timeout': 'The list is taking too long to respond. Please retry.',
   'library.failed': 'Could not load this list.', 'library.stale': 'Showing the last loaded list. It may be out of date.',
   'library.denied': 'Access is no longer available. Sign in again or retry after access is restored.',
   'history.title': 'Saved plans', 'history.loading': 'Loading…', 'history.none': 'No saved plans yet.',
@@ -566,6 +567,7 @@ const hu: Dict = {
   'import.tab.orders': 'megrendelések', 'import.tab.vehicles': 'járművek', 'import.tab.routes': 'útvonalak',
 
   'library.refresh': 'Frissítés', 'library.refreshing': 'Legutóbbi változások ellenőrzése…', 'library.retry': 'Újrapróbálás',
+  'library.timeout': 'A lista betöltése túl sokáig tart. Próbáld újra.',
   'library.failed': 'A lista betöltése sikertelen.', 'library.stale': 'A legutóbb betöltött lista látható. Az adatok elavultak lehetnek.',
   'library.denied': 'A hozzáférés már nem érhető el. Jelentkezz be újra, vagy próbáld újra a hozzáférés visszaállítása után.',
   'history.title': 'Mentett tervek', 'history.loading': 'Betöltés…', 'history.none': 'Még nincs mentett terv.',

@@ -2288,3 +2288,19 @@ test('library scenarios: a late rename completion cannot refresh or replace a ne
   expect((await get<Scenario>(page.request,`${peer}/api/scenarios/${copy.id}`)).label).toBe('Renamed safely in its original day');
  }finally{held.release();}
 });
+
+for(const kind of ['plans','scenarios'] as const)test(`library ${kind}: hung initial and cached reads time out into a retryable state`,async({page})=>{
+ await login(page);await page.clock.install();const base=await baseline(page),path=kind==='plans'?'/api/plans':'/api/scenarios';
+ const values=await get<Array<{id:string}>>(page.request,`${path}?day=${base.day}`),held=gate(),captured=gate();let hold=true,reads=0;
+ await page.route(`**${path}?day=*`,async route=>{reads++;if(hold){captured.release();await held.wait;}await route.fulfill({json:[values[0]]}).catch(()=>{});});
+ try{
+  await selectWorkspaceAction(page,kind==='plans'?'Plans':'Scenarios');const dialog=page.getByRole('dialog'),selector=kind==='plans'?'[data-plan-id]':'[data-scenario-id]';await captured.wait;
+  await page.clock.fastForward(21_000);await expect(dialog.getByRole('alert')).toContainText('The list is taking too long to respond. Please retry.');
+  await expect(dialog.locator(selector)).toHaveCount(0);await expect(dialog.getByRole('button',{name:'Retry',exact:true})).toBeEnabled();
+  hold=false;await dialog.getByRole('button',{name:'Retry',exact:true}).click();await expect(dialog.locator(selector)).toHaveCount(1);
+  hold=true;await dialog.getByRole('button',{name:'Refresh',exact:true}).click();await expect.poll(()=>reads).toBe(3);
+  await page.clock.fastForward(21_000);await expect(dialog.getByRole('alert')).toContainText('The list is taking too long to respond. Please retry.');
+  await expect(dialog.locator(selector)).toHaveCount(1);await expect(dialog.getByRole('button',{name:'Retry',exact:true})).toBeEnabled();
+  hold=false;await dialog.getByRole('button',{name:'Retry',exact:true}).click();await expect(dialog.getByRole('alert')).toHaveCount(0);await expect(dialog.locator(selector)).toHaveCount(1);
+ }finally{held.release();}
+});

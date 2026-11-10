@@ -3,6 +3,8 @@ import {ApiError} from '@/lib/api';
 import {WorkspaceActorContext,WorkspaceTenantContext} from '@/workspace';
 import {PermissionsContext,RoleContext,usePermission} from '@/permissions';
 
+export class LibraryReadTimeout extends Error {}
+
 export type LibraryPhase='loading'|'refreshing'|'ready'|'failed'|'denied';
 interface Snapshot<T>{key:string;items:T[]|null;phase:LibraryPhase;error:unknown}
 /** One in-memory snapshot, never shared between identities, permissions or days. */
@@ -26,16 +28,23 @@ export function useLibraryList<T>(open:boolean,dayId:string,fetchList:(signal:Ab
     const id=++request.current,current=capture();
     setSnapshot(previous=>({key,items:previous?.key===key?previous.items:null,
       phase:previous?.key===key&&previous.items!==null?'refreshing':'loading',error:null}));
+    let timedOut=false;
+    const fail=(error:unknown)=>{
+      if(!current()||id!==request.current)return;
+      const denied=error instanceof ApiError&&[401,403].includes(error.status??0);
+      setSnapshot(previous=>({key,items:denied?null:previous?.key===key?previous.items:null,phase:denied?'denied':'failed',error}));
+    };
+    const timeout=window.setTimeout(()=>{timedOut=true;fail(new LibraryReadTimeout());ctrl.abort();},20_000);
     void (async()=>{
       try{
         const items=await fetchList(ctrl.signal);
         if(!Array.isArray(items))throw new ApiError(null,'server','Invalid library response');
         if(current()&&id===request.current&&!ctrl.signal.aborted)setSnapshot({key,items,phase:'ready',error:null});
       }catch(error){
-        if(!current()||id!==request.current||ctrl.signal.aborted)return;
-        const denied=error instanceof ApiError&&[401,403].includes(error.status??0);
-        setSnapshot(previous=>({key,items:denied?null:previous?.key===key?previous.items:null,phase:denied?'denied':'failed',error}));
-      }
+        // An authoritative denial still discards cached rows if it races timeout.
+        if(!ctrl.signal.aborted||timedOut&&error instanceof ApiError&&[401,403].includes(error.status??0))fail(error);
+      }finally{window.clearTimeout(timeout);}
+
     })();
   },[allowed,key,capture,fetchList]);
   useLayoutEffect(()=>{
