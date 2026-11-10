@@ -550,12 +550,25 @@ test('chaos: failed preview request remains recoverable and rapid double clicks 
   } finally { chaosRole('planner'); }
 });
 
+// Catalogue verification time advances on reads; every authoritative field
+// (including identity/hash/approval/selection) must still compare unchanged.
+function withoutCatalogueReadTimes(rows:unknown[]):unknown[]{
+ return JSON.parse(JSON.stringify(rows,(key,value:unknown)=>{
+  if(key==='identity'&&value&&typeof value==='object'&&'checkedAt' in value){
+   const {checkedAt,...identity}=value as Record<string,unknown>;
+   expect(typeof checkedAt).toBe('string');expect(Number.isFinite(Date.parse(String(checkedAt)))).toBe(true);
+   return identity;
+  }
+  return value;
+ })) as unknown[];
+}
+
 test('chaos: client role tampering and mixed API verbs cannot mutate Reviewer state through either replica', async ({ page, context }) => {
   await chaosLogin(page, 'reviewer');
   try {
     const base = await baseline(page);
     const before = await get<Scenario>(page.request, `/api/scenarios/${base.scenarioId}`);
-    const scenariosBefore = await get<unknown[]>(page.request, '/api/scenarios');
+    const scenariosBefore = withoutCatalogueReadTimes(await get<unknown[]>(page.request, '/api/scenarios'));
     await page.evaluate(() => { localStorage.setItem('role', 'admin'); localStorage.setItem('permissions', JSON.stringify(['scenario.edit', 'dataset.admit'])); });
     await context.addCookies([{ name: 'cursus_view_as', value: 'admin', url: page.url() }]);
     await page.reload(); await expect(page.getByText('Read-only access', { exact: true })).toBeVisible();
@@ -575,7 +588,7 @@ test('chaos: client role tampering and mixed API verbs cannot mutate Reviewer st
         expect(response.status(), `${method} ${path}`).toBe(403);
       }
       expect(await get<Scenario>(page.request, `${origin}/api/scenarios/${base.scenarioId}`)).toEqual(before);
-      expect(await get<unknown[]>(page.request, `${origin}/api/scenarios`)).toEqual(scenariosBefore);
+      expect(withoutCatalogueReadTimes(await get<unknown[]>(page.request, `${origin}/api/scenarios`))).toEqual(scenariosBefore);
       expect((await page.request.get(`${origin}/api/plans/${base.id}/handoff.json`)).status()).toBe(200);
     }
     const identity = await get<{ role: string; effectiveRole: string }>(page.request, '/api/auth/me');
@@ -1680,7 +1693,7 @@ test('approved handoff is durable across replicas, read-only for Planner/Reviewe
 test('workspace navigation: keyboard and dialog focus preserve state without writes',async({page},testInfo)=>{
  await login(page);
  const writes:string[]=[];page.on('request',r=>{if(new URL(r.url()).pathname.startsWith('/api/')&&!['GET','HEAD','OPTIONS'].includes(r.method()))writes.push(r.method()+' '+new URL(r.url()).pathname);});
- const before=await get<Scenario[]>(page.request,'/api/scenarios');
+ const before=withoutCatalogueReadTimes(await get<unknown[]>(page.request,'/api/scenarios'));
  const workspaceKey=await savedWorkspaceKey(page);
  const selected=await page.evaluate(key=>localStorage.getItem(key),workspaceKey);
  const nav=page.getByRole('navigation',{name:'Workspace tools'}),prepare=nav.getByRole('button',{name:'Prepare',exact:true});
@@ -1698,7 +1711,7 @@ test('workspace navigation: keyboard and dialog focus preserve state without wri
  }
  await selectWorkspaceAction(page,'Plan approval');await expect(page.locator('#cursus-plan-review')).toBeFocused();
  await prepare.click();await page.locator('header').getByText('Cursus',{exact:true}).click();await expect(page.getByRole('menu')).toHaveCount(0);
- expect(await get<Scenario[]>(page.request,'/api/scenarios')).toEqual(before);expect(await page.evaluate(key=>localStorage.getItem(key),workspaceKey)).toBe(selected);expect(writes).toEqual([]);
+ expect(withoutCatalogueReadTimes(await get<unknown[]>(page.request,'/api/scenarios'))).toEqual(before);expect(await page.evaluate(key=>localStorage.getItem(key),workspaceKey)).toBe(selected);expect(writes).toEqual([]);
  await page.screenshot({path:testInfo.outputPath('workspace-desktop.png')});
 });
 
