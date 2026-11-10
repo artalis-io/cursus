@@ -1,4 +1,6 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
+import {ApprovalBlockers,type ReviewSection} from './ApprovalBlockers';
+import type {Plan,Selection} from '@/types';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { api, ApiError } from '@/lib/api';
 import { usePermission } from '@/permissions';
 import { useI18n } from '@/i18n';
@@ -12,13 +14,16 @@ export interface ApprovalEvidence {
 
 /** One owner for both compact evidence and the existing approval controls.
  * Opening/collapsing details never refetches, remounts or grants permission. */
-export function PlanApproval({ planId, revision, pending, children }: {
-  planId: string; revision: number; pending: boolean;
+export function PlanApproval({ planId, revision, pending, children, plan, onSelect, onSection, onReload, reloadDisabled, currentScenarioId }: {
+  planId: string; revision: number; pending: boolean;plan?:Plan;onSelect?:(selection:Selection)=>void;onSection?:(section:ReviewSection)=>void;onReload?:()=>void;reloadDisabled?:boolean;currentScenarioId?:string;
   children?: (evidence: ApprovalEvidence, detail: ReactNode) => ReactNode;
 }) {
   const { lang } = useI18n(); const hu = lang === 'hu';
   const canReview = usePermission('plan.review'), canApprove = usePermission('plan.approve');
-  const context = `${planId}/${revision}`;
+  const reviewScope=currentScenarioId??plan?.scenarioId??'';
+  const context = JSON.stringify([planId,revision,reviewScope]);
+  const planScenario=plan?.scenarioId,planRevision=plan?.scenarioRevision;
+  const snapshot=useMemo(()=>planScenario!==undefined&&planRevision!==undefined?{scenarioId:planScenario,scenarioRevision:planRevision}:undefined,[planScenario,planRevision]);
   const [record, setRecord] = useState<{ context: string; value: Workflow } | null>(null);
   const [phase, setPhase] = useState<ApprovalEvidence['phase']>('loading');
   const workflow = record?.context === context ? record.value : null;
@@ -26,7 +31,7 @@ export function PlanApproval({ planId, revision, pending, children }: {
   const [ack, setAck] = useState(false), [busy, setBusy] = useState(false);
   const retry = useRef<() => void>(() => {});
   const generation = useRef({ value: 0 });
-  useLayoutEffect(() => { const clock = generation.current; clock.value++; return () => { clock.value++; }; }, [planId, revision]);
+  useLayoutEffect(() => { const clock = generation.current; clock.value++; return () => { clock.value++; }; }, [planId, revision, reviewScope]);
   const accepted = useRef<{context:string; value:Workflow}|null>(null);
   useLayoutEffect(() => { setAck(false); }, [canReview, canApprove]);
   const accept = useCallback((next: Workflow) => {
@@ -42,7 +47,7 @@ export function PlanApproval({ planId, revision, pending, children }: {
     setRecord(null); setPhase('loading'); setError(null); setAck(false); setBusy(false);
     const refresh = async () => {
       if (fetching) return; fetching = true;
-      try { const result = await api.planWorkflow(planId); if (!isWorkflowEvidence(result)) throw Error('Invalid approval response.'); if (alive) { if (!accept(result)) throw Error('Approval evidence moved backwards.'); setError(null); setPhase('ready'); } }
+      try { const result = await api.planWorkflow(planId); if (!isWorkflowEvidence(result,planId,snapshot)) throw Error('Invalid approval response.'); if (alive) { if (!accept(result)) throw Error('Approval evidence moved backwards.'); setError(null); setPhase('ready'); } }
       catch (e) { if (alive) {
         const unavailable = e instanceof ApiError && e.status === 404;
         setAck(false); setPhase(unavailable ? 'unavailable' : 'error');
@@ -53,7 +58,7 @@ export function PlanApproval({ planId, revision, pending, children }: {
     retry.current = () => { setError(null); setPhase('loading'); void refresh(); };
     void refresh(); const timer = setInterval(() => { void refresh(); }, 5000);
     return () => { alive = false; retry.current = () => {}; clearInterval(timer); };
-  }, [planId, revision, accept]);
+  }, [planId, revision, accept,snapshot]);
   // Revision-bound evidence prevents a previous Approved response from flashing
   // while a new revision is loading. Failed/404 reads never certify approval.
   const evidencePhase = error ? 'error' : !workflow && phase === 'ready' ? 'loading' : phase;
@@ -64,7 +69,7 @@ export function PlanApproval({ planId, revision, pending, children }: {
     if (!workflow || !actionable || !ack) return;
     const epoch = generation.current.value;
     setBusy(true); setError(null);
-    try { const next = await api.transitionPlan(planId, action, workflow.version, revision, ack); if (!isWorkflowEvidence(next)) throw Error('Invalid approval response.'); if (epoch === generation.current.value) { accept(next); setAck(false); } }
+    try { const next = await api.transitionPlan(planId, action, workflow.version, revision, ack); if (!isWorkflowEvidence(next,planId,snapshot)) throw Error('Invalid approval response.'); if (epoch === generation.current.value) { accept(next); setAck(false); } }
     catch (e) { if (epoch === generation.current.value) { setAck(false); setError((e as Error).message); } }
     finally { if (epoch === generation.current.value) setBusy(false); }
   };
@@ -80,13 +85,13 @@ export function PlanApproval({ planId, revision, pending, children }: {
           <button type="button" className="rounded border border-divider px-2 py-1 disabled:opacity-40" disabled={!ack} onClick={() => void act(workflow.state === 'draft' ? 'review' : 'approve')}>
             {workflow.state === 'draft' ? hu ? 'Ellenőrzöttnek jelölés' : 'Mark reviewed' : hu ? 'Terv jóváhagyása' : 'Approve plan'}</button>
         </>}
-        {workflow.blockers.length > 0 && <p className="w-full text-muted-foreground">{hu ? 'A jóváhagyás feltételei nem teljesülnek.' : workflow.blockers.join(' ')}</p>}
+        {workflow.blockers.length > 0 && (plan?<div className="w-full"><ApprovalBlockers currentScenarioId={currentScenarioId} workflow={workflow} plan={plan} revision={revision} onRetry={()=>retry.current()} onSelect={onSelect} onSection={onSection} onReload={onReload} reloadDisabled={reloadDisabled}/></div>:<p className="w-full text-muted-foreground">{hu ? 'A jóváhagyás feltételei nem teljesülnek.' : workflow.blockers.join(' ')}</p>)}
       </>}
     </div>
     {evidencePhase !== 'ready' && <p className="mt-1 text-muted-foreground">{hu ? evidencePhase === 'loading' ? 'Jóváhagyási állapot betöltése…' : 'A jóváhagyási állapot nem érhető el.' : evidencePhase === 'loading' ? 'Loading approval status…' : 'Approval status unavailable.'}
       {evidencePhase !== 'loading' && <button type="button" className="ml-2 underline" onClick={() => retry.current()}>{hu ? 'Újra' : 'Retry approval status'}</button>}
     </p>}
-    {error && <p role="alert" className="mt-1 text-destructive">{error}</p>}
+    {error && <p role="alert" className="mt-1 text-destructive">{hu ? 'A jóváhagyási adatokat nem sikerült ellenőrizni. Kérje le újra a jóváhagyási állapotot.' : error}</p>}
   </section>;
   return children ? children({ workflow, phase: error ? 'error' : evidencePhase }, detail) : detail;
 }
