@@ -1,3 +1,4 @@
+import {workspaceBookmarkKey,parseWorkspaceBookmark} from '@/lib/workspace-resume';
 import { useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { WorkspaceActorContext,WorkspaceTenantContext,WorkspaceFeaturesContext,SolveLimitsContext } from '@/workspace';
 import { selectedUnassigned } from '@/lib/unassigned-selection';
@@ -145,7 +146,8 @@ export default function App() {
   const jobStorageKey=`cursus.activeJob.v2:${tenant??'local'}:${actor??'local'}`;
   const persistActiveJob=useCallback((ref:ActiveJobRef|null)=>{writeActiveJob(ref,jobStorageKey);writeActiveJob(null);},[jobStorageKey]);
   const readActiveJob=useCallback(()=>readSavedJob(jobStorageKey)??readSavedJob(),[jobStorageKey]);
-  const manualStorageKey=`cursus.manual-workspace.v1:${tenant??'local'}`;
+  const workspaceStorageKey=workspaceBookmarkKey(tenant,actor);
+  const lastPersistedWorkspace=useRef<string|null>(null);
   const [backgroundJob,setBackgroundJob]=useState<{ref:ActiveJobRef;phase:'active'|'completed'|'unknown'}|null>(null);
   const [freshnessError, setFreshnessError] = useState<string | null>(null);
   const [workspaceLoading, setWorkspaceLoading] = useState(false);
@@ -315,42 +317,53 @@ export default function App() {
   // Initial load: days, then reconnect to a running solve if one survives a
   // reload, else load the day-1 baseline.
   useEffect(() => {
+    let alive=true;
     (async () => {
       try {
-        let saved:{planId:string;day:string}|null=null;
-        try{saved=JSON.parse(localStorage.getItem(manualStorageKey)??'null');}catch{/* optional preference */}
+        let saved:ReturnType<typeof parseWorkspaceBookmark>=null;
+        try{saved=parseWorkspaceBookmark(workspaceStorageKey?localStorage.getItem(workspaceStorageKey):null);}catch{/* optional preference */}
         const ds = await api.days();
+        if(!alive)return;
         setDays(ds);
-        if (!(await tryResume(ds))) {
+        if (!(await tryResume(ds,()=>alive))) {
           if(saved?.planId){
             const generation=++navigationGeneration.current;
             setWorkspaceLoading(true);
             try{
-              let p=await api.planSnapshot(saved.planId);const sc=await api.scenario(p.scenarioId);
-              const selected=sc.selectedPlanId??sc.manualPlanId;
-              if(selected&&selected!==p.id)p=await api.planSnapshot(selected);
+              const p=await api.planSnapshot(saved.planId);const sc=await api.scenario(p.scenarioId);
               const day=ds.find(d=>d.id===sc.day);
-              if(day&&(p.manual||p.assignments||sc.selectedPlanId===p.id)){
+              if(day&&p.id===saved.planId&&sc.id===p.scenarioId){
                 const base=day.baselinePlanId===p.id?p:await api.planSnapshot(day.baselinePlanId);
-                if(generation!==navigationGeneration.current||!writeAccess.current.mounted)return;
+                if(!alive||generation!==navigationGeneration.current||!writeAccess.current.mounted)return;
                 scenarioRef.current=sc;planRef.current=p;setDayId(day.id);setBaseline(base);setScenario(sc);setPlan(p);setRestoredGeometryPlanId(hasCompleteRouteGeometry(p)?null:p.id);
                 return;
               }
-            }catch(e){if(!(e instanceof ApiError&&e.status===404))throw e;/* deleted drafts fall back to the day baseline */}
-            finally{if(generation===navigationGeneration.current)setWorkspaceLoading(false);}
+            }catch(e){
+              if(!alive)return;
+              if(!(e instanceof ApiError&&[403,404].includes(e.status??0)))throw e;
+              try{if(workspaceStorageKey)localStorage.removeItem(workspaceStorageKey);}catch{/* optional preference */}
+              setError(lang==='hu'?'A legutóbbi terv már nem érhető el. A napi alapterv látható.':'The last plan is no longer available. Showing the day baseline.');
+            }
+            finally{if(alive&&generation===navigationGeneration.current)setWorkspaceLoading(false);}
           }
-          await loadDay(ds.find(d=>d.id===saved?.day)??ds.find((d) => d.id === 'day1'&&!d.archived) ?? ds.find(d=>!d.archived)??ds[0]!);
+          if(!alive)return;
+          const fallback=ds.find(d=>d.id===saved?.day)??ds.find((d) => d.id === 'day1'&&!d.archived) ?? ds.find(d=>!d.archived)??ds[0];
+          if(!fallback)throw new Error('No planning days are available.');
+          await loadDay(fallback);
         }
-      } catch (e) { setError(describeApiError(e, t)); }
-      finally{if(writeAccess.current.mounted)setInitialWorkspaceLoaded(true);}
+      } catch (e) { if(alive)setError(describeApiError(e, t)); }
+      finally{if(alive&&writeAccess.current.mounted)setInitialWorkspaceLoaded(true);}
     })();
+    return()=>{alive=false;};
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   useEffect(()=>{
-    if(!initialWorkspaceLoaded||!plan)return;
-    try{if(plan.manual||plan.assignments||scenario?.selectedPlanId===plan.id)localStorage.setItem(manualStorageKey,JSON.stringify({planId:plan.id,day:scenario?.day??dayId}));
-      else localStorage.removeItem(manualStorageKey);}catch{/* storage may be unavailable */}
-  },[plan,manualStorageKey,scenario,dayId,initialWorkspaceLoaded]);
+    if(!initialWorkspaceLoaded||!plan||!scenario||workspaceLoading||!workspaceStorageKey||plan.scenarioId!==scenario.id)return;
+    const value=JSON.stringify({version:1,planId:plan.id,day:scenario.day});
+    const identity=JSON.stringify([workspaceStorageKey,value]);
+    if(lastPersistedWorkspace.current===identity)return;
+    try{localStorage.setItem(workspaceStorageKey,value);lastPersistedWorkspace.current=identity;}catch{/* storage may be unavailable */}
+  },[plan,workspaceStorageKey,scenario,workspaceLoading,initialWorkspaceLoaded]);
   useEffect(()=>{
     if(!restoredGeometryPlanId)return;
     let alive=true;const id=restoredGeometryPlanId;
@@ -370,7 +383,7 @@ export default function App() {
     resetSelection();
     try {
       const [base, latest] = await Promise.all([loadPlanWithGeometry(d.baselinePlanId), api.scenario(d.baseScenarioId)]);
-      if (generation !== navigationGeneration.current) return;
+      if (!writeAccess.current.mounted || generation !== navigationGeneration.current) return;
       setDayId(d.id); setBaseline(base); setPlan(base); setScenario(latest);
     } finally { if (generation === navigationGeneration.current) setWorkspaceLoading(false); }
   }, []);
@@ -456,7 +469,9 @@ export default function App() {
   }, [t,readActiveJob,persistActiveJob]);
 
   // Reconnect to a solve persisted before a reload. Returns true if it set up state.
-  const tryResume = useCallback(async (ds: DaySummary[]): Promise<boolean> => {
+  const tryResume = useCallback(async (ds: DaySummary[],current:()=>boolean=()=>writeAccess.current.mounted): Promise<boolean> => {
+    const generation=navigationGeneration.current;
+    const valid=()=>current()&&generation===navigationGeneration.current;
     let ref = readActiveJob();
     if(!ref){
       try{const active=(await api.activeJobs())[0];if(active){ref={jobId:active.id,scenarioId:active.scenarioId,dayId:active.dayId??'',referencePlanId:active.referencePlanId??undefined};persistActiveJob(ref);}}catch{/* Rolling compatibility: older servers lack discovery. */}
@@ -469,16 +484,15 @@ export default function App() {
       const sc = await api.scenario(ref.scenarioId);
       const d = ds.find((x) => x.id === sc.day) ?? ds.find((x) => x.id === ref.dayId);
       if (!d) { persistActiveJob(null); return false; }
-      setDayId(d.id);
-      setBaseline(await loadPlanWithGeometry(d.baselinePlanId));
-      setScenario(sc);
-      if (j.status === 'completed' && j.planId) {
-        const reference=await loadPlanWithGeometry(ref.referencePlanId??d.baselinePlanId);
-        setPlan(reference);setCandidate({plan:await loadPlanWithGeometry(j.planId),reference});
-        return true;
-      }
-      // still running: show its scenario's last plan context and resume polling
-      setPlan(await loadPlanWithGeometry(ref.referencePlanId??d.baselinePlanId));
+      const [base,reference,result]=await Promise.all([
+        loadPlanWithGeometry(d.baselinePlanId),
+        loadPlanWithGeometry(ref.referencePlanId??d.baselinePlanId),
+        j.status==='completed'&&j.planId?loadPlanWithGeometry(j.planId):Promise.resolve(null),
+      ]);
+      if(!valid())return true;
+      setDayId(d.id);setBaseline(base);setScenario(sc);setPlan(reference);
+      if(result){setCandidate({plan:result,reference});return true;}
+      // Running jobs retain their reference context until explicitly adopted.
       const ctrl = new AbortController();
       pollAbort.current = ctrl;
       void followJob(ref.jobId, ref.scenarioId, d.id, ctrl);
@@ -723,7 +737,7 @@ export default function App() {
     finally{if(generation===navigationGeneration.current)setWorkspaceLoading(false);}
   }
 
-  if (error && !plan) return <div className="flex h-full items-center justify-center text-sm text-destructive">{t('app.failed', { e: error })}</div>;
+  if (error && !plan) return <div role="alert" className="flex h-full flex-col items-center justify-center gap-3 text-sm text-destructive"><p>{t('app.failed', { e: error })}</p><button className="rounded border px-3 py-2 text-foreground" onClick={()=>window.location.reload()}>{lang==='hu'?'Újrapróbálás':'Retry'}</button></div>;
   if (!plan || !baseline || !scenario) return <div className="flex h-full items-center justify-center text-sm text-muted-foreground">{t('app.loading')}</div>;
 
   const isReplan = scenario.kind === 'copy';
