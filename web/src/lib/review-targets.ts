@@ -20,6 +20,8 @@ export function validBlockerEvidence(w:Workflow,planId?:string):boolean{
  const messages=new Set(d.items.map(i=>i.message));
  return w.blockers.every(b=>messages.has(b))&&d.items.every(i=>w.blockers.includes(i.message));
 }
+/** Equal revision numbers do not identify the same editable scenario. */
+export const reviewChangesNeedReload=(planScenarioId:string,workspaceScenarioId:string,serverRevision:number,workspaceRevision:number)=>planScenarioId!==workspaceScenarioId||serverRevision!==workspaceRevision;
 export function boundBlockerEvidence(w:Workflow,plan:Plan):ApprovalBlockerEvidence|null{
  const d=w.blockerDetails;
  return validBlockerEvidence(w,plan.id)&&d&&d.scenarioId===plan.scenarioId&&d.planRevision===plan.scenarioRevision?d:null;

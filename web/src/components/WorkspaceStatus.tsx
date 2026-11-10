@@ -13,7 +13,7 @@ export function WorkspaceStatus({plan,baseline,scenario,loading,saving,running,c
  const fresh=plan.scenarioId===scenario.id&&plan.scenarioRevision===scenario.revision;
  const freshness=workspaceFreshness({loading,saving,running,candidate,conflict,revalidate,archived:!!scenario.supersededBy,fresh});
  const pending=freshness!=='current';
- return <PlanApproval plan={plan} onSelect={onSelect} onReload={onReload} reloadDisabled={loading||saving||running||candidate} onSection={section=>{
+ return <PlanApproval currentScenarioId={scenario.id} plan={plan} onSelect={onSelect} onReload={onReload} reloadDisabled={loading||saving||running||candidate} onSection={section=>{
   if(section==='issues'){onOpenIssues?.();return;}if(section==='changes'){onOpenChanges();return;}
   const element=document.getElementById(section==='loading'?'cursus-loading-evidence':'cursus-constraint-evidence');element?.focus();element?.scrollIntoView({block:'nearest'});
  }} planId={plan.id} revision={scenario.revision} pending={pending}>

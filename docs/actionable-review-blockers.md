@@ -16,7 +16,7 @@ The browser validates the extension against the workflow hash/revisions, expecte
 - Constraint blockers link to the exact delivery, trip or vehicle where safely identifiable.
 - Coverage and validation blockers open the existing Issues dialog. Readiness also provides direct links to unassigned deliveries.
 - Input/policy evidence links to the existing constraint/loading detail sections.
-- Revision drift offers review of known changes or explicit scenario reload. Reload retains the displayed saved plan; it does not adopt a result, solve or change constraints. It is disabled during saving, running optimization or a candidate decision and uses the existing navigation safeguards.
+- Revision drift offers review of known changes or explicit scenario reload. Equal revision numbers from different scenario IDs never authorize opening the other scenario’s change list. Reload retains the displayed saved plan; it does not adopt a result, solve or change constraints. It is disabled during saving, running optimization or a candidate decision and uses the existing navigation safeguards.
 - Inspector navigation collapses the review disclosure and transfers keyboard focus to the inspector heading.
 
 Reviewer navigation is read-only. Existing role checks continue to control editing, review and approval. Opening a blocker never executes a suggested repair, relaxes a constraint, submits optimization or transfers approval.

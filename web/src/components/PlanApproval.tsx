@@ -14,13 +14,14 @@ export interface ApprovalEvidence {
 
 /** One owner for both compact evidence and the existing approval controls.
  * Opening/collapsing details never refetches, remounts or grants permission. */
-export function PlanApproval({ planId, revision, pending, children, plan, onSelect, onSection, onReload, reloadDisabled }: {
-  planId: string; revision: number; pending: boolean;plan?:Plan;onSelect?:(selection:Selection)=>void;onSection?:(section:ReviewSection)=>void;onReload?:()=>void;reloadDisabled?:boolean;
+export function PlanApproval({ planId, revision, pending, children, plan, onSelect, onSection, onReload, reloadDisabled, currentScenarioId }: {
+  planId: string; revision: number; pending: boolean;plan?:Plan;onSelect?:(selection:Selection)=>void;onSection?:(section:ReviewSection)=>void;onReload?:()=>void;reloadDisabled?:boolean;currentScenarioId?:string;
   children?: (evidence: ApprovalEvidence, detail: ReactNode) => ReactNode;
 }) {
   const { lang } = useI18n(); const hu = lang === 'hu';
   const canReview = usePermission('plan.review'), canApprove = usePermission('plan.approve');
-  const context = `${planId}/${revision}`;
+  const reviewScope=currentScenarioId??plan?.scenarioId??'';
+  const context = JSON.stringify([planId,revision,reviewScope]);
   const planScenario=plan?.scenarioId,planRevision=plan?.scenarioRevision;
   const snapshot=useMemo(()=>planScenario!==undefined&&planRevision!==undefined?{scenarioId:planScenario,scenarioRevision:planRevision}:undefined,[planScenario,planRevision]);
   const [record, setRecord] = useState<{ context: string; value: Workflow } | null>(null);
@@ -30,7 +31,7 @@ export function PlanApproval({ planId, revision, pending, children, plan, onSele
   const [ack, setAck] = useState(false), [busy, setBusy] = useState(false);
   const retry = useRef<() => void>(() => {});
   const generation = useRef({ value: 0 });
-  useLayoutEffect(() => { const clock = generation.current; clock.value++; return () => { clock.value++; }; }, [planId, revision]);
+  useLayoutEffect(() => { const clock = generation.current; clock.value++; return () => { clock.value++; }; }, [planId, revision, reviewScope]);
   const accepted = useRef<{context:string; value:Workflow}|null>(null);
   useLayoutEffect(() => { setAck(false); }, [canReview, canApprove]);
   const accept = useCallback((next: Workflow) => {
@@ -84,7 +85,7 @@ export function PlanApproval({ planId, revision, pending, children, plan, onSele
           <button type="button" className="rounded border border-divider px-2 py-1 disabled:opacity-40" disabled={!ack} onClick={() => void act(workflow.state === 'draft' ? 'review' : 'approve')}>
             {workflow.state === 'draft' ? hu ? 'Ellenőrzöttnek jelölés' : 'Mark reviewed' : hu ? 'Terv jóváhagyása' : 'Approve plan'}</button>
         </>}
-        {workflow.blockers.length > 0 && (plan?<div className="w-full"><ApprovalBlockers workflow={workflow} plan={plan} revision={revision} onRetry={()=>retry.current()} onSelect={onSelect} onSection={onSection} onReload={onReload} reloadDisabled={reloadDisabled}/></div>:<p className="w-full text-muted-foreground">{hu ? 'A jóváhagyás feltételei nem teljesülnek.' : workflow.blockers.join(' ')}</p>)}
+        {workflow.blockers.length > 0 && (plan?<div className="w-full"><ApprovalBlockers currentScenarioId={currentScenarioId} workflow={workflow} plan={plan} revision={revision} onRetry={()=>retry.current()} onSelect={onSelect} onSection={onSection} onReload={onReload} reloadDisabled={reloadDisabled}/></div>:<p className="w-full text-muted-foreground">{hu ? 'A jóváhagyás feltételei nem teljesülnek.' : workflow.blockers.join(' ')}</p>)}
       </>}
     </div>
     {evidencePhase !== 'ready' && <p className="mt-1 text-muted-foreground">{hu ? evidencePhase === 'loading' ? 'Jóváhagyási állapot betöltése…' : 'A jóváhagyási állapot nem érhető el.' : evidencePhase === 'loading' ? 'Loading approval status…' : 'Approval status unavailable.'}

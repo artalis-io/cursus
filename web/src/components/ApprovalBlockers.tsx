@@ -1,10 +1,10 @@
 import type {Workflow} from '../../../server/src/workflow-contract';
-import {boundBlockerEvidence,blockerSelection} from '@/lib/review-targets';
+import {boundBlockerEvidence,blockerSelection,reviewChangesNeedReload} from '@/lib/review-targets';
 import type {Plan,Selection} from '@/types';
 import {useI18n,useT} from '@/i18n';
 export type ReviewSection='issues'|'changes'|'constraints'|'loading';
-export function ApprovalBlockers({workflow,plan,revision,onSelect,onSection,onReload,reloadDisabled,onRetry}:{
- workflow:Workflow;plan:Plan;revision:number;onSelect?:(selection:Selection)=>void;onSection?:(section:ReviewSection)=>void;onReload?:()=>void;reloadDisabled?:boolean;onRetry?:()=>void;
+export function ApprovalBlockers({workflow,plan,revision,onSelect,onSection,onReload,reloadDisabled,onRetry,currentScenarioId}:{
+ workflow:Workflow;plan:Plan;revision:number;onSelect?:(selection:Selection)=>void;onSection?:(section:ReviewSection)=>void;onReload?:()=>void;reloadDisabled?:boolean;onRetry?:()=>void;currentScenarioId?:string;
 }){
  const t=useT(),{lang}=useI18n(),details=boundBlockerEvidence(workflow,plan);
  if(!workflow.blockers.length)return null;
@@ -16,7 +16,7 @@ export function ApprovalBlockers({workflow,plan,revision,onSelect,onSection,onRe
    const vehicle=target.kind!=='section'?plan.vehicles.find(v=>v.id===target.vehicleId):null;
    const label=target.kind==='stop'?`${target.orderNo}${target.requestId!==undefined?` · ${t('review.delivery',{id:target.requestId})}`:''} · ${vehicle?.ref??target.vehicleId}`:
     target.kind==='trip'?`${vehicle?.ref??target.vehicleId} · ${t('fleet.tripLabel',{n:target.tripIndex+1})}`:target.kind==='vehicle'?vehicle?.ref??String(target.vehicleId):null;
-   const needsReload=target.kind==='section'&&target.section==='changes'&&workflow.currentRevision!==revision;
+   const needsReload=target.kind==='section'&&target.section==='changes'&&reviewChangesNeedReload(plan.scenarioId,currentScenarioId??plan.scenarioId,workflow.currentRevision,revision);
    return <li key={JSON.stringify([issue.code,issue.target])} data-review-blocker={issue.code} className="rounded border border-divider p-2">
     <p>{t(`review.${issue.code}`)}</p>{label&&<p className="break-words text-muted-foreground">{label}</p>}
     {selection&&onSelect?<button type="button" className="mt-1 underline" onClick={()=>onSelect(selection)}>{t(`review.view.${selection.kind}`)}</button>:
