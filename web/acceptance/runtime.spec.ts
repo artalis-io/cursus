@@ -2153,3 +2153,36 @@ test('changing planning days persists ordinary baseline views across reload and 
  await page.reload();await expect(page.locator('section[aria-label="Plan approval"]')).toHaveAttribute('data-plan-id',day.baselinePlanId);
  const reopened=await context.newPage();try{await reopened.goto('/');await expect(reopened.locator('section[aria-label="Plan approval"]')).toHaveAttribute('data-plan-id',day.baselinePlanId);}finally{await reopened.close();}
 });
+
+test('an already adopted native result cannot return as a pending candidate after reload or background discovery',async({page})=>{
+ await login(page);await shortBudget(page);
+ const base=await baseline(page);
+ const submission=page.waitForResponse(r=>r.request().method()==='POST'&&/\/api\/scenarios\/[^/]+\/solve$/.test(new URL(r.url()).pathname));
+ const plan=await finishSolve(page,()=>page.getByRole('button',{name:'Optimize',exact:true}).click());
+ const {jobId,scenarioId}=await (await submission).json() as {jobId:string;scenarioId:string};
+ const me=await get<{tenantId:string;userId:string}>(page.request,'/api/auth/me');
+ const key=`cursus.activeJob.v2:${me.tenantId}:${me.userId}`,ref={jobId,scenarioId,dayId:plan.day,referencePlanId:base.id};
+ const workspaceKey=await savedWorkspaceKey(page);
+ await expect.poll(()=>page.evaluate(k=>JSON.parse(localStorage.getItem(k)??'null')?.planId,workspaceKey)).toBe(plan.id);
+ const selected=(await get<Scenario>(page.request,`${peer}/api/scenarios/${scenarioId}`)).selectedPlanId;expect(selected).toBe(plan.id);
+ await page.reload();await expect(page.locator('section[aria-label="Plan approval"]')).toHaveAttribute('data-plan-id',plan.id);
+ const writes:string[]=[];
+ page.on('request',r=>{if(new URL(r.url()).pathname.startsWith('/api/')&&!['GET','HEAD','OPTIONS'].includes(r.method()))writes.push(r.url());});
+ // Reproduce a missed cross-replica adoption acknowledgement while the tab is
+ // already open. Discovery must remove the obsolete job without a decision UI.
+ await page.evaluate(({key,ref})=>localStorage.setItem(key,JSON.stringify(ref)),{key,ref});
+ await page.evaluate(()=>window.dispatchEvent(new Event('focus')));
+ await expect.poll(()=>page.evaluate(k=>localStorage.getItem(k),key)).toBeNull();
+ await expect(page.getByRole('region',{name:'Plan candidate'})).toHaveCount(0);
+ // Seed before application initialization to exercise startup recovery too.
+ await page.addInitScript(({key,ref})=>localStorage.setItem(key,JSON.stringify(ref)),{key,ref});
+ await page.reload();
+ await expect(page.locator('section[aria-label="Plan approval"]')).toHaveAttribute('data-plan-id',plan.id);
+ await expect(page.getByRole('button',{name:'Manual planning',exact:true})).toBeEnabled();
+ await expect(page.getByRole('region',{name:'Plan candidate'})).toHaveCount(0);
+ await expect(page.getByRole('button',{name:'Open optimization',exact:true})).toHaveCount(0);
+ await expect.poll(()=>page.evaluate(k=>localStorage.getItem(k),key)).toBeNull();
+ await expectPlanTotals(page,plan);
+ expect((await get<Scenario>(page.request,`${peer}/api/scenarios/${scenarioId}`)).selectedPlanId).toBe(selected);
+ expect(writes).toEqual([]);
+});

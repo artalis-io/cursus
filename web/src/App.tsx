@@ -482,6 +482,13 @@ export default function App() {
       if(j.payload?.submittedBy&&actor&&j.payload.submittedBy!==actor){persistActiveJob(null);return false;}
       if (j.status === 'failed' || j.status === 'cancelled') { persistActiveJob(null); return false; }
       const sc = await api.scenario(ref.scenarioId);
+      if(!valid())return true;
+      // Another replica/tab may already have adopted this durable result.
+      // A browser job reference is not evidence of an outstanding decision.
+      if(j.status==='completed'&&j.planId&&(sc.selectedPlanId??sc.manualPlanId)===j.planId){
+        if(valid()&&readActiveJob()?.jobId===ref.jobId)persistActiveJob(null);
+        return false;
+      }
       const d = ds.find((x) => x.id === sc.day) ?? ds.find((x) => x.id === ref.dayId);
       if (!d) { persistActiveJob(null); return false; }
       const [base,reference,result]=await Promise.all([
@@ -515,6 +522,11 @@ export default function App() {
         const latest=await api.job(ref.jobId);if(!alive||readActiveJob()?.jobId!==ref.jobId)return;
         if(latest.payload?.submittedBy&&actor&&latest.payload.submittedBy!==actor){persistActiveJob(null);setBackgroundJob(null);return;}
         if(latest.status==='failed'||latest.status==='cancelled'){persistActiveJob(null);setBackgroundJob(null);return;}
+        if(latest.status==='completed'&&latest.planId){
+          const currentScenario=await api.scenario(ref.scenarioId);
+          if(!alive||readActiveJob()?.jobId!==ref.jobId)return;
+          if((currentScenario.selectedPlanId??currentScenario.manualPlanId)===latest.planId){persistActiveJob(null);setBackgroundJob(null);return;}
+        }
         setBackgroundJob({ref,phase:latest.status==='completed'?'completed':'active'});
       }catch{
         const ref=readActiveJob();if(alive&&ref&&ref.jobId!==job?.id)setBackgroundJob({ref,phase:'unknown'});
