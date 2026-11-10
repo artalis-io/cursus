@@ -2475,7 +2475,8 @@ test('change review: peer edits reject stale Undo and read-only reload retains t
   calls++;const edited=await page.request.post(`${peer}/api/scenarios/${scenario.id}/edit`,{headers:{...headers,'if-match':`"${scenario.revision}"`},data:{edit:{op:'removeVehicle',vehicleId:999}}});expect(edited.status()).toBe(200);await route.continue();
  });
  const response=page.waitForResponse(r=>r.url().endsWith('/undo-instruction'));await dialog.locator('[data-request-id="130"]').getByRole('button').click();expect((await response).status()).toBe(409);
- await expect(dialog.locator('[data-instruction="pin"]')).toHaveCount(2);await expect(dialog.locator('[data-request-id="130"]').getByRole('button')).toBeDisabled();
+ await expect(dialog.locator('[data-instruction="pin"]')).toHaveCount(2);await expect(dialog.locator('[data-request-id="130"]').getByRole('button')).toHaveCount(0);
+ await expect(dialog.getByRole('alert')).toContainText('changed in another workspace');
  await dialog.getByRole('button',{name:'Reload instructions',exact:true}).click();await expect(dialog.locator('[data-instruction="removeVehicle"]')).toBeVisible();
  await expect(dialog.locator('[data-request-id="130"]').getByRole('button')).toBeEnabled();expect(calls).toBe(1);
  expect(await get<Plan>(page.request,`${peer}/api/plans/${plan.id}`)).toEqual(plan);
