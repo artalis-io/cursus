@@ -1,3 +1,4 @@
+import type {Instruction} from '../../server/src/change-review-contract';
 import {workspaceBookmarkKey,parseWorkspaceBookmark} from '@/lib/workspace-resume';
 import { useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { WorkspaceActorContext,WorkspaceTenantContext,WorkspaceFeaturesContext,SolveLimitsContext } from '@/workspace';
@@ -564,6 +565,39 @@ export default function App() {
     return queued;
   }, [showToast, t, rejectStaleIntent]);
 
+  const undoBusy = useRef(false);
+  const undoInstruction = useCallback(async (instruction:Instruction, displayed:{scenarioId:string;revision:number;planId:string}) => {
+    const snapshot=scenarioRef.current,viewedPlan=planRef.current;
+    if(!snapshot||!viewedPlan||snapshot.id!==displayed.scenarioId||snapshot.revision!==displayed.revision||viewedPlan.id!==displayed.planId||undoBusy.current||pendingEditsRef.current>0||manualBusyRef.current||!writeAccess.current.edit||!writeAccess.current.mounted)return;
+    undoBusy.current=true;
+    const epoch=writeAccess.current.epoch;
+    setPendingEdits(n=>n+1);
+    const queued=editQueue.current.then(async()=>{
+      // The rendered revision is authoritative, even before a queued React render
+      // catches up with a completed local edit. Geometry is cosmetic: compare plan IDs.
+      // Captured intent must not follow a navigation, role change, or queued edit.
+      if(!writeAccess.current.mounted||!writeAccess.current.edit||epoch!==writeAccess.current.epoch||scenarioRef.current!==snapshot||planRef.current?.id!==viewedPlan.id)return false;
+      try{
+        const updated=await api.undoInstruction(displayed.scenarioId,displayed.revision,{instruction,datasetSha256:snapshot.deliveryDatasetSha256});
+        if(writeAccess.current.mounted&&epoch===writeAccess.current.epoch&&scenarioRef.current===snapshot&&planRef.current?.id===viewedPlan.id){scenarioRef.current=updated;setScenario(updated);setError(null);}
+        return true;
+      }catch(e){if(scenarioRef.current===snapshot){rejectStaleIntent(e);setError(describeApiError(e,t));}return false;}
+    });
+    editQueue.current=queued;
+    try{await queued;}finally{undoBusy.current=false;if(writeAccess.current.mounted)setPendingEdits(n=>Math.max(0,n-1));}
+  },[rejectStaleIntent,t]);
+
+  const reloadInstructions = useCallback(async () => {
+    const snapshot=scenarioRef.current,viewedPlan=planRef.current,generation=navigationGeneration.current;
+    if(!snapshot||!viewedPlan||pendingEditsRef.current>0||undoBusy.current||manualBusyRef.current)return;
+    try{
+      const latest=await api.scenario(snapshot.id);
+      if(writeAccess.current.mounted&&navigationGeneration.current===generation&&scenarioRef.current===snapshot&&planRef.current?.id===viewedPlan.id&&pendingEditsRef.current===0&&!undoBusy.current&&!manualBusyRef.current){
+        writeAccess.current.epoch++;scenarioRef.current=latest;setScenario(latest);setFreshnessError(null);setError(null);
+      }
+    }catch(e){if(scenarioRef.current===snapshot&&planRef.current?.id===viewedPlan.id)setError(describeApiError(e,t));}
+  },[t]);
+
   // Apply several staged edits at once (bulk actions); one fork + one revision.
   const applyEdits = useCallback((edits: ScenarioEdit[], toastMsg?: string): Promise<boolean> => {
     edits=edits.map(edit=>'requestId' in edit&&edit.requestId!==undefined||'requestIds' in edit&&edit.requestIds?{...edit,datasetSha256:planRef.current?.provenance.datasetSha256}:edit);
@@ -760,7 +794,7 @@ export default function App() {
   // be silently discarded). Returns true if it's safe to proceed.
   const okToSwitch = (): boolean => !(scenario.kind === 'copy' && changesCount > 0) || window.confirm(t('app.discardConfirm', { n: changesCount }));
   // The plan no longer reflects the scenario once it has been edited since solve.
-  const dirty = scenario.revision !== plan.scenarioRevision;
+  const dirty = scenario.id !== plan.scenarioId || scenario.revision !== plan.scenarioRevision;
   const selectedOrder=selection?.kind==='unassigned'?selectedUnassigned(plan.unassigned,selection)
     :selection?.kind==='stop'?selectedStop(plan.vehicles.find(v=>v.id===selection.vehicleId)?.trips.find(tr=>tr.index===selection.tripIndex)?.stops??[],selection,plan.id):null;
   const manualActions=manualContext?.enabled&&selectedOrder?.requestId!==undefined?<ManualOrderActions plan={plan} requestId={selectedOrder.requestId} actors={manualContext.actors}
@@ -843,8 +877,7 @@ export default function App() {
         {freshnessError && <div role="alert" className="border-b border-warning/40 bg-warning/10 px-4 py-2 text-sm">
           {t(freshnessError)} <button className="underline" onClick={() => {
             if (!window.confirm(t('freshness.confirm'))) return;
-            writeAccess.current.epoch++;
-            void api.scenario(scenario.id).then(latest => { scenarioRef.current = latest; setScenario(latest); setFreshnessError(null); setError(null); }).catch(e => setError(describeApiError(e, t)));
+            void reloadInstructions();
           }}>{t('freshness.reload')}</button>
         </div>}
         {error && <div role="alert" className="border-b border-destructive/30 bg-destructive/10 px-4 py-2 text-sm text-destructive">{error}</div>}
@@ -935,8 +968,10 @@ export default function App() {
       )}
       <ChangesDialog
         open={changesOpen} onOpenChange={setChangesOpen}
-        plan={plan} scenario={scenario} dirty={dirty} solving={!!solving}
-        onUndo={(edit) => void applyEdit(edit)}
+        plan={plan} scenario={scenario} dirty={dirty} solving={!!solving || pendingEdits > 0 || manualBusy || !!candidate || !!freshnessError || workspaceLoading || !!scenario.supersededBy}
+        onUndo={(instruction) => void undoInstruction(instruction,{scenarioId:scenario.id,revision:scenario.revision,planId:plan.id})}
+        notice={freshnessError?t(freshnessError):error}
+        onReload={() => void reloadInstructions()} reloadDisabled={pendingEdits > 0 || manualBusy || !!solving}
         onDiscardAll={() => { setChangesOpen(false); resetToBaseline(); }}
         onReplan={() => { setChangesOpen(false); void replan(); }}
       />

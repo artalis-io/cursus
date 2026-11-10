@@ -1,3 +1,4 @@
+import {undoInstructionEdit} from './change-review.js';
 import {legacyLibraryPlan} from './library.js';
 import {solveBudget} from './solve-budget.js';
 import Fastify, { type FastifyReply, type FastifyRequest } from 'fastify';
@@ -227,6 +228,15 @@ app.post<{ Body: { day?: string; from?: string; removeVehicleId?: number; label?
   return reply.code(400).send({ error: 'day or from required' });
 });
 
+/* Remove one exact instruction; immutable base scenarios are never forked. */
+app.post<{Params:{id:string};Body:unknown}>('/api/scenarios/:id/undo-instruction',async(req,reply)=>{
+  const current=store.getScenario(req.params.id);
+  if(!current)return reply.code(404).send({error:'scenario not found'});
+  if(current.revision!==expectedRevision(req.headers)||current.supersededBy)return reply.code(409).send({error:'Scenario changed. Reload before undoing it.'});
+  // No await between the precondition read and this synchronous legacy write.
+  try{return store.editScenario(current.id,undoInstructionEdit(current,req.body));}
+  catch(error){return reply.code(409).send({error:(error as Error).message});}
+});
 /* Apply a manual dispatcher edit (pin/forbid/remove-vehicle...). Forks an
  * editable copy from an immutable base so the baseline is never mutated; edits
  * an existing copy in place. Returns the (possibly new) scenario. */

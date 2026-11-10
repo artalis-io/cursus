@@ -1,3 +1,4 @@
+import {undoInstructionEdit} from '../change-review.js';
 import { randomUUID } from 'node:crypto';
 import type { StatefulStore } from './postgres.js';
 import { applyScenarioEdits, type Scenario, type ScenarioEdit, type ScenarioEditsBundle } from '../store.js';
@@ -36,7 +37,7 @@ export class ScenarioRepository {
     return scenario;
   }
 
-  async edit(id: string, edits: ScenarioEdit[], expectedRevision?: number): Promise<Scenario> {
+  async edit(id: string, edits: ScenarioEdit[], expectedRevision?: number, undo?: unknown): Promise<Scenario> {
     const source=await this.get(id);
     if(!source)throw new Error('scenario not found');
     return this.store.tx(async client => {
@@ -46,6 +47,7 @@ export class ScenarioRepository {
       if (!current) throw new Error('scenario not found');
       if(current.supersededBy)throw new RevisionConflictError();
       if (expectedRevision !== undefined && current.revision !== expectedRevision) throw new RevisionConflictError();
+      if(undo!==undefined)edits=[undoInstructionEdit(current,undo)];
       const target: Scenario = current.kind === 'base' ? { ...structuredClone(current), id: `scn_${randomUUID()}`, kind: 'copy',
         parentId: current.id, revision: 1, label: `${current.label} (edited)`, createdAt: new Date().toISOString() } : current;
       if(target.id!==id){delete target.selectedPlanId;delete target.selectionVersion;}

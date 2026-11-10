@@ -2440,3 +2440,115 @@ test('actionable review: borrowed or malformed structured proof is Unknown, whil
  await expect(page.getByRole('button',{name:'Mark reviewed',exact:true})).toHaveCount(0);
  good=true;await page.getByRole('button',{name:'Retry approval status',exact:true}).click();await expect(page.getByTestId('status-approval')).toContainText('Draft');
 });
+
+async function changeReviewFixture(page:Page){
+ await login(page);
+ const day=(await get<DaySummary[]>(page.request,'/api/days')).find(d=>d.id==='acceptance-day-two')!;
+ await page.getByRole('combobox').first().click();await page.getByRole('option',{name:/7 May 2026/}).click();
+ await expect(page.getByText('2 / 2',{exact:true})).toBeVisible();
+ const base=await get<Plan>(page.request,`/api/plans/${day.baselinePlanId}`),headers={origin:new URL(page.url()).origin};
+ const copied=await page.request.post('/api/scenarios',{headers,data:{from:base.scenarioId,label:'Exact instruction review'}});expect(copied.status()).toBe(201);
+ let scenario=await copied.json() as Scenario;
+ const edited=await page.request.post(`/api/scenarios/${scenario.id}/edits`,{headers:{...headers,'if-match':`"${scenario.revision}"`},data:{edits:[130,170].map(requestId=>({op:'pin',orderNo:'PUBLIC-REPEAT',requestId,vehicleId:base.vehicles[0]!.id,datasetSha256:base.provenance.datasetSha256}))}});
+ expect(edited.status(),await edited.text()).toBe(200);scenario=await edited.json() as Scenario;
+ const submitted=await page.request.post(`/api/scenarios/${scenario.id}/solve`,{headers:{...headers,'if-match':`"${scenario.revision}"`},data:{budgetSec:1}});expect(submitted.status()).toBe(202);
+ const {jobId}=await submitted.json() as {jobId:string};let job:Job;
+ await expect.poll(async()=>{job=await get<Job>(page.request,`${peer}/api/jobs/${jobId}`);return job.status;},{timeout:60000}).toBe('completed');
+ const plan=await get<Plan>(page.request,`/api/plans/${job!.planId}`);await reopenStatusPlan(page,plan.id);await selectWorkspaceAction(page,'Changes');
+ return {scenario,plan,headers,dialog:page.getByRole('dialog')};
+}
+test('change review: duplicate references undo only the selected delivery, preserving saved KPIs on both replicas',async({page})=>{
+ const {scenario,plan,dialog}=await changeReviewFixture(page);
+ await expect(dialog).toContainText('included in this saved plan revision');
+ const row=dialog.locator('[data-instruction="pin"][data-request-id="130"]');await expect(row).toContainText('PUBLIC-REPEAT');
+ const response=page.waitForResponse(r=>r.url().endsWith('/undo-instruction'));await row.getByRole('button',{name:/^Undo /}).click();
+ const undone=await response;expect(undone.status()).toBe(200);expect(undone.request().headers()['if-match']).toBe(`"${scenario.revision}"`);
+ expect(undone.request().postDataJSON()).toEqual({instruction:{op:'pin',orderNo:'PUBLIC-REPEAT',requestId:130,vehicleId:scenario.pins[0]!.vehicleId},datasetSha256:scenario.deliveryDatasetSha256});
+ await expect(row).toHaveCount(0);await expect(dialog.locator('[data-request-id="170"]')).toBeVisible();await expect(dialog).toContainText('not included in this saved plan revision');
+ expect((await get<Scenario>(page.request,`${peer}/api/scenarios/${scenario.id}`)).pins.map(p=>p.requestId)).toEqual([170]);
+ expect(await get<Plan>(page.request,`${peer}/api/plans/${plan.id}`)).toEqual(plan);
+ await page.keyboard.press('Escape');await expectPlanTotals(page,plan);
+});
+test('change review: peer edits reject stale Undo and read-only reload retains the viewed result',async({page})=>{
+ const {scenario,plan,headers,dialog}=await changeReviewFixture(page);let calls=0;
+ await page.route('**/undo-instruction',async route=>{
+  calls++;const edited=await page.request.post(`${peer}/api/scenarios/${scenario.id}/edit`,{headers:{...headers,'if-match':`"${scenario.revision}"`},data:{edit:{op:'removeVehicle',vehicleId:999}}});expect(edited.status()).toBe(200);await route.continue();
+ });
+ const response=page.waitForResponse(r=>r.url().endsWith('/undo-instruction'));await dialog.locator('[data-request-id="130"]').getByRole('button').click();expect((await response).status()).toBe(409);
+ await expect(dialog.locator('[data-instruction="pin"]')).toHaveCount(2);await expect(dialog.locator('[data-request-id="130"]').getByRole('button')).toHaveCount(0);
+ await expect(dialog.getByRole('alert')).toContainText('changed in another workspace');
+ await dialog.getByRole('button',{name:'Reload instructions',exact:true}).click();await expect(dialog.locator('[data-instruction="removeVehicle"]')).toBeVisible();
+ await expect(dialog.locator('[data-request-id="130"]').getByRole('button')).toBeEnabled();expect(calls).toBe(1);
+ expect(await get<Plan>(page.request,`${peer}/api/plans/${plan.id}`)).toEqual(plan);
+ await page.keyboard.press('Escape');await expect(page.locator('section[aria-label="Plan approval"]')).toHaveAttribute('data-plan-id',plan.id);await expectPlanTotals(page,plan);
+});
+test('change review: pending Undo locks every mutation until acknowledged; Reviewer remains read-only in Hungarian',async({page})=>{
+ const {scenario,dialog,headers}=await changeReviewFixture(page),held=gate();let requests=0;
+ await page.route('**/undo-instruction',async route=>{requests++;await held.wait;await route.continue();});
+ await dialog.locator('[data-request-id="130"]').getByRole('button').click();await expect.poll(()=>requests).toBe(1);
+ await expect(dialog.locator('[data-request-id="170"]').getByRole('button')).toBeDisabled();await expect(dialog.getByRole('button',{name:'Replan',exact:true})).toBeDisabled();
+ held.release();await expect(dialog.locator('[data-request-id="130"]')).toHaveCount(0);expect(requests).toBe(1);
+ await page.keyboard.press('Escape');expect((await page.request.post('/api/auth/view-as',{headers,data:{role:'reviewer'}})).status()).toBe(200);
+ await page.evaluate(()=>window.dispatchEvent(new Event('focus')));await expect(page.getByRole('button',{name:'Return to Admin',exact:true})).toBeVisible();
+ await selectWorkspaceAction(page,'Changes');await expect(dialog.getByRole('button',{name:/^Undo /})).toHaveCount(0);await expect(dialog.getByRole('button',{name:'Replan',exact:true})).toHaveCount(0);
+ const denied=await page.request.post(`/api/scenarios/${scenario.id}/undo-instruction`,{headers:{...headers,'if-match':`"${scenario.revision+1}"`},data:{instruction:{op:'pin',...scenario.pins[1]!},datasetSha256:scenario.deliveryDatasetSha256}});expect(denied.status()).toBe(403);
+ await page.keyboard.press('Escape');await page.getByRole('button',{name:'HU',exact:true}).click();
+ const menu=await openWorkspaceMenu(page,'Tervezés');await menu.getByRole('menuitem',{name:'Módosítások',exact:true}).click();
+ await expect(dialog).toContainText('A visszavonás csak a kiválasztott utasítást törli.');await expect(dialog.getByRole('button',{name:/^Visszavonás /})).toHaveCount(0);
+ await page.setViewportSize({width:430,height:820});const overflow=await dialog.evaluate(e=>e.scrollWidth>e.clientWidth);expect(overflow).toBe(false);
+});
+test('change review: vehicle, capacity, route and forbid Undo leave unrelated instructions and manual KPIs intact',async({page})=>{
+ const {scenario,plan,headers,dialog}=await changeReviewFixture(page),vehicleId=plan.vehicles[0]!.id;
+ const response=await page.request.post(`${peer}/api/scenarios/${scenario.id}/edits`,{headers:{...headers,'if-match':`"${scenario.revision}"`},data:{edits:[
+  {op:'setVehicleConstraint',vehicleId,patch:{capacityKg:555,shiftEarlySec:300}},
+  {op:'setSequence',vehicleId,orderNos:['PUBLIC-REPEAT','PUBLIC-REPEAT'],requestIds:[170,130],locked:true,datasetSha256:scenario.deliveryDatasetSha256},
+  {op:'forbid',vehicleId:999,orderNo:'PUBLIC-REPEAT',requestId:130,datasetSha256:scenario.deliveryDatasetSha256},
+  {op:'removeVehicle',vehicleId:999},
+ ]}});expect(response.status(),await response.text()).toBe(200);
+ await dialog.getByRole('button',{name:'Reload instructions',exact:true}).click();
+ const capacity=dialog.locator('[data-instruction="setVehicleConstraint"]');await expect(capacity).toContainText(`Capacity (kg): ${plan.vehicles[0]!.capacityKg} → 555`);await expect(capacity).toContainText('Not recorded in this plan → 00:05');
+ await expect(dialog.locator('[data-instruction="setSequence"]')).toContainText('route locked (2 stops)');
+ for(const op of ['setVehicleConstraint','setSequence','forbid','removeVehicle']){
+  const saved=page.waitForResponse(r=>r.url().endsWith('/undo-instruction'));await dialog.locator(`[data-instruction="${op}"]`).getByRole('button').click();expect((await saved).status()).toBe(200);await expect(dialog.locator(`[data-instruction="${op}"]`)).toHaveCount(0);
+  expect((await get<Scenario>(page.request,`${peer}/api/scenarios/${scenario.id}`)).pins).toEqual(scenario.pins);
+ }
+ expect(await get<Plan>(page.request,`${peer}/api/plans/${plan.id}`)).toEqual(plan);await page.keyboard.press('Escape');await expectPlanTotals(page,plan);
+});
+test('change review: saved manual decisions are distinguished from future Replan instructions without rewriting KPIs',async({page})=>{
+ await login(page);const base=await baseline(page),first=base.vehicles.flatMap(v=>v.trips.flatMap(t=>t.stops))[0]!;
+ await page.getByRole('button',{name:'Manual planning',exact:true}).click();await manualStop(page,base,first.orderNo);
+ await page.getByRole('button',{name:'Return to unassigned',exact:true}).click();const manual=await applyManualDialog(page);
+ await selectWorkspaceAction(page,'Changes');const dialog=page.getByRole('dialog'),saved=dialog.getByRole('region',{name:'Saved manual decisions',exact:true});
+ await expect(saved).toContainText(`${Object.keys(manual.manual!.layout.decisions).length} delivery decisions are already saved`);await expect(saved).toContainText(manual.id);
+ const current=await get<Scenario>(page.request,`/api/scenarios/${manual.scenarioId}`);
+ const count=current.removedVehicleIds.length+current.pins.length+current.forbids.length+current.vehicleOverrides.length+current.sequences.length;
+ await expect(dialog.locator('[data-instruction]')).toHaveCount(count);await expect(saved.getByRole('button')).toHaveCount(0);await expect(dialog).toContainText('included in this saved plan revision');
+ const writes:string[]=[];page.on('request',r=>{if(new URL(r.url()).pathname.startsWith('/api/')&&!['GET','HEAD','OPTIONS'].includes(r.method()))writes.push(r.url());});
+ await dialog.getByRole('button',{name:'Reload instructions',exact:true}).click();await expect(saved).toContainText(manual.id);expect(writes).toEqual([]);
+ await page.keyboard.press('Escape');await expectPlanTotals(page,manual);expect(await get<Plan>(page.request,`${peer}/api/plans/${manual.id}`)).toEqual(manual);
+});
+test('change review: late route geometry cannot discard an acknowledged exact Undo',async({page})=>{
+ const {scenario,plan}=await changeReviewFixture(page);await page.keyboard.press('Escape');
+ const key=await savedWorkspaceKey(page);await expect.poll(()=>page.evaluate(k=>JSON.parse(localStorage.getItem(k)??'null')?.planId,key)).toBe(plan.id);
+ const geometry=gate(),geometryStarted=gate(),undo=gate(),undoStarted=gate();
+ await page.route(url=>url.pathname===`/api/plans/${plan.id}`,async route=>{
+  const response=await route.fetch(),body=await response.json() as Plan;
+  if(new URL(route.request().url()).searchParams.get('geometry')==='stored'){
+   for(const v of body.vehicles)for(const trip of v.trips)trip.geometry=null;
+  }else{
+   geometryStarted.release();await geometry.wait;
+   for(const v of body.vehicles)for(const trip of v.trips)trip.geometry={type:'LineString',coordinates:[[19,47],[19.1,47.1]]};
+  }
+  await route.fulfill({response,json:body});
+ });
+ await page.route('**/undo-instruction',async route=>{const response=await route.fetch();expect(response.status()).toBe(200);undoStarted.release();await undo.wait;await route.fulfill({response});});
+ try{
+  await page.reload();await geometryStarted.wait;await expectPlanTotals(page,plan);await selectWorkspaceAction(page,'Changes');const dialog=page.getByRole('dialog');
+  await dialog.locator('[data-request-id="130"]').getByRole('button').click();await undoStarted.wait;
+  const enriched=page.waitForResponse(r=>new URL(r.url()).pathname===`/api/plans/${plan.id}`&&!new URL(r.url()).searchParams.has('geometry'));
+  geometry.release();await settleResponse(page,await enriched);
+  undo.release();await expect(dialog.locator('[data-request-id="130"]')).toHaveCount(0);await expect(dialog.locator('[data-request-id="170"]')).toBeVisible();
+  expect((await get<Scenario>(page.request,`${peer}/api/scenarios/${scenario.id}`)).pins.map(p=>p.requestId)).toEqual([170]);
+  await page.keyboard.press('Escape');await expectPlanTotals(page,plan);expect(await get<Plan>(page.request,`${peer}/api/plans/${plan.id}`)).toEqual(plan);
+ }finally{geometry.release();undo.release();}
+});

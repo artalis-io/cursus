@@ -211,6 +211,11 @@ export async function createStatefulApi(options: StatefulApiOptions): Promise<Fa
     return reply.code(400).send({ error: 'day or from required' });
   });
   app.get<{ Params: { id: string } }>('/api/scenarios/:id', async (req, reply) => (await scenarios.get(req.params.id)) ?? reply.code(404).send({ error: 'scenario not found' }));
+  app.post<{Params:{id:string};Body:unknown}>('/api/scenarios/:id/undo-instruction',async(req,reply)=>{
+    if(!req.body)return reply.code(400).send({error:'instruction required'});
+    try{return await scenarios.edit(req.params.id,[],expectedRevision(req.headers)!,req.body);}
+    catch(error){return reply.code((error as Error).message==='scenario not found'?404:409).send({error:(error as Error).message});}
+  });
   app.post<{ Params: { id: string }; Body: { edit?: ScenarioEdit } }>('/api/scenarios/:id/edit', async (req, reply) => {
     const invalid = validateScenarioEdit(req.body?.edit); if (invalid) return reply.code(400).send({ error: invalid });
     try { return await scenarios.edit(req.params.id, [req.body.edit!], expectedRevision(req.headers)!); } catch (error) { return reply.code((error as Error).message === 'scenario not found' ? 404 : 409).send({ error: (error as Error).message }); }
