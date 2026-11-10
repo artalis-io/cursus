@@ -1,3 +1,4 @@
+import {savedWorkspaceKey} from '../tests/workspace-navigation';
 import {compactHeaderChecks,dismissPolicyChecks,stalePolicyResponse} from '../tests/compact-header';
 import {km,money} from '../src/lib/format';
 import type {Workflow} from '../../server/src/workflow-contract';
@@ -1679,7 +1680,8 @@ test('workspace navigation: keyboard and dialog focus preserve state without wri
  await login(page);
  const writes:string[]=[];page.on('request',r=>{if(new URL(r.url()).pathname.startsWith('/api/')&&!['GET','HEAD','OPTIONS'].includes(r.method()))writes.push(r.method()+' '+new URL(r.url()).pathname);});
  const before=await get<Scenario[]>(page.request,'/api/scenarios');
- const selected=await page.evaluate(()=>localStorage.getItem('cursus.manual-workspace.v1:acceptance'));
+ const workspaceKey=await savedWorkspaceKey(page);
+ const selected=await page.evaluate(key=>localStorage.getItem(key),workspaceKey);
  const nav=page.getByRole('navigation',{name:'Workspace tools'}),prepare=nav.getByRole('button',{name:'Prepare',exact:true});
  await prepare.focus();await page.keyboard.press('ArrowDown');await expect(page.getByRole('menuitem',{name:'Data',exact:true})).toBeFocused();
  await page.keyboard.press('End');await expect(page.getByRole('menuitem').last()).toBeFocused();
@@ -1695,7 +1697,7 @@ test('workspace navigation: keyboard and dialog focus preserve state without wri
  }
  await selectWorkspaceAction(page,'Plan approval');await expect(page.locator('#cursus-plan-review')).toBeFocused();
  await prepare.click();await page.locator('header').getByText('Cursus',{exact:true}).click();await expect(page.getByRole('menu')).toHaveCount(0);
- expect(await get<Scenario[]>(page.request,'/api/scenarios')).toEqual(before);expect(await page.evaluate(()=>localStorage.getItem('cursus.manual-workspace.v1:acceptance'))).toBe(selected);expect(writes).toEqual([]);
+ expect(await get<Scenario[]>(page.request,'/api/scenarios')).toEqual(before);expect(await page.evaluate(key=>localStorage.getItem(key),workspaceKey)).toBe(selected);expect(writes).toEqual([]);
  await page.screenshot({path:testInfo.outputPath('workspace-desktop.png')});
 });
 
@@ -2117,7 +2119,7 @@ test('ordinary native plans resume exactly without adoption, and tabs never navi
   await expect(page.locator('section[aria-label="Plan approval"]')).toHaveAttribute('data-plan-id',candidate.id);
   // Another account's bookmark cannot become this account's initial context.
   await page.evaluate(({key,id,day})=>{localStorage.removeItem(key);localStorage.setItem('cursus.workspace.v1:acceptance:other-user',JSON.stringify({version:1,planId:id,day}));},{key,id:candidate.id,day:candidate.day});
-  await page.reload();await expect(page.locator('section[aria-label="Plan approval"]')).not.toHaveAttribute('data-plan-id',candidate.id);
+  await page.reload();await expect(page.locator('section[aria-label="Plan approval"]')).toHaveAttribute('data-plan-id',(await baseline(page)).id);
  }finally{await second.close();}
 });
 

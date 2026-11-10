@@ -1,3 +1,4 @@
+import {savedWorkspaceKey} from '../tests/workspace-navigation';
 import {test,expect} from '@playwright/test';
 import {execFileSync} from 'node:child_process';
 import type {DaySummary,Plan,Scenario} from '../src/types';
@@ -13,6 +14,7 @@ for(const axles of [false,true])test(`physical facts ${axles?'V2 axle loads':'V1
  await page.getByRole('button',{name:/Email me a sign-in link/}).click();
  await expect(page.getByRole('status')).toContainText('Check your inbox');await page.goto(fixture('link').link);
  await page.getByRole('button',{name:'Continue to Cursus',exact:true}).click();await expect(page.getByText('Served / Total')).toBeVisible();
+ const workspaceKey=await savedWorkspaceKey(page);
  const origin=new URL(page.url()).origin,headers={origin},peer=process.env.CURSUS_ACCEPTANCE_PEER!;
  const hard=process.env.CURSUS_ACCEPTANCE_HARD_LOADING_ENABLED==='1';
  const identity=await (await page.request.get('/api/auth/me')).json();expect(identity.features.hardLoading).toBe(hard);
@@ -46,7 +48,7 @@ for(const axles of [false,true])test(`physical facts ${axles?'V2 axle loads':'V1
  expect(plan.physicalLoading?.sourceSha256).toBe(base.physicalLoading?.sourceSha256);
  expect(plan.physicalLoading?.rounds.reduce((n,r)=>n+r.unitCount,0)).toBe(2);
  const chosen=await page.request.post(`/api/scenarios/${scenario.id}/select-plan`,{headers:{...headers,'if-match':`"${scenario.revision}"`},data:{planId:plan.id,selectionVersion:scenario.selectionVersion??0,acknowledgeIncomplete:false}});expect(chosen.status(),await chosen.text()).toBe(200);
- await page.evaluate(({planId,day})=>localStorage.setItem('cursus.manual-workspace.v1:acceptance',JSON.stringify({planId,day})),{planId:plan.id,day:day.id});await page.reload();
+ await page.evaluate(({key,planId,day})=>localStorage.setItem(key,JSON.stringify({version:1,planId,day})),{key:workspaceKey,planId:plan.id,day:day.id});await page.reload();
  await expect(page.getByText('Served / Total')).toBeVisible();await page.locator('#cursus-status-details > summary').click();
  const evidence=page.getByTestId('loading-evidence');await expect(evidence).toContainText(plan.physicalLoading!.sourceSha256);
  if(axles)await expect(page.getByTestId('axle-loading-status')).toContainText(hard?'Verified':'Not verified');
