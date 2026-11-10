@@ -2,21 +2,24 @@ import {PlanApproval} from '@/components/PlanApproval';
 import {ReadinessPanel} from '@/components/ReadinessPanel';
 import {approvalSummary,workspaceFreshness} from '@/lib/workspace-status';
 import {useT} from '@/i18n';
-import type {Plan,Scenario} from '@/types';
+import type {Plan,Scenario,Selection} from '@/types';
 
 /** A single disclosure; its children stay mounted while closed. Critical
  * warnings and candidate decisions remain outside this component in App. */
-export function WorkspaceStatus({plan,baseline,scenario,loading,saving,running,candidate,conflict,revalidate,changesCount,onOpenChanges}:{
- plan:Plan;baseline:Plan;scenario:Scenario;loading:boolean;saving:boolean;running:boolean;candidate:boolean;conflict:boolean;revalidate:boolean;changesCount:number;onOpenChanges:()=>void;
+export function WorkspaceStatus({plan,baseline,scenario,loading,saving,running,candidate,conflict,revalidate,changesCount,onOpenChanges,onSelect,onOpenIssues,onReload}:{
+ plan:Plan;baseline:Plan;scenario:Scenario;loading:boolean;saving:boolean;running:boolean;candidate:boolean;conflict:boolean;revalidate:boolean;changesCount:number;onOpenChanges:()=>void;onSelect?:(selection:Selection)=>void;onOpenIssues?:()=>void;onReload?:()=>void;
 }){
  const t=useT();
  const fresh=plan.scenarioId===scenario.id&&plan.scenarioRevision===scenario.revision;
  const freshness=workspaceFreshness({loading,saving,running,candidate,conflict,revalidate,archived:!!scenario.supersededBy,fresh});
  const pending=freshness!=='current';
- return <PlanApproval planId={plan.id} revision={scenario.revision} pending={pending}>
+ return <PlanApproval plan={plan} onSelect={onSelect} onReload={onReload} reloadDisabled={loading||saving||running||candidate} onSection={section=>{
+  if(section==='issues'){onOpenIssues?.();return;}if(section==='changes'){onOpenChanges();return;}
+  const element=document.getElementById(section==='loading'?'cursus-loading-evidence':'cursus-constraint-evidence');element?.focus();element?.scrollIntoView({block:'nearest'});
+ }} planId={plan.id} revision={scenario.revision} pending={pending}>
   {(evidence,detail)=>{
    const approval=approvalSummary(evidence.workflow,evidence.phase,scenario.revision,pending);
-   return <ReadinessPanel plan={plan} baseline={baseline} scenario={scenario} pending={pending}
+   return <ReadinessPanel onSelect={onSelect} plan={plan} baseline={baseline} scenario={scenario} pending={pending}
     loadingInvalidated={evidence.phase==='ready'&&!!evidence.workflow&&evidence.workflow.blockers.some(b=>b.startsWith('Physical loading'))}
     loadingConfirmed={evidence.phase==='ready'&&!!evidence.workflow&&evidence.workflow.currentRevision===plan.scenarioRevision&&evidence.workflow.scenarioRevision===plan.scenarioRevision&&!evidence.workflow.blockers.some(b=>b.startsWith('Physical loading'))}
     freshness={<>{freshness==='current'?t('readiness.current'):t(`status.freshness.${freshness}`)}{freshness==='stale'&&changesCount>0&&!conflict&&<span className="ml-1">{t('edits.pending',{n:changesCount})}</span>}</>}

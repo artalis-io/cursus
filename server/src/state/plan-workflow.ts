@@ -5,7 +5,7 @@ import type { Principal } from '../auth.js';
 import type { Plan } from '../types.js';
 import type { Scenario } from '../store.js';
 import type { StatefulStore } from './postgres.js';
-import type { Workflow } from '../workflow-contract.js';
+import type { ApprovalBlocker, ApprovalBlockerCode, ApprovalBlockerTarget, Workflow } from '../workflow-contract.js';
 import type {PlanIdentity} from '../library-contract.js';
 import { constraintSnapshot, type HandoffActor, type HandoffMetadata } from '../handoff.js';
 import { withNormalizedPlanStats } from '../plan/stats.js';
@@ -26,19 +26,20 @@ function canonical(value: unknown): string {
 export const planDigest = (plan: unknown): string => createHash('sha256').update(canonical(plan)).digest('hex');
 
 /** This is an approval gate over recorded solver evidence, not a new feasibility certificate. */
-export function approvalBlockers(plan: Plan, revision: number, scenario?: Scenario): string[] {
-  const issues: string[] = [...loadingBlockers(plan,scenario)];
-  if (plan.scenarioRevision !== revision) issues.push('Plan does not match the current scenario revision.');
+export function approvalIssues(plan: Plan, revision: number, scenario?: Scenario): ApprovalBlocker[] {
+  const issues:ApprovalBlocker[]=loadingBlockers(plan,scenario).map(message=>({code:'physical_loading',message,target:{kind:'section',section:'loading'}}));
+  const add=(code:ApprovalBlockerCode,message:string,target:ApprovalBlockerTarget={kind:'section',section:'constraints'})=>issues.push({code,message,target});
+  if (plan.scenarioRevision !== revision) add('revision_changed','Plan does not match the current scenario revision.',{kind:'section',section:'changes'});
   if(scenario&&canonical(plan.provenance?.planningProfiles??[])!==canonical(scenario.planningProfiles??[]))
-    issues.push('Plan uses different planning profile revisions.');
+    add('profiles_changed','Plan uses different planning profile revisions.');
   if (plan.provenance?.validation?.valid !== true || !Array.isArray(plan.provenance?.validation?.violations)
     || plan.provenance.validation.violations.some(v => !v || typeof v !== 'object' || (v as { soft?: boolean }).soft !== true
       || ['VEHICLE_SIZE', 'TAIL_LIFT', 'CAPACITY', 'HARD_TW'].includes(String((v as { type?: string }).type))))
-    issues.push('Missing or failed solver validation evidence.');
+    add('validation_failed','Missing or failed solver validation evidence.',{kind:'section',section:'issues'});
   if (!Array.isArray(plan.unassigned) || plan.unassigned.length > 0 || !Number.isSafeInteger(plan.stats?.totalOrders)
     || plan.stats.totalOrders <= 0 || plan.stats.servedOrders !== plan.stats.totalOrders)
-    issues.push('Approval requires complete, consistent order coverage.');
-  if (!/^[a-f0-9]{64}$/.test(plan.provenance?.inputSha256 ?? '')) issues.push('Dataset identity is missing.');
+    add('coverage_incomplete','Approval requires complete, consistent order coverage.',{kind:'section',section:'issues'});
+  if (!/^[a-f0-9]{64}$/.test(plan.provenance?.inputSha256 ?? '')) add('dataset_identity_missing','Dataset identity is missing.');
   const finite = (n: unknown): n is number => typeof n === 'number' && Number.isFinite(n);
   try {
     const stops = plan.vehicles.flatMap(v => v.trips.flatMap(t => t.stops));
@@ -47,31 +48,36 @@ export function approvalBlockers(plan: Plan, revision: number, scenario?: Scenar
       const described=metadata.deliveries.map(d=>d.requestId);
       if(metadata.datasetSha256!==plan.provenance.datasetSha256||metadata.sourceSha256!==plan.provenance.shipmentSha256||
         new Set(ids).size!==ids.length||ids.some(id=>id===undefined)||new Set(described).size!==described.length||
-        described.length!==ids.length||ids.some(id=>!described.includes(id!)))issues.push('Shipment metadata does not match the plan delivery inventory.');
+        described.length!==ids.length||ids.some(id=>!described.includes(id!)))add('shipment_metadata_mismatch','Shipment metadata does not match the plan delivery inventory.');
     }
-    if (!stops.length || plan.stats.deliveryStops !== stops.length) issues.push('Stop inventory does not match coverage.');
+    if (!stops.length || plan.stats.deliveryStops !== stops.length) add('stop_inventory_mismatch','Stop inventory does not match coverage.',{kind:'section',section:'issues'});
     for (const vehicle of plan.vehicles) for (const trip of vehicle.trips) {
       if (![trip.loadKg, trip.loadPallets, vehicle.capacityKg, vehicle.capacityPallets].every(finite)
         || trip.loadKg > vehicle.capacityKg + 1 || trip.loadPallets > vehicle.capacityPallets + 1e-6)
-        issues.push('Capacity evidence is missing or violated.');
+        add('capacity','Capacity evidence is missing or violated.',{kind:'trip',vehicleId:vehicle.id,tripIndex:trip.index});
       for (const stop of trip.stops) {
         if (stop.maxTonnage === undefined || stop.maxTonnage !== null && (!finite(stop.maxTonnage) || !finite(vehicle.tonnage) || vehicle.tonnage > stop.maxTonnage))
-          issues.push('GVW evidence is missing or violated.');
+          add('gvw','GVW evidence is missing or violated.',{kind:'stop',vehicleId:vehicle.id,tripIndex:trip.index,seq:stop.seq,orderNo:stop.orderNo,...(stop.requestId!==undefined?{requestId:stop.requestId}:{})});
         if (typeof stop.requiresTailLift !== 'boolean' || stop.requiresTailLift && vehicle.hasTailLift !== true)
-          issues.push('Tail-lift evidence is missing or violated.');
+          add('tail_lift','Tail-lift evidence is missing or violated.',{kind:'stop',vehicleId:vehicle.id,tripIndex:trip.index,seq:stop.seq,orderNo:stop.orderNo,...(stop.requestId!==undefined?{requestId:stop.requestId}:{})});
         if (![stop.arrivalSec, stop.serviceStartSec, stop.twStartSec, stop.twEndSec].every(finite)
           || stop.serviceStartSec < stop.twStartSec - 1 || stop.twEndSec > 0 && Math.max(stop.arrivalSec, stop.serviceStartSec) > stop.twEndSec + 1)
-          issues.push('Time-window evidence is missing or violated.');
+          add('time_window','Time-window evidence is missing or violated.',{kind:'stop',vehicleId:vehicle.id,tripIndex:trip.index,seq:stop.seq,orderNo:stop.orderNo,...(stop.requestId!==undefined?{requestId:stop.requestId}:{})});
       }
     }
     for (const lock of scenario?.sequences.filter(s => s.locked) ?? []) {
       const actual = plan.vehicles.find(v => v.id === lock.vehicleId)?.trips.flatMap(t => t.stops) ?? [];
       if (actual.length !== lock.orderNos.length || actual.some((value, index) => value.orderNo !== lock.orderNos[index] ||
         lock.requestIds !== undefined && value.requestId !== lock.requestIds[index]) ||
-        !lock.requestIds && new Set(actual.map(s => s.orderNo)).size !== actual.length) issues.push('Locked route differs from the scenario.');
+        !lock.requestIds && new Set(actual.map(s => s.orderNo)).size !== actual.length) add('locked_route','Locked route differs from the scenario.',{kind:'vehicle',vehicleId:lock.vehicleId});
     }
-  } catch { issues.push('Plan constraint evidence is incomplete.'); }
-  return [...new Set(issues)];
+  } catch { add('constraint_evidence_missing','Plan constraint evidence is incomplete.'); }
+  return issues;
+}
+
+/** Preserve the established approval gate and legacy messages exactly. */
+export function approvalBlockers(plan:Plan,revision:number,scenario?:Scenario):string[]{
+  return [...new Set(approvalIssues(plan,revision,scenario).map(issue=>issue.message))];
 }
 
 /** Immutable approval ledger reuses the existing tenant-scoped audit store.
@@ -96,20 +102,24 @@ export class PlanWorkflow {
        AND e.detail->>'planId'=$2 ORDER BY e.id DESC LIMIT 1`, [this.tenantId, id]);
     const event = prepared?prepared.event:events?.rows[0];
     const policyIssues=[...(this.policyBlockers?.(plan)??[])];
+    const extra:ApprovalBlocker[]=policyIssues.map(message=>({code:'settings_changed',message,target:{kind:'section',section:'constraints'}}));
+    const physical=(messages:string[])=>{policyIssues.push(...messages);extra.push(...messages.map(message=>({code:'physical_loading' as const,message,target:{kind:'section' as const,section:'loading' as const}})));};
     if(scenario){
       try{const context=prepared?await prepared.loading():await this.loadingContext(client,scenario);
         const {source,required}=context;
-        policyIssues.push(...loadingBlockers(plan,{...scenario,hardLoadingRequired:required},required||plan.physicalLoading?.mode==='hard'?source:undefined));
-        if(required&&!source)policyIssues.push('Physical loading source is no longer admitted.');
-        if(plan.physicalLoading?.mode==='hard'&&!source)policyIssues.push('Physical loading source is no longer admitted.');
-      }catch(error){if(!(error as Error).message.startsWith('Physical loading:'))throw error;policyIssues.push((error as Error).message);}
+        physical(loadingBlockers(plan,{...scenario,hardLoadingRequired:required},required||plan.physicalLoading?.mode==='hard'?source:undefined));
+        if(required&&!source)physical(['Physical loading source is no longer admitted.']);
+        if(plan.physicalLoading?.mode==='hard'&&!source)physical(['Physical loading source is no longer admitted.']);
+      }catch(error){if(!(error as Error).message.startsWith('Physical loading:'))throw error;physical([(error as Error).message]);}
     }
     const state = event ? revision !== plan.scenarioRevision || event.detail.planSha256 !== hash || policyIssues.length>0 || loadingBlockers(plan,scenario??undefined).length>0 ? 'superseded'
       : event.action === 'plan.approve' ? 'approved' : 'reviewed' : 'draft';
+    const core=approvalIssues(plan,revision,scenario??undefined);
     const freshness:PlanIdentity['freshness']=!scenario?'unknown':scenario.supersededBy?'archived':revision!==plan.scenarioRevision||policyIssues.length>0||canonical(plan.provenance?.planningProfiles??[])!==canonical(scenario.planningProfiles??[])?'stale':'current';
     return { plan, scenario, event, freshness, workflow: { state, version: event?.detail.version ?? 0, scenarioRevision: plan.scenarioRevision,
       currentRevision: revision, planSha256: hash, actor: event?.user_id ?? null, at: event?.created_at.toISOString() ?? null,
-      blockers: [...approvalBlockers(plan, revision, scenario ?? undefined),...policyIssues] } satisfies Workflow };
+      blockers: [...new Set(core.map(issue=>issue.message)),...policyIssues],
+      blockerDetails:{version:1,planId:plan.id,scenarioId:plan.scenarioId,planRevision:plan.scenarioRevision,currentRevision:revision,planSha256:hash,items:[...core,...extra]} } satisfies Workflow };
   }
 
   private async loadingContext(client:PoolClient,scenario:Scenario){

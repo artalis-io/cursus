@@ -2364,3 +2364,79 @@ test('library identity: missing or borrowed evidence remains Unknown and Reviewe
  mode='borrowed';await dialog.getByRole('button',{name:'Refresh',exact:true}).click();await expect(dialog.locator('[data-library-approval]')).toHaveAttribute('data-library-approval','unknown');
  await expect(dialog.getByRole('button',{name:/Approve|Review|Select plan/})).toHaveCount(0);expect(writes).toEqual([]);
 });
+
+for(const language of ['EN','HU'] as const)test(`actionable review: real GVW blocker in ${language} opens the exact delivery without writes`,async({page})=>{
+ await login(page);const base=await baseline(page);
+ await page.getByRole('button',{name:'Manual planning',exact:true}).click();await manualStop(page,base,'PUBLIC-1');
+ await page.getByRole('button',{name:'Move to vehicle…',exact:true}).click();
+ await page.getByRole('dialog',{name:'Manual planning',exact:true}).getByRole('combobox',{name:'Vehicle',exact:true}).selectOption('30');
+ const invalid=await applyManualDialog(page),stop=invalid.vehicles.flatMap(v=>v.trips.flatMap(t=>t.stops)).find(s=>s.orderNo==='PUBLIC-1')!;
+ const workflow=await get<Workflow>(page.request,`${peer}/api/plans/${invalid.id}/workflow`);
+ expect(workflow.blockerDetails?.items.some(i=>i.code==='gvw'&&i.target.kind==='stop'&&i.target.requestId===stop.requestId)).toBe(true);
+ const selected=(await get<Scenario>(page.request,`${peer}/api/scenarios/${invalid.scenarioId}`)).selectedPlanId;
+ await selectWorkspaceAction(page,'Plan approval');if(language==='HU')await page.getByRole('button',{name:'HU',exact:true}).click();
+ const writes:string[]=[];page.on('request',r=>{if(new URL(r.url()).pathname.startsWith('/api/')&&!['GET','HEAD','OPTIONS'].includes(r.method()))writes.push(r.url());});
+ const blocker=page.locator('[data-review-blocker="gvw"]').filter({hasText:'PUBLIC-1'});
+ await expect(blocker).toContainText(language==='HU'?'jármű össztömege':'Gross vehicle weight');
+ await blocker.getByRole('button',{name:language==='HU'?'Szállítás megtekintése':'View delivery',exact:true}).click();
+ await expect(page.locator('#cursus-inspector-pane').getByRole('region',{name:language==='HU'?'Szállítmány adatai':'Shipment details',exact:true})).toContainText(`delivery-${stop.requestId}`);
+ await expect(page.locator('#cursus-inspector-pane [data-inspector-heading]')).toBeFocused();
+ expect((await get<Scenario>(page.request,`${peer}/api/scenarios/${invalid.scenarioId}`)).selectedPlanId).toBe(selected);
+ expect(writes).toEqual([]);expect((await get<Plan>(page.request,`${peer}/api/plans/${invalid.id}`)).stats).toEqual(invalid.stats);
+});
+
+test('actionable review: Reviewer follows two equal unassigned references by delivery identity without mutation controls',async({page})=>{
+ await login(page);const day=(await get<DaySummary[]>(page.request,'/api/days')).find(d=>d.id==='acceptance-day-two')!;
+ let current=await get<Plan>(page.request,`/api/plans/${day.baselinePlanId}`);
+ await page.getByRole('combobox').first().click();await page.getByRole('option',{name:/7 May 2026/}).click();
+ await page.getByRole('button',{name:'Manual planning',exact:true}).click();
+ for(const id of [130,170]){
+  const vehicle=current.vehicles.find(v=>v.trips.some(t=>t.stops.some(s=>s.requestId===id)))!,trip=vehicle.trips.find(t=>t.stops.some(s=>s.requestId===id))!;
+  await page.locator('aside').first().locator('[data-inspect-vehicle]').getByText(vehicle.ref,{exact:true}).click();
+  await page.locator('aside').last().getByRole('button',{name:new RegExp(`Trip ${trip.index+1} ·`)}).click();
+  await page.locator('aside').last().locator(`ol li > button[data-request-id="${id}"]`).click();
+  await page.getByRole('button',{name:'Return to unassigned',exact:true}).click();current=await applyManualDialog(page);
+ }
+ await page.getByRole('button',{name:'View as Reviewer',exact:true}).click();await expect(page.getByText('Viewing as Reviewer',{exact:true})).toBeVisible();
+ const writes:string[]=[];page.on('request',r=>{if(new URL(r.url()).pathname.startsWith('/api/')&&!['GET','HEAD','OPTIONS'].includes(r.method()))writes.push(r.url());});
+ for(const id of [130,170]){
+  await selectWorkspaceAction(page,'Plan approval');
+  const coverage=page.locator('#cursus-status-details').getByRole('region',{name:'Coverage',exact:true});
+  await coverage.getByRole('button',{name:new RegExp(`Delivery ${id}$`)}).click();
+  await expect(page.locator('#cursus-inspector-pane').getByRole('region',{name:'Shipment details',exact:true})).toContainText(`delivery-${id}`);
+  await expect(page.getByRole('button',{name:/^(Move to vehicle…|Return to unassigned|Approve plan|Mark reviewed)$/})).toHaveCount(0);
+ }
+ await selectWorkspaceAction(page,'Plan approval');await page.locator('[data-review-blocker="coverage_incomplete"]').getByRole('button',{name:'View issues',exact:true}).click();
+ const issues=page.getByRole('dialog');await issues.getByRole('button').filter({hasText:'Delivery 170'}).click();
+ await expect(page.locator('#cursus-inspector-pane').getByRole('region',{name:'Shipment details',exact:true})).toContainText('delivery-170');
+ expect(writes).toEqual([]);expect((await get<Plan>(page.request,`${peer}/api/plans/${current.id}`)).manual?.layout.history).toEqual(current.manual?.layout.history);
+});
+
+test('actionable review: peer edits explain revision drift and explicit reload preserves the plan without solving or adopting',async({page})=>{
+ await login(page);const {plan,scenario,headers}=await statusScenario(page,'Actionable peer edit');await reopenStatusPlan(page,plan.id);
+ const selection=(await get<Scenario>(page.request,`${peer}/api/scenarios/${scenario.id}`)).selectedPlanId;
+ const changed=await page.request.post(`${peer}/api/scenarios/${scenario.id}/edit`,{headers:{...headers,'if-match':`"${scenario.revision}"`},data:{edit:{op:'removeVehicle',vehicleId:plan.vehicles[0]!.id}}});expect(changed.status()).toBe(200);
+ const writes:string[]=[];page.on('request',r=>{if(new URL(r.url()).pathname.startsWith('/api/')&&!['GET','HEAD','OPTIONS'].includes(r.method()))writes.push(r.url());});
+ await selectWorkspaceAction(page,'Plan approval');const blocker=page.locator('[data-review-blocker="revision_changed"]');
+ await expect(blocker).toBeVisible();await expect(page.getByRole('button',{name:'Mark reviewed',exact:true})).toHaveCount(0);
+ page.once('dialog',d=>d.accept());await blocker.getByRole('button',{name:'Reload scenario',exact:true}).click();
+ await expect(page.locator('section[aria-label="Plan approval"]')).toHaveAttribute('data-plan-id',plan.id);
+ await selectWorkspaceAction(page,'Plan approval');await blocker.getByRole('button',{name:'Review changes',exact:true}).click();
+ await expect(page.getByRole('dialog')).toContainText(plan.vehicles[0]!.ref);await page.keyboard.press('Escape');
+ expect((await get<Scenario>(page.request,`${peer}/api/scenarios/${scenario.id}`)).selectedPlanId).toBe(selection);expect(writes).toEqual([]);
+});
+
+test('actionable review: borrowed or malformed structured proof is Unknown, while older blocked responses remain read-only',async({page})=>{
+ await login(page);const {plan}=await statusScenario(page,'Actionable evidence recovery');await reopenStatusPlan(page,plan.id);
+ const actual=await get<Workflow>(page.request,`/api/plans/${plan.id}/workflow`);let patch:Record<string,unknown>={planId:'foreign-plan'},legacy=false,good=false;
+ await page.route(`**/api/plans/${plan.id}/workflow`,r=>r.fulfill({json:good?actual:legacy?{...actual,blockers:['Older server blocker'],blockerDetails:undefined}:{...actual,state:'approved',blockerDetails:{...actual.blockerDetails,...patch}}}));
+ await page.reload();await selectWorkspaceAction(page,'Plan approval');
+ for(const invalid of [{planId:'foreign-plan'},{scenarioId:'foreign-scenario'},{planSha256:'b'.repeat(64)},{planRevision:999}]){
+  patch=invalid;await expect(page.getByTestId('status-approval')).toContainText('Unknown');
+  await expect(page.locator('[data-review-blocker]')).toHaveCount(0);await expect(page.getByRole('button',{name:'Approve plan',exact:true})).toHaveCount(0);
+  await page.getByRole('button',{name:'Retry approval status',exact:true}).click();
+ }
+ legacy=true;await page.getByRole('button',{name:'Retry approval status',exact:true}).click();await expect(page.getByText('Detailed approval reasons are unavailable from this server. Approval remains blocked.',{exact:true})).toBeVisible();
+ await expect(page.getByRole('button',{name:'Mark reviewed',exact:true})).toHaveCount(0);
+ good=true;await page.getByRole('button',{name:'Retry approval status',exact:true}).click();await expect(page.getByTestId('status-approval')).toContainText('Draft');
+});

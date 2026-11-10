@@ -78,6 +78,9 @@ test('catalogues distinguish selected/latest and use one tenant-scoped read-only
   const response=await apps[0]!.inject('/api/plans?day=catalogue-day');assert.equal(response.statusCode,200);assert.equal(response.headers['cache-control'],'private, no-store');
   const rows=response.json();assert.equal(rows.find((r:typeof rows[number])=>r.id===p.id).identity.approval,'approved');
   assert.equal(rows.find((r:typeof rows[number])=>r.id===newer.id).identity.approval,'draft','foreign approval cannot certify same plan id');
+  const evidence=(await apps[1]!.inject(`/api/plans/${p.id}/workflow`)).json();
+  assert.equal(evidence.blockerDetails.planId,p.id);assert.equal(evidence.blockerDetails.scenarioId,scenario.id);
+  assert.equal(evidence.blockerDetails.planSha256,evidence.planSha256);assert.deepEqual(evidence.blockerDetails.items,[]);
   const sc=(await apps[1]!.inject('/api/scenarios?day=catalogue-day')).json()[0];
   assert.equal(sc.selectedResult.id,p.id);assert.equal(sc.latestResult.id,newer.id);assert.equal(sc.latest.planId,p.id,'compatibility field is preserved');
   assert.equal(sc.selectedResult.identity.selected,true);assert.equal(sc.selectedResult.identity.latest,false);assert.equal(sc.latestResult.identity.latest,true);
@@ -96,6 +99,10 @@ test('catalogues distinguish selected/latest and use one tenant-scoped read-only
   assert.ok(prior.every((r:typeof prior[number])=>r.identity.scenarioRevision===1));
   const after=(await apps[0]!.inject('/api/plans?day=catalogue-day')).json();
   assert.equal(after.find((r:typeof after[number])=>r.id===p.id).identity.approval,'superseded');assert.equal(after.find((r:typeof after[number])=>r.id===p.id).identity.freshness,'stale');
+  const staleEvidence=(await apps[0]!.inject(`/api/plans/${p.id}/workflow`)).json();
+  assert.equal(staleEvidence.blockerDetails.currentRevision,2);assert.equal(staleEvidence.blockerDetails.planRevision,1);
+  assert.ok(staleEvidence.blockerDetails.items.some((i:{code:string})=>i.code==='revision_changed'));
+  assert.equal((await apps[1]!.inject({method:'POST',url:`/api/plans/${p.id}/approve`,payload:{version:2,revision:1,acknowledgeExceptions:true}})).statusCode,409);
   assert.equal(after.find((r:typeof after[number])=>r.id===current.id).identity.selected,true);assert.equal(after.find((r:typeof after[number])=>r.id===current.id).identity.latest,true);
   assert.equal(new Set(after.map((r:typeof after[number])=>r.identity.checkedAt)).size,1);
   const before=await b.pool.query('SELECT count(*) FROM audit_events WHERE tenant_id=$1',[tenant]);await apps[0]!.inject('/api/scenarios?day=catalogue-day');
@@ -108,5 +115,14 @@ test('catalogues distinguish selected/latest and use one tenant-scoped read-only
   const tiedScenario=(await apps[1]!.inject('/api/scenarios?day=tie-day')).json()[0];
   assert.equal(tiedPlans.find((r:typeof tiedPlans[number])=>r.identity.latest).id,'a-tie');
   assert.equal(tiedScenario.latestResult.id,'a-tie','scenario navigation and latest badge share the same opaque-ID tie-break');
+  const invalid=structuredClone(p);invalid.id='invalid-constraints';invalid.scenarioId=tieScenario.id;
+  const trip=invalid.vehicles[0]!.trips[0]!;trip.stops[0]!.requestId=101;trip.stops.push({...trip.stops[0]!,requestId:102,seq:2});invalid.vehicles[0]!.tonnage=24;
+  invalid.stats.servedOrders=2;invalid.stats.totalOrders=2;invalid.stats.deliveryStops=2;await insert(a,tenant,invalid);
+  for(const app of apps){const details=(await app.inject(`/api/plans/${invalid.id}/workflow`)).json();
+   assert.equal(details.blockers.filter((b:string)=>b==='GVW evidence is missing or violated.').length,1);
+   assert.deepEqual(details.blockerDetails.items.filter((i:{code:string})=>i.code==='gvw').map((i:{target:{requestId:number}})=>i.target.requestId),[101,102]);
+  }
+  const policy=await new PlanWorkflow(a,tenant,()=>['Public fixture settings changed.']).get(invalid.id);
+  assert.ok(policy.blockerDetails?.items.some(i=>i.code==='settings_changed'));
  }finally{release();await Promise.all(apps.map(app=>app.close()));await Promise.all([a.close(),b.close()]);}
 });

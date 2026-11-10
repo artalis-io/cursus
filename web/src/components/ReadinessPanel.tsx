@@ -1,14 +1,15 @@
+import {unassignedReviewSelection} from '@/lib/review-targets';
 import {LoadingEvidence} from './LoadingEvidence';
 import type {ReactNode} from 'react';
 import { ChevronDown, ClipboardCheck } from 'lucide-react';
 import { useT } from '@/i18n';
 import { km, money } from '@/lib/format';
 import { reviewComparison, reviewReadiness } from '@/lib/readiness';
-import type { Plan, Scenario } from '@/types';
+import type { Plan, Scenario, Selection } from '@/types';
 
 /** No mutations, fetching, permissions or optimistic solver previews here.
  * Every value belongs to the displayed committed plan snapshot. */
-export function ReadinessPanel({ plan, baseline, scenario, pending, freshness, approval, loadingConfirmed=false, loadingInvalidated=false,children, onOpenChanges, changesCount=0 }: { plan: Plan; baseline: Plan; scenario: Scenario; pending: boolean; freshness?: ReactNode; approval?: ReactNode;loadingConfirmed?:boolean;loadingInvalidated?:boolean; children?: ReactNode; onOpenChanges?:()=>void; changesCount?:number }) {
+export function ReadinessPanel({ plan, baseline, scenario, pending, freshness, approval, loadingConfirmed=false, loadingInvalidated=false,children, onOpenChanges, changesCount=0,onSelect }: { plan: Plan; baseline: Plan; scenario: Scenario; pending: boolean; freshness?: ReactNode; approval?: ReactNode;loadingConfirmed?:boolean;loadingInvalidated?:boolean; children?: ReactNode; onOpenChanges?:()=>void;onSelect?:(selection:Selection)=>void; changesCount?:number }) {
   const t = useT();
   const review = reviewReadiness(plan, scenario, pending);
   const comparison = reviewComparison(baseline, plan);
@@ -45,18 +46,18 @@ export function ReadinessPanel({ plan, baseline, scenario, pending, freshness, a
             {plan.unassigned.length > 0 && <>
               <p className="text-muted-foreground">{t('readiness.inferred')}</p>
               <ul className="max-h-40 space-y-2 overflow-y-auto">
-                {plan.unassigned.map((order, i) => <li key={`${order.orderNo}-${i}`} className="break-words"><span className="font-medium">{order.orderNo} · {order.customer}</span><p className="text-muted-foreground">{order.reason ?? t(`unassigned.${order.reasonCode ?? 'CONSTRAINED'}`)}</p></li>)}
+                {plan.unassigned.map((order, i) => <li key={`${order.orderNo}-${i}`} className="break-words">{onSelect&&unassignedReviewSelection(plan,order)?<button type="button" className="font-medium underline" onClick={()=>onSelect(unassignedReviewSelection(plan,order))}>{order.orderNo} · {order.customer}{order.requestId!==undefined?` · ${t('review.delivery',{id:order.requestId})}`:''}</button>:<span className="font-medium">{order.orderNo} · {order.customer}</span>}<p className="text-muted-foreground">{order.reason ?? t(`unassigned.${order.reasonCode ?? 'CONSTRAINED'}`)}</p></li>)}
               </ul>
             </>}
           </section>
-          <section aria-label={t('readiness.constraints')} className="min-w-0 space-y-2">
+          <section id="cursus-constraint-evidence" tabIndex={-1} aria-label={t('readiness.constraints')} className="min-w-0 space-y-2">
             <h3 className="font-semibold">{t('readiness.constraints')}</h3>
             <dl className="space-y-2">{review.checks.map(check => <div key={check.key} className="flex justify-between gap-3"><dt>{t(`readiness.${check.key}`)}</dt><dd className={check.state === 'passed' ? 'text-primary' : check.state === 'notApplicable' ? 'text-muted-foreground' : 'text-warning'}>{t(`readiness.check.${check.state}`)}{check.failures > 0 ? ` · ${check.failures}` : ''}</dd></div>)}</dl>
             <p className="text-muted-foreground">{t('readiness.hardCount', { n: review.hardViolations })}</p>
             {plan.provenance?.validation?.valid !== true && <p className="text-warning">{t('readiness.validationUnconfirmed')}</p>}
             {!!plan.provenance?.validation?.violations?.some(v => v.soft) && <p className="text-warning">{t('readiness.advisories')}</p>}
             <p className="text-muted-foreground">{t('readiness.checkScope')}</p>
-            <LoadingEvidence plan={plan} confirmed={loadingConfirmed} invalidated={loadingInvalidated||plan.scenarioRevision!==scenario.revision}/>
+            <div id="cursus-loading-evidence" tabIndex={-1}><LoadingEvidence plan={plan} confirmed={loadingConfirmed} invalidated={loadingInvalidated||plan.scenarioRevision!==scenario.revision}/></div>
           </section>
           <section aria-label={t('issues.approvedExceptions')} className="min-w-0 space-y-2">
             <h3 className="font-semibold">{t('issues.approvedExceptions')} · {review.exceptions.length}</h3>

@@ -41,3 +41,27 @@ test('legacy catalogue evidence never infers approval from a validated plan',asy
  const {legacyLibraryPlan}=await import('../library.js');const p=validPlan();const item=legacyLibraryPlan(p,undefined,p.id);
  assert.equal(item.identity.approval,'unknown');assert.equal(item.identity.freshness,'unknown');assert.equal(item.identity.planSha256,null);
 });
+
+test('structured approval reasons preserve legacy gates and identify exact delivery/trip targets',async()=>{
+ const {approvalIssues}=await import('./plan-workflow.js');
+ const p=validPlan(),v=p.vehicles[0]!,trip=v.trips[0]!,stop=trip.stops[0]!;
+ stop.requestId=7;v.tonnage=24;v.hasTailLift=false;trip.loadKg=2000;stop.arrivalSec=300;
+ const issues=approvalIssues(p,2);
+ assert.deepEqual(approvalBlockers(p,2),[...new Set(issues.map(i=>i.message))]);
+ for(const code of ['gvw','tail_lift','time_window'])assert.deepEqual(issues.find(i=>i.code===code)?.target,{kind:'stop',vehicleId:1,tripIndex:0,seq:1,orderNo:'ORDER',requestId:7});
+ assert.deepEqual(issues.find(i=>i.code==='capacity')?.target,{kind:'trip',vehicleId:1,tripIndex:0});
+ assert.deepEqual(issues.find(i=>i.code==='revision_changed')?.target,{kind:'section',section:'changes'});
+ // Equal labels remain separate evidence, never coalesced into one delivery.
+ trip.stops.push({...stop,requestId:8,seq:2});
+ assert.deepEqual(approvalIssues(p,1).filter(i=>i.code==='gvw').map(i=>i.target.kind==='stop'?i.target.requestId:null),[7,8]);
+});
+
+test('structured missing/failed evidence remains conservative without relaxing approval',async()=>{
+ const {approvalIssues}=await import('./plan-workflow.js');const p=validPlan();
+ p.provenance.inputSha256='';p.provenance.validation.valid=false;p.stats.servedOrders=0;
+ assert.deepEqual(approvalIssues(p,1).map(i=>i.code),['validation_failed','coverage_incomplete','dataset_identity_missing']);
+ const scenario={sequences:[{vehicleId:1,orderNos:['wrong'],locked:true}]} as import('../store.js').Scenario;
+ assert.ok(approvalIssues(validPlan(),1,scenario).some(i=>i.code==='locked_route'));
+ p.physicalLoading={mode:'hard'} as Plan['physicalLoading'];
+ assert.ok(approvalIssues(p,1).some(i=>i.code==='physical_loading'));
+});

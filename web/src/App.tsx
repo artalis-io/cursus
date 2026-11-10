@@ -837,7 +837,9 @@ export default function App() {
         <WorkspaceStatus plan={plan} baseline={baseline} scenario={scenario} loading={workspaceLoading}
           saving={pendingEdits>0} running={!!solving} candidate={!!candidate} conflict={!!freshnessError}
           revalidate={!!manualContext?.requiresRevalidation}
-          changesCount={changesCount} onOpenChanges={()=>setChangesOpen(true)} />
+          changesCount={changesCount} onOpenChanges={()=>setChangesOpen(true)} onOpenIssues={()=>setIssuesOpen(true)}
+          onReload={()=>{if(pendingEditsRef.current===0&&!solving&&!candidate&&okToSwitch())void reopenPlan(plan.id);}}
+          onSelect={selection=>{if(planRef.current?.id!==plan.id)return;navigate(selection);const details=document.getElementById('cursus-status-details');if(details instanceof HTMLDetailsElement)details.open=false;requestAnimationFrame(()=>document.querySelector<HTMLElement>('#cursus-inspector-pane [data-inspector-heading]')?.focus({preventScroll:true}));}} />
         {freshnessError && <div role="alert" className="border-b border-warning/40 bg-warning/10 px-4 py-2 text-sm">
           {t(freshnessError)} <button className="underline" onClick={() => {
             if (!window.confirm(t('freshness.confirm'))) return;

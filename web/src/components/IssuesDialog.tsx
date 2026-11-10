@@ -1,3 +1,5 @@
+import {unassignedReviewSelection,violationSelection} from '@/lib/review-targets';
+import {selectionContext} from '@/lib/selection-context';
 import { AlertTriangle, PackageX, Clock, Weight, CheckCircle2 } from 'lucide-react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { ScrollArea } from '@/components/ui/scroll-area';
@@ -14,27 +16,18 @@ export function IssuesDialog({ open, onOpenChange, plan, onSelect }: {
 }) {
   const t = useT();
   const refOf = (id?: number): string => plan.vehicles.find((v) => v.id === id)?.ref ?? `#${id}`;
-  const custOf = (orderNo?: string): string => {
-    for (const v of plan.vehicles) for (const tr of v.trips) for (const s of tr.stops) if (s.orderNo === orderNo) return s.customer ?? orderNo!;
-    const u = plan.unassigned.find((x) => x.orderNo === orderNo);
-    return u?.customer ?? orderNo ?? '—';
-  };
-  const locate = (v: ValidationViolation): Selection => {
-    if (v.orderNo) {
-      for (const veh of plan.vehicles) for (const tr of veh.trips) for (const s of tr.stops) {
-        if (s.orderNo === v.orderNo) return { kind: 'stop', vehicleId: veh.id, tripIndex: tr.index, seq: s.seq };
-      }
-    }
-    return v.vehicle_id != null ? { kind: 'vehicle', vehicleId: v.vehicle_id } : null;
-  };
+  const locate=(v:ValidationViolation)=>violationSelection(plan,v);
   const go = (sel: Selection): void => { onSelect(sel); onOpenChange(false); };
 
-  const violations = plan.provenance.validation.violations;
+  const violations = (Array.isArray(plan.provenance?.validation?.violations)?plan.provenance.validation.violations:[]).filter(v=>v&&typeof v==='object');
   const hard = violations.filter((v) => !v.soft);
   const soft = violations.filter((v) => v.soft);
   const actionable = plan.unassigned.length + hard.length;
 
-  const violationLabel = (v: ValidationViolation): string => (v.orderNo ? custOf(v.orderNo) : refOf(v.vehicle_id));
+  const violationLabel=(v:ValidationViolation):string=>{const context=selectionContext(plan,locate(v));
+    if(context?.kind==='stop')return `${context.order.customer??context.order.orderNo} · ${context.order.orderNo}${context.order.requestId!==undefined?` · ${t('review.delivery',{id:context.order.requestId})}`:''}`;
+    return context?.kind==='vehicle'?context.vehicle.ref:v.orderNo??refOf(v.vehicle_id);
+  };
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -57,7 +50,8 @@ export function IssuesDialog({ open, onOpenChange, plan, onSelect }: {
           </section>
         )}
 
-        {actionable === 0 && soft.length === 0 ? (
+        {plan.provenance?.validation?.valid!==true&&<p role="status" className="text-warning">{t('review.validation_failed')}</p>}
+        {actionable === 0 && soft.length === 0 && plan.provenance?.validation?.valid===true ? (
           <p className="flex items-center justify-center gap-2 py-8 text-center text-sm text-muted-foreground"><CheckCircle2 className="h-4 w-4 text-primary" /> {t('issues.none')}</p>
         ) : (
           <ScrollArea className="max-h-[56vh]">
@@ -65,22 +59,22 @@ export function IssuesDialog({ open, onOpenChange, plan, onSelect }: {
               {plan.unassigned.length > 0 && (
                 <Group title={t('issues.unassigned')} count={plan.unassigned.length} icon={<PackageX className="h-3.5 w-3.5" />} warn>
                   {plan.unassigned.map((u,index) => (
-                    <Row key={u.requestId??`${u.orderNo}:${index}`} onClick={() => go({ kind: 'unassigned', orderNo: u.orderNo,requestId:u.requestId })}
-                      label={u.customer ?? u.orderNo} detail={t(`unassigned.${u.reasonCode ?? 'CONSTRAINED'}`)} />
+                    <Row key={u.requestId??`${u.orderNo}:${index}`} onClick={unassignedReviewSelection(plan,u)?() => go(unassignedReviewSelection(plan,u)):undefined}
+                      label={`${u.customer??u.orderNo} · ${u.orderNo}${u.requestId!==undefined?` · ${t('review.delivery',{id:u.requestId})}`:''}`} detail={t(`unassigned.${u.reasonCode ?? 'CONSTRAINED'}`)} />
                   ))}
                 </Group>
               )}
               {hard.length > 0 && (
                 <Group title={t('issues.hard')} count={hard.length} icon={<Clock className="h-3.5 w-3.5" />} warn>
                   {hard.map((v, i) => (
-                    <Row key={i} onClick={() => go(locate(v))} label={violationLabel(v)} detail={violationDetail(v, t)} />
+                    <Row key={i} onClick={locate(v)?() => go(locate(v)):undefined} label={violationLabel(v)} detail={violationDetail(v, t)} />
                   ))}
                 </Group>
               )}
               {soft.length > 0 && (
                 <Group title={t('issues.advisories')} count={soft.length} icon={<Weight className="h-3.5 w-3.5" />}>
                   {soft.map((v, i) => (
-                    <Row key={i} onClick={() => go(locate(v))} label={violationLabel(v)} detail={violationDetail(v, t)} />
+                    <Row key={i} onClick={locate(v)?() => go(locate(v)):undefined} label={violationLabel(v)} detail={violationDetail(v, t)} />
                   ))}
                 </Group>
               )}
@@ -101,7 +95,9 @@ function Group({ title, count, icon, warn, children }: { title: string; count: n
   );
 }
 
-function Row({ label, detail, onClick }: { label: string; detail: string; onClick: () => void }) {
+function Row({ label, detail, onClick }: { label: string; detail: string; onClick?: () => void }) {
+  const t=useT();
+  if(!onClick)return <div className="rounded border border-divider px-2 py-1.5 text-xs"><p>{label} · {detail}</p><p className="text-muted-foreground">{t('review.targetUnavailable')}</p></div>;
   return (
     <button type="button" onClick={onClick}
       className="flex w-full items-center gap-2 rounded border border-divider px-2 py-1.5 text-left text-xs hover:bg-accent">
