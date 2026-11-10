@@ -20,6 +20,7 @@ export function IssuesDialog({ open, onOpenChange, plan, onSelect }: {
   const go = (sel: Selection): void => { onSelect(sel); onOpenChange(false); };
 
   const violations = (Array.isArray(plan.provenance?.validation?.violations)?plan.provenance.validation.violations:[]).filter(v=>v&&typeof v==='object');
+  const evidenceValid=plan.provenance?.validation?.valid===true&&Array.isArray(plan.provenance?.validation?.violations)&&violations.length===plan.provenance.validation.violations.length;
   const hard = violations.filter((v) => !v.soft);
   const soft = violations.filter((v) => v.soft);
   const actionable = plan.unassigned.length + hard.length;
@@ -50,8 +51,8 @@ export function IssuesDialog({ open, onOpenChange, plan, onSelect }: {
           </section>
         )}
 
-        {plan.provenance?.validation?.valid!==true&&<p role="status" className="text-warning">{t('review.validation_failed')}</p>}
-        {actionable === 0 && soft.length === 0 && plan.provenance?.validation?.valid===true ? (
+        {!evidenceValid&&<p role="status" className="text-warning">{t('review.validation_failed')}</p>}
+        {actionable === 0 && soft.length === 0 && evidenceValid ? (
           <p className="flex items-center justify-center gap-2 py-8 text-center text-sm text-muted-foreground"><CheckCircle2 className="h-4 w-4 text-primary" /> {t('issues.none')}</p>
         ) : (
           <ScrollArea className="max-h-[56vh]">

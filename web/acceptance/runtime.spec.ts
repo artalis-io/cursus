@@ -2397,7 +2397,7 @@ test('actionable review: Reviewer follows two equal unassigned references by del
   await page.locator('aside').last().locator(`ol li > button[data-request-id="${id}"]`).click();
   await page.getByRole('button',{name:'Return to unassigned',exact:true}).click();current=await applyManualDialog(page);
  }
- await page.getByRole('button',{name:'View as Reviewer',exact:true}).click();await expect(page.getByText('Viewing as Reviewer',{exact:true})).toBeVisible();
+ await page.getByRole('button',{name:'View as Reviewer',exact:true}).click();await expect(page.locator('footer').getByText('Viewing as Reviewer',{exact:false})).toBeVisible();
  const writes:string[]=[];page.on('request',r=>{if(new URL(r.url()).pathname.startsWith('/api/')&&!['GET','HEAD','OPTIONS'].includes(r.method()))writes.push(r.url());});
  for(const id of [130,170]){
   await selectWorkspaceAction(page,'Plan approval');
