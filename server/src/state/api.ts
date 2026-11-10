@@ -1,3 +1,5 @@
+import {costReview} from '../cost-review.js';
+import {manualSettings as parseCostSettings} from './manual-settings.js';
 import {loadingSource,loadingRequired,loadingRequirementForSource} from '../hard-loading.js';
 import {ObjectStoreError} from './objects.js';
 import {solveBudget} from '../solve-budget.js';
@@ -305,6 +307,24 @@ export async function createStatefulApi(options: StatefulApiOptions): Promise<Fa
     const current=await options.store.getJob(options.tenantId,req.params.id);
     if(!current)return reply.code(404).send({error:'job not found'});
     return {cancelled,status:statefulJobResponse(current).status};
+  });
+  app.get<{Params:{id:string}}>('/api/plans/:id/cost-breakdown',async(req,reply)=>{
+    reply.header('Cache-Control','private, no-store');
+    const plan=await options.store.getPlan(options.tenantId,req.params.id);
+    if(!plan)return reply.code(404).send({error:'plan not found'});
+    const scenario=await scenarios.get(plan.scenarioId);
+    const scopedSettings=options.fleetSettings&&(!options.fleetSettings.datasetSha256||options.fleetSettings.datasetSha256===plan.provenance.datasetSha256)?options.fleetSettings:undefined;
+    const profileTariff=async(refs:Plan['provenance']['planningProfiles'])=>{
+      if(!refs?.some(p=>p.kind==='fleet'))return undefined;
+      try{
+        const profiles=await new ProfileRepository(options.store,options.tenantId).resolve(refs);
+        const settings=parseCostSettings(profiles.find(p=>p.kind==='fleet')!.content.settings);
+        return settings.datasetSha256===plan.provenance.datasetSha256?settings.tariff:undefined;
+      }catch{return undefined;}
+    };
+    const [saved,current]=await Promise.all([profileTariff(plan.provenance.planningProfiles),profileTariff(scenario?.planningProfiles)]);
+    return costReview(plan,{savedTariff:saved??(!plan.provenance.planningProfiles?.some(p=>p.kind==='fleet')?scopedSettings?.tariff:undefined),
+      currentTariff:scenario?.planningProfiles?.some(p=>p.kind==='fleet')?current:scopedSettings?.tariff,currentScenarioRevision:scenario?.revision});
   });
   app.get<{ Params: { id: string };Querystring:{geometry?:string} }>('/api/plans/:id', async (req, reply) => {
     if(req.query.geometry!==undefined&&req.query.geometry!=='stored')return reply.code(400).send({error:'geometry must be stored or omitted.'});

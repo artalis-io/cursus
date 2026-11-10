@@ -115,6 +115,8 @@ test('prepared commercial data and approved fleet/location revisions run through
   await b.completeSolve(lease,plan.id,scenario.id,scenario.revision,plan);
   const peer=await fetch(origins[1]+`/api/plans/${plan.id}`);assert.equal(peer.status,200);
   assert.deepEqual((await peer.json() as Plan).shipmentMetadata,plan.shipmentMetadata);
+  const price=await fetch(origins[1]+`/api/plans/${plan.id}/cost-breakdown`);assert.equal(price.status,200);
+  const pricing=await price.json() as import('../cost-review-contract.js').CostReview;assert.equal(pricing.status,'verified');assert.equal(pricing.evidence,'saved_rates');assert.equal(pricing.tariffFreshness,'current');assert.equal(pricing.total,plan.cost!.total);
   const exported=await fetch(origins[0]+`/api/plans/${plan.id}/handoff.json`);assert.equal(exported.status,200);
   const handoff=await exported.json() as {shipmentMetadata:Plan['shipmentMetadata'];handoff:{status:string}};
   assert.deepEqual(handoff.shipmentMetadata,plan.shipmentMetadata);assert.equal(handoff.handoff.status,'Draft');

@@ -1,3 +1,4 @@
+import {captureCosting} from '../cost-review.js';
 import {config} from '../config.js';
 import {loadingSnapshot} from '../loading.js';
 import { createHash } from 'node:crypto';
@@ -191,6 +192,7 @@ export function materializeManualPlan(parent: Plan, scenario: Scenario, input: M
       return { vehicleId: vehicle.id, ref: vehicle.ref, vehicleClass: vehicle.vehicleClass, distanceKm: vehicle.distanceKm,
         fixedCost: cost.fixed, variableCost: cost.variable, totalCost: cost.total };
     }) } };
+  plan.provenance.costing=captureCosting(plan,input.tariff);
   delete plan.assignments;
   // Rebuild round counts from the current immutable declarations, never from
   // the parent's layout. These facts still make no feasibility claim.

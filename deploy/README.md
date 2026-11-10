@@ -176,3 +176,22 @@ No speculative resource limits are imposed. Use `docker stats --no-stream` and
 job elapsed time in the API to establish workload-specific sizing.
 
 R2 connection limits, readiness behavior, safe diagnostic signals and recovery tests are documented in [R2 resilience](../docs/r2-resilience.md).
+
+### Isolated acceptance when Docker's disk is full
+
+The test-only S3 fixture can use a fresh host-backed scratch child instead of
+Docker's internal disk. Choose an existing parent directory for disposable tests:
+
+```bash
+mkdir -p /absolute/path/to/disposable-tests
+python3 deploy/acceptance.py --scratch-root /absolute/path/to/disposable-tests \
+  --report /absolute/path/to/test-evidence/report.json
+```
+
+The runner creates its own random child, mounts only that child into the test
+object store and deletes it only after the isolated Compose project stops.
+Existing parent contents are preserved. Failed teardown retains the child and
+records its location for recovery. This option does not reconfigure Docker,
+restart existing stacks or use customer data. CI retains its project-scoped
+named volume by default. The synthetic SeaweedFS fixture uses small disk-backed
+volume extents with preallocation disabled; production continues to use R2.

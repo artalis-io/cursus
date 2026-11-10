@@ -1,3 +1,5 @@
+import {costReview} from './cost-review.js';
+import {loadTariff as costReviewTariff} from './cost.js';
 import {undoInstructionEdit} from './change-review.js';
 import {legacyLibraryPlan} from './library.js';
 import {solveBudget} from './solve-budget.js';
@@ -404,6 +406,11 @@ app.get<{ Querystring: { day?: string } }>('/api/plans', async (req,reply) => {
   return out;
 });
 
+app.get<{Params:{id:string}}>('/api/plans/:id/cost-breakdown',async(req,reply)=>{
+  reply.header('Cache-Control','private, no-store');
+  const plan=store.getPlan(req.params.id);if(!plan)return reply.code(404).send({error:'plan not found'});
+  return costReview(plan,{currentTariff:costReviewTariff(),currentScenarioRevision:store.getScenario(plan.scenarioId)?.revision});
+});
 app.get<{ Params: { id: string };Querystring:{geometry?:string} }>('/api/plans/:id', async (req, reply) => {
   if(req.query.geometry!==undefined&&req.query.geometry!=='stored')return reply.code(400).send({error:'geometry must be stored or omitted.'});
   const plan = store.getPlan(req.params.id);

@@ -21,7 +21,7 @@ services:
     image: chrislusf/seaweedfs:3.97
     # The image entrypoint injects -master.volumePreallocate. Override it:
     # synthetic buckets must not reserve gigabytes per empty test volume.
-    command: server -s3 -dir=/data -master.volumePreallocate=false
+    command: server -s3 -dir=/data -master.volumePreallocate=false -master.volumeSizeLimitMB=128 -volume.max=0
     ports: ["127.0.0.1:${CURSUS_TEST_S3_PORT:-59000}:8333"]
     healthcheck:
       test: [CMD, wget, -q, -O, /dev/null, http://127.0.0.1:8333/]
@@ -31,7 +31,9 @@ services:
     # SeaweedFS reserves large extents even for tiny objects. A RAM-backed
     # directory pins those pages and can starve unrelated local map services.
     # This named volume is project-scoped and removed by test teardown (-v).
-    volumes: [s3-test-data:/data]
+    # Acceptance can select its own mkdtemp directory on the host when the
+    # Docker disk is full. Never point this test-only setting at customer data.
+    volumes: ["${CURSUS_TEST_S3_STORAGE:-s3-test-data}:/data"]
 
 volumes:
   s3-test-data: {}

@@ -1,3 +1,4 @@
+import {CostDialog} from '@/components/CostDialog';
 import type {Instruction} from '../../server/src/change-review-contract';
 import {workspaceBookmarkKey,parseWorkspaceBookmark} from '@/lib/workspace-resume';
 import { useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
@@ -221,6 +222,7 @@ export default function App() {
   const [candidateBusy,setCandidateBusy]=useState(false);
   const [importOpen, setImportOpen] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
+  const [costOpen,setCostOpen]=useState(false);
   const [changesOpen, setChangesOpen] = useState(false);
   const [weekOpen, setWeekOpen] = useState(false);
   const [issuesOpen, setIssuesOpen] = useState(false);
@@ -864,7 +866,7 @@ export default function App() {
         <div id="cursus-kpi-pane" className="shrink-0">
           <KpiStrip plan={plan} baseline={baseline} compare={isReplan} job={job}
             previewDistanceKm={previewTotals?.distanceKm} previewCostTotal={previewTotals?.costTotal}
-            compact={!workspace.visibility.kpis} onToggleDetails={()=>workspace.toggleVisibility('kpis')} />
+            onOpenCost={()=>setCostOpen(true)} compact={!workspace.visibility.kpis} onToggleDetails={()=>workspace.toggleVisibility('kpis')} />
         </div>
         {manualContext?.requiresRevalidation&&<PolicyNotice key={`${plan.id}/${scenario.id}/${scenario.revision}`} />}
         {manualContext?.reason==='fresh_plan_required'&&<div role="status" className="shrink-0 border-b border-warning/40 bg-warning/10 px-4 py-2 text-sm">{t('manual.freshPlanRequired')}</div>}
@@ -966,6 +968,7 @@ export default function App() {
           scenarioLabel={scenario.label}
         />
       )}
+      <CostDialog key={`${plan.id}/${scenario.id}/${scenario.revision}`} open={costOpen} onOpenChange={setCostOpen} plan={plan} scenario={scenario} reference={baseline}/>
       <ChangesDialog
         open={changesOpen} onOpenChange={setChangesOpen}
         plan={plan} scenario={scenario} dirty={dirty} solving={!!solving || pendingEdits > 0 || manualBusy || !!candidate || !!freshnessError || workspaceLoading || !!scenario.supersededBy}
