@@ -1,4 +1,6 @@
-import { useEffect, useState } from 'react';
+import {useCallback} from 'react';
+import {useLibraryList} from '@/hooks/useLibraryList';
+import {LibraryStatus} from '@/components/LibraryStatus';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Badge } from '@/components/ui/badge';
@@ -13,21 +15,18 @@ export function HistoryDialog({ open, onOpenChange, dayId, currentPlanId, onReop
   open: boolean; onOpenChange: (o: boolean) => void; dayId: string; currentPlanId: string; onReopen: (planId: string) => void;
 }) {
   const t = useT();
-  const [plans, setPlans] = useState<PlanSummary[] | null>(null);
-  useEffect(() => {
-    if (!open) return;
-    let alive = true;
-    setPlans(null);
-    api.plans(dayId).then((p) => { if (alive) setPlans(p); }).catch(() => { if (alive) setPlans([]); });
-    return () => { alive = false; };
-  }, [open, dayId]);
+  const fetchList=useCallback((signal:AbortSignal)=>api.plans(dayId,signal),[dayId]);
+  const library=useLibraryList<PlanSummary>(open,dayId,fetchList);
+  const plans=library.items;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-xl">
         <DialogHeader><DialogTitle>{t('history.title')}</DialogTitle></DialogHeader>
-        {!plans ? <p className="py-6 text-center text-sm text-muted-foreground">{t('history.loading')}</p>
-          : plans.length === 0 ? <p className="py-6 text-center text-sm text-muted-foreground">{t('history.none')}</p>
+        <LibraryStatus phase={library.phase} error={library.error} hasSnapshot={plans!==null} onRefresh={library.refresh}/>
+        <div aria-busy={library.pending} data-testid="plans-library">
+        {plans===null ? null
+          : plans.length === 0 && library.verified ? <p className="py-6 text-center text-sm text-muted-foreground">{t('history.none')}</p>
           : (
             <ScrollArea className="max-h-[60vh]">
               <div className="space-y-1.5 pr-3">
@@ -56,6 +55,7 @@ export function HistoryDialog({ open, onOpenChange, dayId, currentPlanId, onReop
               </div>
             </ScrollArea>
           )}
+        </div>
       </DialogContent>
     </Dialog>
   );

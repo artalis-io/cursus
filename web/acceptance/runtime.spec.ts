@@ -2186,3 +2186,105 @@ test('an already adopted native result cannot return as a pending candidate afte
  expect((await get<Scenario>(page.request,`${peer}/api/scenarios/${scenarioId}`)).selectedPlanId).toBe(selected);
  expect(writes).toEqual([]);
 });
+
+for(const kind of ['plans','scenarios'] as const){
+ test(`library ${kind}: failures never look empty; retry, cached refresh, offline reopening and empty success are distinct`,async({page})=>{
+  await login(page);const base=await baseline(page),day=base.day;
+  const path=kind==='plans'?'/api/plans':'/api/scenarios',url=`**${path}?day=${day}`;
+  const values=await get<Array<{id:string}>>(page.request,`${path}?day=${day}`),payload=[values[0]!];
+  const empty=kind==='plans'?'No saved plans yet.':'No scenarios yet. Make edits and Replan to create a what-if.';
+  const selector=kind==='plans'?'[data-plan-id]':'[data-scenario-id]';
+  let mode:'fail'|'ok'|'hold'|'empty'|'offline'|'bad'='fail',reads=0;
+  const held=gate(),captured=gate();
+  await page.route(url,async route=>{
+   reads++;
+   if(mode==='fail'){await route.fulfill({status:503,json:{error:'Temporary library outage'}});return;}
+   if(mode==='offline'){await route.abort('internetdisconnected');return;}
+   if(mode==='bad'){await route.fulfill({json:{unexpected:'not a list'}});return;}
+   if(mode==='hold'){captured.release();await held.wait;}
+   await route.fulfill({json:mode==='empty'?[]:payload}).catch(()=>{/* a closed dialog cancels its request */});
+  });
+  try{
+   await selectWorkspaceAction(page,kind==='plans'?'Plans':'Scenarios');const dialog=page.getByRole('dialog');
+   await expect(dialog.getByRole('alert')).toContainText('Could not load this list.');
+   await expect(dialog.getByText(empty,{exact:true})).toHaveCount(0);await expect(dialog.getByText('Loading…',{exact:true})).toHaveCount(0);
+   mode='ok';await dialog.getByRole('button',{name:'Retry',exact:true}).click();await expect(dialog.locator(selector)).toHaveCount(1);
+   mode='hold';await dialog.getByRole('button',{name:'Refresh',exact:true}).click();await captured.wait;
+   await expect(dialog.getByRole('status')).toHaveText('Checking latest changes…');await expect(dialog.locator(selector)).toHaveCount(1);
+   await expect(dialog.getByRole('button',{name:'Checking latest changes…',exact:true})).toBeDisabled();
+   held.release();await expect(dialog.getByRole('button',{name:'Refresh',exact:true})).toBeEnabled();
+   mode='offline';await page.keyboard.press('Escape');await selectWorkspaceAction(page,kind==='plans'?'Plans':'Scenarios');
+   await expect(dialog.getByRole('alert')).toContainText('Connection lost.');await expect(dialog.getByRole('alert')).toContainText('Showing the last loaded list.');
+   await expect(dialog.locator(selector)).toHaveCount(1);await expect(dialog.getByText(empty,{exact:true})).toHaveCount(0);
+   mode='empty';await dialog.getByRole('button',{name:'Retry',exact:true}).click();await expect(dialog.getByText(empty,{exact:true})).toBeVisible();
+   await expect(dialog.getByRole('alert')).toHaveCount(0);await expect(dialog.locator(selector)).toHaveCount(0);
+   mode='bad';await dialog.getByRole('button',{name:'Refresh',exact:true}).click();await expect(dialog.getByRole('alert')).toContainText('Could not load this list.');await expect(dialog.getByText(empty,{exact:true})).toHaveCount(0);
+   mode='ok';await dialog.getByRole('button',{name:'Retry',exact:true}).click();await expect(dialog.locator(selector)).toHaveCount(1);expect(reads).toBe(7);
+  }finally{held.release();}
+ });
+ test(`library ${kind}: late old-day results cannot replace another day, and denied access discards cached rows`,async({page})=>{
+  await login(page);const base=await baseline(page),days=await get<DaySummary[]>(page.request,'/api/days'),other=days.find(d=>d.id==='acceptance-day-two')!;
+  const path=kind==='plans'?'/api/plans':'/api/scenarios',selector=kind==='plans'?'[data-plan-id]':'[data-scenario-id]';
+  const original=await get<Array<{id:string}>>(page.request,`${path}?day=${base.day}`),replacement=await get<Array<{id:string}>>(page.request,`${path}?day=${other.id}`);
+  const held=gate(),captured=gate(),finished=gate();let oldReads=0,deny=false;
+  await page.route(`**${path}?day=*`,async route=>{
+   const day=new URL(route.request().url()).searchParams.get('day');
+   if(day===base.day){oldReads++;if(oldReads===2){captured.release();await held.wait;await route.fulfill({json:[original[0]]}).catch(()=>{});finished.release();return;}}
+   if(deny){await route.fulfill({status:403,json:{error:'Access revoked'}});return;}
+   await route.fulfill({json:[day===other.id?replacement[0]:original[0]]});
+  });
+  try{
+   await selectWorkspaceAction(page,kind==='plans'?'Plans':'Scenarios');const dialog=page.getByRole('dialog');await expect(dialog.locator(selector)).toHaveCount(1);
+   await dialog.getByRole('button',{name:'Refresh',exact:true}).click();await captured.wait;
+   await page.keyboard.press('Escape');await page.getByRole('combobox').first().click();await page.getByRole('option',{name:/7 May 2026/}).click();
+   await expect(page.locator('section[aria-label="Plan approval"]')).toHaveAttribute('data-plan-id',other.baselinePlanId);
+   await selectWorkspaceAction(page,kind==='plans'?'Plans':'Scenarios');
+   await expect(dialog.locator(selector)).toHaveAttribute(kind==='plans'?'data-plan-id':'data-scenario-id',replacement[0]!.id);
+   held.release();await finished.wait;await page.evaluate(()=>new Promise<void>(r=>requestAnimationFrame(()=>requestAnimationFrame(()=>r()))));
+   await expect(dialog.locator(selector)).toHaveAttribute(kind==='plans'?'data-plan-id':'data-scenario-id',replacement[0]!.id);
+   deny=true;await dialog.getByRole('button',{name:'Refresh',exact:true}).click();await expect(dialog.getByRole('alert')).toContainText('Access is no longer available.');await expect(dialog.locator(selector)).toHaveCount(0);
+   deny=false;await dialog.getByRole('button',{name:'Retry',exact:true}).click();await expect(dialog.locator(selector)).toHaveCount(1);await expect(dialog.getByRole('alert')).toHaveCount(0);
+  }finally{held.release();}
+ });
+}
+
+test('library scenarios: failed refresh keeps a labelled snapshot, disables mutations, and retry clears the error',async({page})=>{
+ await login(page);const base=await baseline(page),origin=new URL(page.url()).origin;
+ const created=await page.request.post('/api/scenarios',{headers:{origin},data:{from:base.scenarioId,label:'Library recovery public draft'}});expect(created.status()).toBe(201);const scenario=await created.json() as Scenario;
+ const list=await get<Array<{id:string}>>(page.request,`/api/scenarios?day=${base.day}`),payload=list.filter(s=>s.id===scenario.id);expect(payload).toHaveLength(1);
+ let fail=false;await page.route(`**/api/scenarios?day=${base.day}`,route=>fail?route.fulfill({status:503,json:{error:'Temporary outage'}}):route.fulfill({json:payload}));
+ await selectWorkspaceAction(page,'Scenarios');const dialog=page.getByRole('dialog');await expect(dialog.getByRole('button',{name:'Rename',exact:true})).toBeEnabled();
+ fail=true;await dialog.getByRole('button',{name:'Refresh',exact:true}).click();await expect(dialog.getByRole('alert')).toContainText('Showing the last loaded list.');
+ await expect(dialog.getByRole('button',{name:'Rename',exact:true})).toBeDisabled();await expect(dialog.getByRole('button',{name:'Delete',exact:true})).toBeDisabled();await expect(dialog.locator('input[type=file]')).toBeDisabled();
+ fail=false;await dialog.getByRole('button',{name:'Retry',exact:true}).click();await expect(dialog.getByRole('alert')).toHaveCount(0);await expect(dialog.getByRole('button',{name:'Rename',exact:true})).toBeEnabled();
+ await expect(dialog.getByRole('button',{name:'Delete',exact:true})).toBeEnabled();
+});
+
+for(const kind of ['plans','scenarios'] as const)test(`library ${kind}: a different signed-in user cannot inherit the previous user's cached list`,async({page})=>{
+ await login(page);const base=await baseline(page),path=kind==='plans'?'/api/plans':'/api/scenarios';
+ const rows=await get<Array<{id:string}>>(page.request,`${path}?day=${base.day}`);let fail=false;
+ await page.route(`**${path}?day=*`,route=>fail?route.fulfill({status:503,json:{error:'Temporary outage'}}):route.fulfill({json:[rows[0]]}));
+ await selectWorkspaceAction(page,kind==='plans'?'Plans':'Scenarios');const dialog=page.getByRole('dialog'),selector=kind==='plans'?'[data-plan-id]':'[data-scenario-id]';
+ await expect(dialog.locator(selector)).toHaveCount(1);await page.keyboard.press('Escape');
+ await page.getByRole('button',{name:'Sign out',exact:true}).click();await expect(page.getByRole('heading',{name:'Continue to Cursus',exact:true})).toBeVisible();
+ await login(page,'reviewer@acceptance.example.test');fail=true;
+ await selectWorkspaceAction(page,kind==='plans'?'Plans':'Scenarios');await expect(dialog.getByRole('alert')).toContainText('Could not load this list.');
+ await expect(dialog.locator(selector)).toHaveCount(0);await expect(dialog.getByText('Showing the last loaded list. It may be out of date.',{exact:true})).toHaveCount(0);
+});
+
+test('library scenarios: a late rename completion cannot refresh or replace a newly opened planning day',async({page})=>{
+ await login(page);const base=await baseline(page),origin=new URL(page.url()).origin;
+ const response=await page.request.post('/api/scenarios',{headers:{origin},data:{from:base.scenarioId,label:'Library late rename public draft'}});expect(response.status()).toBe(201);const copy=await response.json() as Scenario;
+ const held=gate(),captured=gate(),finished=gate();let reads=0;
+ await page.route(`**/api/scenarios/${copy.id}/rename`,async route=>{const result=await route.fetch();captured.release();await held.wait;await route.fulfill({response:result});finished.release();});
+ page.on('request',r=>{if(r.method()==='GET'&&new URL(r.url()).pathname==='/api/scenarios'&&new URL(r.url()).searchParams.get('day')===base.day)reads++;});
+ try{
+  await selectWorkspaceAction(page,'Scenarios');const dialog=page.getByRole('dialog');const row=dialog.locator(`[data-scenario-id="${copy.id}"]`);
+  await row.getByRole('button',{name:'Rename',exact:true}).click();const input=row.getByRole('textbox');await input.fill('Renamed safely in its original day');await input.press('Enter');await captured.wait;
+  await page.keyboard.press('Escape');await page.getByRole('combobox').first().click();await page.getByRole('option',{name:/7 May 2026/}).click();
+  await expect(page.getByText('2 / 2',{exact:true})).toBeVisible();await selectWorkspaceAction(page,'Scenarios');await expect(dialog.getByRole('button',{name:'Refresh',exact:true})).toBeEnabled();
+  const before=reads;held.release();await finished.wait;await page.evaluate(()=>new Promise<void>(r=>requestAnimationFrame(()=>requestAnimationFrame(()=>r()))));
+  await expect(dialog.locator(`[data-scenario-id="${copy.id}"]`)).toHaveCount(0);expect(reads).toBe(before);await expect(dialog.getByRole('alert')).toHaveCount(0);
+  expect((await get<Scenario>(page.request,`${peer}/api/scenarios/${copy.id}`)).label).toBe('Renamed safely in its original day');
+ }finally{held.release();}
+});

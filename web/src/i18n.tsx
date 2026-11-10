@@ -219,6 +219,9 @@ const en: Dict = {
   'import.canonicalRecords': 'Canonical records (typed, validated{sha})', 'import.provHashed': ', provenance-hashed',
   'import.tab.orders': 'orders', 'import.tab.vehicles': 'vehicles', 'import.tab.routes': 'routes',
 
+  'library.refresh': 'Refresh', 'library.refreshing': 'Checking latest changes…', 'library.retry': 'Retry',
+  'library.failed': 'Could not load this list.', 'library.stale': 'Showing the last loaded list. It may be out of date.',
+  'library.denied': 'Access is no longer available. Sign in again or retry after access is restored.',
   'history.title': 'Saved plans', 'history.loading': 'Loading…', 'history.none': 'No saved plans yet.',
   'history.summary': '{served}/{total} served · {veh} vehicles · {km}',
   'history.open': 'Open', 'history.reopen': 'Reopen',
@@ -562,6 +565,9 @@ const hu: Dict = {
   'import.canonicalRecords': 'Kanonikus rekordok (típusos, validált{sha})', 'import.provHashed': ', eredet-hash-elt',
   'import.tab.orders': 'megrendelések', 'import.tab.vehicles': 'járművek', 'import.tab.routes': 'útvonalak',
 
+  'library.refresh': 'Frissítés', 'library.refreshing': 'Legutóbbi változások ellenőrzése…', 'library.retry': 'Újrapróbálás',
+  'library.failed': 'A lista betöltése sikertelen.', 'library.stale': 'A legutóbb betöltött lista látható. Az adatok elavultak lehetnek.',
+  'library.denied': 'A hozzáférés már nem érhető el. Jelentkezz be újra, vagy próbáld újra a hozzáférés visszaállítása után.',
   'history.title': 'Mentett tervek', 'history.loading': 'Betöltés…', 'history.none': 'Még nincs mentett terv.',
   'history.summary': '{served}/{total} kiszolgálva · {veh} jármű · {km}',
   'history.open': 'Megnyitva', 'history.reopen': 'Újranyitás',
