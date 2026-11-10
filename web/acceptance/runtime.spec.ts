@@ -2520,6 +2520,10 @@ test('change review: saved manual decisions are distinguished from future Replan
  await page.getByRole('button',{name:'Return to unassigned',exact:true}).click();const manual=await applyManualDialog(page);
  await selectWorkspaceAction(page,'Changes');const dialog=page.getByRole('dialog'),saved=dialog.getByRole('region',{name:'Saved manual decisions',exact:true});
  await expect(saved).toContainText(`${Object.keys(manual.manual!.layout.decisions).length} delivery decisions are already saved`);await expect(saved).toContainText(manual.id);
- await expect(dialog.locator('[data-instruction]')).toHaveCount(0);await expect(dialog.getByRole('button',{name:/^Undo /})).toHaveCount(0);await expect(dialog.getByRole('button',{name:'Replan',exact:true})).toBeDisabled();
+ const current=await get<Scenario>(page.request,`/api/scenarios/${manual.scenarioId}`);
+ const count=current.removedVehicleIds.length+current.pins.length+current.forbids.length+current.vehicleOverrides.length+current.sequences.length;
+ await expect(dialog.locator('[data-instruction]')).toHaveCount(count);await expect(saved.getByRole('button')).toHaveCount(0);await expect(dialog).toContainText('included in this saved plan revision');
+ const writes:string[]=[];page.on('request',r=>{if(new URL(r.url()).pathname.startsWith('/api/')&&!['GET','HEAD','OPTIONS'].includes(r.method()))writes.push(r.url());});
+ await dialog.getByRole('button',{name:'Reload instructions',exact:true}).click();await expect(saved).toContainText(manual.id);expect(writes).toEqual([]);
  await page.keyboard.press('Escape');await expectPlanTotals(page,manual);expect(await get<Plan>(page.request,`${peer}/api/plans/${manual.id}`)).toEqual(manual);
 });
