@@ -2187,9 +2187,14 @@ test('an already adopted native result cannot return as a pending candidate afte
  expect(writes).toEqual([]);
 });
 
+async function librarySource(page:Page):Promise<Plan&{dayId:string}>{
+ const plan=await baseline(page),scenario=await get<Scenario>(page.request,`/api/scenarios/${plan.scenarioId}`);
+ return {...plan,dayId:scenario.day};
+}
+
 for(const kind of ['plans','scenarios'] as const){
  test(`library ${kind}: failures never look empty; retry, cached refresh, offline reopening and empty success are distinct`,async({page})=>{
-  await login(page);const base=await baseline(page),day=base.day;
+  await login(page);const base=await librarySource(page),day=base.dayId;
   const path=kind==='plans'?'/api/plans':'/api/scenarios',url=`**${path}?day=${day}`;
   const values=await get<Array<{id:string}>>(page.request,`${path}?day=${day}`),payload=[values[0]!];
   const empty=kind==='plans'?'No saved plans yet.':'No scenarios yet. Make edits and Replan to create a what-if.';
@@ -2223,13 +2228,13 @@ for(const kind of ['plans','scenarios'] as const){
   }finally{held.release();}
  });
  test(`library ${kind}: late old-day results cannot replace another day, and denied access discards cached rows`,async({page})=>{
-  await login(page);const base=await baseline(page),days=await get<DaySummary[]>(page.request,'/api/days'),other=days.find(d=>d.id==='acceptance-day-two')!;
+  await login(page);const base=await librarySource(page),days=await get<DaySummary[]>(page.request,'/api/days'),other=days.find(d=>d.id==='acceptance-day-two')!;
   const path=kind==='plans'?'/api/plans':'/api/scenarios',selector=kind==='plans'?'[data-plan-id]':'[data-scenario-id]';
-  const original=await get<Array<{id:string}>>(page.request,`${path}?day=${base.day}`),replacement=await get<Array<{id:string}>>(page.request,`${path}?day=${other.id}`);
+  const original=await get<Array<{id:string}>>(page.request,`${path}?day=${base.dayId}`),replacement=await get<Array<{id:string}>>(page.request,`${path}?day=${other.id}`);
   const held=gate(),captured=gate(),finished=gate();let oldReads=0,deny=false;
   await page.route(`**${path}?day=*`,async route=>{
    const day=new URL(route.request().url()).searchParams.get('day');
-   if(day===base.day){oldReads++;if(oldReads===2){captured.release();await held.wait;await route.fulfill({json:[original[0]]}).catch(()=>{});finished.release();return;}}
+   if(day===base.dayId){oldReads++;if(oldReads===2){captured.release();await held.wait;await route.fulfill({json:[original[0]]}).catch(()=>{});finished.release();return;}}
    if(deny){await route.fulfill({status:403,json:{error:'Access revoked'}});return;}
    await route.fulfill({json:[day===other.id?replacement[0]:original[0]]});
   });
@@ -2249,10 +2254,10 @@ for(const kind of ['plans','scenarios'] as const){
 }
 
 test('library scenarios: failed refresh keeps a labelled snapshot, disables mutations, and retry clears the error',async({page})=>{
- await login(page);const base=await baseline(page),origin=new URL(page.url()).origin;
+ await login(page);const base=await librarySource(page),origin=new URL(page.url()).origin;
  const created=await page.request.post('/api/scenarios',{headers:{origin},data:{from:base.scenarioId,label:'Library recovery public draft'}});expect(created.status()).toBe(201);const scenario=await created.json() as Scenario;
- const list=await get<Array<{id:string}>>(page.request,`/api/scenarios?day=${base.day}`),payload=list.filter(s=>s.id===scenario.id);expect(payload).toHaveLength(1);
- let fail=false;await page.route(`**/api/scenarios?day=${base.day}`,route=>fail?route.fulfill({status:503,json:{error:'Temporary outage'}}):route.fulfill({json:payload}));
+ const list=await get<Array<{id:string}>>(page.request,`/api/scenarios?day=${base.dayId}`),payload=list.filter(s=>s.id===scenario.id);expect(payload).toHaveLength(1);
+ let fail=false;await page.route(`**/api/scenarios?day=${base.dayId}`,route=>fail?route.fulfill({status:503,json:{error:'Temporary outage'}}):route.fulfill({json:payload}));
  await selectWorkspaceAction(page,'Scenarios');const dialog=page.getByRole('dialog');await expect(dialog.getByRole('button',{name:'Rename',exact:true})).toBeEnabled();
  fail=true;await dialog.getByRole('button',{name:'Refresh',exact:true}).click();await expect(dialog.getByRole('alert')).toContainText('Showing the last loaded list.');
  await expect(dialog.getByRole('button',{name:'Rename',exact:true})).toBeDisabled();await expect(dialog.getByRole('button',{name:'Delete',exact:true})).toBeDisabled();await expect(dialog.locator('input[type=file]')).toBeDisabled();
@@ -2261,8 +2266,8 @@ test('library scenarios: failed refresh keeps a labelled snapshot, disables muta
 });
 
 for(const kind of ['plans','scenarios'] as const)test(`library ${kind}: a different signed-in user cannot inherit the previous user's cached list`,async({page})=>{
- await login(page);const base=await baseline(page),path=kind==='plans'?'/api/plans':'/api/scenarios';
- const rows=await get<Array<{id:string}>>(page.request,`${path}?day=${base.day}`);let fail=false;
+ await login(page);const base=await librarySource(page),path=kind==='plans'?'/api/plans':'/api/scenarios';
+ const rows=await get<Array<{id:string}>>(page.request,`${path}?day=${base.dayId}`);let fail=false;
  await page.route(`**${path}?day=*`,route=>fail?route.fulfill({status:503,json:{error:'Temporary outage'}}):route.fulfill({json:[rows[0]]}));
  await selectWorkspaceAction(page,kind==='plans'?'Plans':'Scenarios');const dialog=page.getByRole('dialog'),selector=kind==='plans'?'[data-plan-id]':'[data-scenario-id]';
  await expect(dialog.locator(selector)).toHaveCount(1);await page.keyboard.press('Escape');
@@ -2273,11 +2278,11 @@ for(const kind of ['plans','scenarios'] as const)test(`library ${kind}: a differ
 });
 
 test('library scenarios: a late rename completion cannot refresh or replace a newly opened planning day',async({page})=>{
- await login(page);const base=await baseline(page),origin=new URL(page.url()).origin;
+ await login(page);const base=await librarySource(page),origin=new URL(page.url()).origin;
  const response=await page.request.post('/api/scenarios',{headers:{origin},data:{from:base.scenarioId,label:'Library late rename public draft'}});expect(response.status()).toBe(201);const copy=await response.json() as Scenario;
  const held=gate(),captured=gate(),finished=gate();let reads=0;
  await page.route(`**/api/scenarios/${copy.id}/rename`,async route=>{const result=await route.fetch();captured.release();await held.wait;await route.fulfill({response:result});finished.release();});
- page.on('request',r=>{if(r.method()==='GET'&&new URL(r.url()).pathname==='/api/scenarios'&&new URL(r.url()).searchParams.get('day')===base.day)reads++;});
+ page.on('request',r=>{if(r.method()==='GET'&&new URL(r.url()).pathname==='/api/scenarios'&&new URL(r.url()).searchParams.get('day')===base.dayId)reads++;});
  try{
   await selectWorkspaceAction(page,'Scenarios');const dialog=page.getByRole('dialog');const row=dialog.locator(`[data-scenario-id="${copy.id}"]`);
   await row.getByRole('button',{name:'Rename',exact:true}).click();const input=row.getByRole('textbox');await input.fill('Renamed safely in its original day');await input.press('Enter');await captured.wait;
@@ -2290,8 +2295,8 @@ test('library scenarios: a late rename completion cannot refresh or replace a ne
 });
 
 for(const kind of ['plans','scenarios'] as const)test(`library ${kind}: hung initial and cached reads time out into a retryable state`,async({page})=>{
- await login(page);await page.clock.install();const base=await baseline(page),path=kind==='plans'?'/api/plans':'/api/scenarios';
- const values=await get<Array<{id:string}>>(page.request,`${path}?day=${base.day}`),held=gate(),captured=gate();let hold=true,reads=0;
+ await login(page);await page.clock.install();const base=await librarySource(page),path=kind==='plans'?'/api/plans':'/api/scenarios';
+ const values=await get<Array<{id:string}>>(page.request,`${path}?day=${base.dayId}`),held=gate(),captured=gate();let hold=true,reads=0;
  await page.route(`**${path}?day=*`,async route=>{reads++;if(hold){captured.release();await held.wait;}await route.fulfill({json:[values[0]]}).catch(()=>{});});
  try{
   await selectWorkspaceAction(page,kind==='plans'?'Plans':'Scenarios');const dialog=page.getByRole('dialog'),selector=kind==='plans'?'[data-plan-id]':'[data-scenario-id]';await captured.wait;
