@@ -2313,7 +2313,7 @@ for(const kind of ['plans','scenarios'] as const)test(`library ${kind}: hung ini
 test('library identity: viewed, selected, latest and approval are distinct; peer edits invalidate badges and opening never adopts',async({page})=>{
  await login(page);await shortBudget(page);
  const first=await finishSolve(page,()=>page.getByRole('button',{name:'Optimize',exact:true}).click());
- const newer=await finishSolve(page,()=>page.getByRole('button',{name:'Replan',exact:true}).click(),{keep:true});
+ const newer=await finishSolve(page,()=>page.getByRole('button',{name:'Optimize',exact:true}).click(),{keep:true});
  expect(newer.scenarioId).toBe(first.scenarioId);const scenario=await get<Scenario>(page.request,`/api/scenarios/${first.scenarioId}`),origin=new URL(page.url()).origin;
  expect(scenario.selectedPlanId).toBe(first.id);
  for(const [action,version] of [['review',0],['approve',1]] as const){const r=await page.request.post(`${peer}/api/plans/${first.id}/${action}`,{headers:{origin},data:{version,revision:scenario.revision,acknowledgeExceptions:true}});expect(r.status(),await r.text()).toBe(200);}
