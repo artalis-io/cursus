@@ -1,4 +1,6 @@
-import { useCallback, useEffect, useState } from 'react';
+import {useLibraryList} from '@/hooks/useLibraryList';
+import {LibraryStatus} from '@/components/LibraryStatus';
+import { useCallback, useEffect, useLayoutEffect, useState } from 'react';
 import { GitBranch, Trash2, Pencil, FolderOpen, Download, Upload } from 'lucide-react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { ScrollArea } from '@/components/ui/scroll-area';
@@ -21,54 +23,58 @@ export function ScenariosDialog({ open, onOpenChange, dayId, currentScenarioId, 
   const canRename = usePermission('scenario.rename');
   const canDelete = usePermission('scenario.delete');
   const canImport = usePermission('scenario.import');
-  const [list, setList] = useState<ScenarioSummary[] | null>(null);
+  const fetchList=useCallback((signal:AbortSignal)=>api.scenariosForDay(dayId,signal),[dayId]);
+  const library=useLibraryList<ScenarioSummary>(open,dayId,fetchList);
+  const list=library.items;
+  const canExport=usePermission('workspace.export');
   const [err, setErr] = useState<string | null>(null);
   const [sel, setSel] = useState<Set<string>>(new Set());
   const [editing, setEditing] = useState<string | null>(null);
   const [editLabel, setEditLabel] = useState('');
 
-  const refresh = useCallback(() => {
-    api.scenariosForDay(dayId).then(setList).catch((e) => setErr(describeApiError(e, t)));
-  }, [dayId, t]);
-  useEffect(() => {
-    if (!open) return;
-    let alive = true;
-    setErr(null); setList(null); setSel(new Set()); setEditing(null);
-    api.scenariosForDay(dayId).then((x) => { if (alive) setList(x); }).catch((e) => { if (alive) setErr(describeApiError(e, t)); });
-    return () => { alive = false; };
-  }, [open, dayId, t]);
+  useLayoutEffect(()=>{setErr(null);setSel(new Set());setEditing(null);},[open,library.key]);
+  useEffect(()=>{
+    if(list)setSel(previous=>new Set([...previous].filter(id=>list.some(s=>s.id===id))));
+  },[list]);
+  const refresh=()=>{setErr(null);library.refresh();};
 
   const toggleSel = (id: string) => setSel((prev) => { const n = new Set(prev); if (n.has(id)) n.delete(id); else if (n.size < 3) n.add(id); return n; });
   const rename = async (id: string) => {
-    if (!canRename) return;
+    const currentScope=library.capture();
+    if (!canRename||!library.verified||!currentScope()) return;
     const label = editLabel.trim(); setEditing(null);
     if (!label) return;
     const current = list?.find(s => s.id === id); if (!current) return;
-    try { await api.renameScenario(id, current.revision, label); refresh(); } catch (e) { setErr(describeApiError(e, t)); }
+    try { await api.renameScenario(id, current.revision, label); if(currentScope())refresh(); } catch (e) { if(currentScope())setErr(describeApiError(e, t)); }
   };
   const del = async (id: string) => {
-    if (!canDelete) return;
+    const currentScope=library.capture();
+    if (!canDelete||!library.verified||!currentScope()) return;
     if (!window.confirm(t('scenarios.deleteConfirm'))) return;
     const current = list?.find(s => s.id === id); if (!current) return;
-    try { await api.deleteScenario(id, current.revision); setSel((p) => { const n = new Set(p); n.delete(id); return n; }); refresh(); }
-    catch (e) { setErr(describeApiError(e, t)); }
+    try { await api.deleteScenario(id, current.revision); if(!currentScope())return; setSel((p) => { const n = new Set(p); n.delete(id); return n; }); refresh(); }
+    catch (e) { if(currentScope())setErr(describeApiError(e, t)); }
   };
   const exportOne = async (id: string, label: string) => {
+    const currentScope=library.capture();if(!canExport||!currentScope())return;
     try {
       const bundle = await api.exportScenario(id);
+      if(!currentScope())return;
       const url = URL.createObjectURL(new Blob([JSON.stringify(bundle, null, 2)], { type: 'application/json' }));
       const a = document.createElement('a');
       a.href = url; a.download = `scenario-${label.replace(/[^a-z0-9]+/gi, '-').toLowerCase().slice(0, 40) || id}.json`;
       a.click(); URL.revokeObjectURL(url);
-    } catch (e) { setErr(describeApiError(e, t)); }
+    } catch (e) { if(currentScope())setErr(describeApiError(e, t)); }
   };
   const importFile = async (file: File) => {
-    if (!canImport) return;
+    const currentScope=library.capture();
+    if (!canImport||!library.verified||!currentScope()) return;
     try {
       const bundle = JSON.parse(await file.text());
+      if(!currentScope())return;
       const s = await api.importScenario(bundle);
-      onImport(s); onOpenChange(false);
-    } catch (e) { setErr(e instanceof SyntaxError ? t('scenarios.importBad') : describeApiError(e, t)); }
+      if(currentScope()){onImport(s); onOpenChange(false);}
+    } catch (e) { if(currentScope())setErr(e instanceof SyntaxError ? t('scenarios.importBad') : describeApiError(e, t)); }
   };
 
   const selected = (list ?? []).filter((s) => sel.has(s.id) && s.latest);
@@ -80,29 +86,30 @@ export function ScenariosDialog({ open, onOpenChange, dayId, currentScenarioId, 
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <GitBranch className="h-4 w-4" /> {t('scenarios.title')}
-            {canImport && <label className="ml-auto mr-6 inline-flex cursor-pointer items-center gap-1 rounded border border-divider px-2 py-0.5 text-[11px] font-normal text-muted-foreground hover:bg-accent">
+            {canImport && <label aria-disabled={!library.verified} className="aria-disabled:cursor-not-allowed aria-disabled:opacity-50 ml-auto mr-6 inline-flex cursor-pointer items-center gap-1 rounded border border-divider px-2 py-0.5 text-[11px] font-normal text-muted-foreground hover:bg-accent">
               <Upload className="h-3 w-3" /> {t('scenarios.import')}
-              <input type="file" accept="application/json,.json" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) void importFile(f); e.target.value = ''; }} />
+              <input type="file" disabled={!library.verified} accept="application/json,.json" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) void importFile(f); e.target.value = ''; }} />
             </label>}
           </DialogTitle>
         </DialogHeader>
-        {err && <p className="rounded border border-destructive/40 bg-destructive/10 px-2 py-1 text-xs text-destructive">{err}</p>}
+        {err && <p role="alert" className="rounded border border-destructive/40 bg-destructive/10 px-2 py-1 text-xs text-destructive">{err}</p>}
 
+        <LibraryStatus phase={library.phase} error={library.error} hasSnapshot={list!==null} onRefresh={refresh}/>
         {selected.length >= 2 && <CompareTable selected={selected} currency={currency} t={t} />}
 
-        <ScrollArea className="max-h-[56vh]">
+        <ScrollArea aria-busy={library.pending} data-testid="scenarios-library" className="max-h-[56vh]">
           <div className="space-y-1.5 pr-3">
-            {list == null ? <p className="py-8 text-center text-sm text-muted-foreground">{t('week.loading')}</p>
-              : list.length === 0 ? <p className="py-8 text-center text-sm text-muted-foreground">{t('scenarios.none')}</p>
+            {list == null ? null
+              : list.length === 0 && library.verified ? <p className="py-8 text-center text-sm text-muted-foreground">{t('scenarios.none')}</p>
               : list.map((s) => {
                 const L = s.latest;
                 const isCurrent = s.id === currentScenarioId;
                 return (
-                  <div key={s.id} className={`rounded-md border px-2.5 py-2 ${isCurrent ? 'border-ring ring-1 ring-ring' : 'border-divider'}`}>
+                  <div key={s.id} data-scenario-id={s.id} className={`rounded-md border px-2.5 py-2 ${isCurrent ? 'border-ring ring-1 ring-ring' : 'border-divider'}`}>
                     <div className="flex items-center gap-2">
                       <input type="checkbox" checked={sel.has(s.id)} onChange={() => toggleSel(s.id)} disabled={!L} className="h-3.5 w-3.5 shrink-0" aria-label={t('scenarios.select')} />
                       {canRename && editing === s.id ? (
-                        <Input autoFocus value={editLabel} onChange={(e) => setEditLabel(e.target.value)}
+                        <Input autoFocus disabled={!library.verified} value={editLabel} onChange={(e) => setEditLabel(e.target.value)}
                           onBlur={() => void rename(s.id)} onKeyDown={(e) => { if (e.key === 'Enter') void rename(s.id); if (e.key === 'Escape') setEditing(null); }}
                           className="h-6 flex-1 text-xs" />
                       ) : (
@@ -111,14 +118,14 @@ export function ScenariosDialog({ open, onOpenChange, dayId, currentScenarioId, 
                       {s.kind === 'base' && <Badge variant="outline" className="shrink-0 text-[9px]">{t('scenarios.base')}</Badge>}
                       {isCurrent && <Badge variant="default" className="shrink-0 bg-primary text-[9px]">{t('scenarios.current')}</Badge>}
                       {canRename && !s.supersededBy && s.kind === 'copy' && editing !== s.id && (
-                        <button type="button" onClick={() => { setEditing(s.id); setEditLabel(s.label); }} aria-label={t('scenarios.rename')} className="shrink-0 rounded p-0.5 text-muted-foreground hover:bg-accent hover:text-foreground"><Pencil className="h-3 w-3" /></button>
+                        <button type="button" onClick={() => { setEditing(s.id); setEditLabel(s.label); }} disabled={!library.verified} aria-label={t('scenarios.rename')} className="disabled:opacity-40 shrink-0 rounded p-0.5 text-muted-foreground hover:bg-accent hover:text-foreground"><Pencil className="h-3 w-3" /></button>
                       )}
                       {L && !isCurrent && (
-                        <button type="button" onClick={() => { onOpen(L.planId); onOpenChange(false); }} aria-label={t('scenarios.open')} title={t('scenarios.open')} className="shrink-0 rounded p-0.5 text-muted-foreground hover:bg-accent hover:text-foreground"><FolderOpen className="h-3.5 w-3.5" /></button>
+                        <button type="button" onClick={() => { onOpen(L.planId); onOpenChange(false); }} aria-label={t('scenarios.open')} title={t('scenarios.open')} className="disabled:opacity-40 shrink-0 rounded p-0.5 text-muted-foreground hover:bg-accent hover:text-foreground"><FolderOpen className="h-3.5 w-3.5" /></button>
                       )}
-                      <button type="button" onClick={() => void exportOne(s.id, s.label)} aria-label={t('scenarios.export')} title={t('scenarios.export')} className="shrink-0 rounded p-0.5 text-muted-foreground hover:bg-accent hover:text-foreground"><Download className="h-3.5 w-3.5" /></button>
+                      <button type="button" onClick={() => void exportOne(s.id, s.label)} disabled={!canExport} aria-label={t('scenarios.export')} title={t('scenarios.export')} className="disabled:opacity-40 shrink-0 rounded p-0.5 text-muted-foreground hover:bg-accent hover:text-foreground"><Download className="h-3.5 w-3.5" /></button>
                       {canDelete && !s.supersededBy && !s.inputUpdate && s.kind === 'copy' && (
-                        <button type="button" onClick={() => void del(s.id)} aria-label={t('scenarios.delete')} className="shrink-0 rounded p-0.5 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"><Trash2 className="h-3.5 w-3.5" /></button>
+                        <button type="button" onClick={() => void del(s.id)} disabled={!library.verified} aria-label={t('scenarios.delete')} className="disabled:opacity-40 shrink-0 rounded p-0.5 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"><Trash2 className="h-3.5 w-3.5" /></button>
                       )}
                     </div>
                     <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-0.5 pl-6 text-[11px] text-muted-foreground">

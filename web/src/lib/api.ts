@@ -114,7 +114,7 @@ export const api = {
   routesCsvUrl: (planId: string) => `/api/plans/${planId}/routes.csv`,
   handoffJsonUrl: (planId: string) => `/api/plans/${planId}/handoff.json`,
 
-  plans: (day?: string) => jget<PlanSummary[]>(`/api/plans${day ? `?day=${day}` : ''}`),
+  plans: (day?: string,signal?:AbortSignal) => jget<PlanSummary[]>(`/api/plans${day ? `?day=${encodeURIComponent(day)}` : ''}`,signal),
 
   job: async (id: string,signal?:AbortSignal) => {const job=await jget<Job>(`/api/jobs/${id}`,signal);return String(job.status)==='queued'?{...job,status:'pending' as const}:job;},
   activeJobs:()=>jget<Array<{id:string;scenarioId:string;dayId:string|null;referencePlanId:string|null;status:Job['status'];elapsedSec:number}>>('/api/jobs/active'),
@@ -123,7 +123,7 @@ export const api = {
   compare: (base: string, revised: string) => jget<Comparison>(`/api/compare?base=${base}&revised=${revised}`),
 
   // ---- What-if scenario workspace ----
-  scenariosForDay: (day: string) => jget<ScenarioSummary[]>(`/api/scenarios?day=${day}`),
+  scenariosForDay: (day: string,signal?:AbortSignal) => jget<ScenarioSummary[]>(`/api/scenarios?day=${encodeURIComponent(day)}`,signal),
   renameScenario: (id: string, revision: number, label: string) => jsend<Scenario>(`/api/scenarios/${id}/rename`, 'POST', { label }, revision),
   deleteScenario: (id: string, revision: number) => jsend<{ deleted: boolean }>(`/api/scenarios/${id}`, 'DELETE', undefined, revision),
   exportScenario: (id: string) => jget<ScenarioExport>(`/api/scenarios/${id}/export`),
