@@ -31,7 +31,10 @@ jobs:
           cache-dependency-path: web/package-lock.json
       - run: npm ci
         working-directory: web
-      - run: npx playwright install --with-deps chromium
+      # Hosted Ubuntu already includes Chrome runtime libraries. Avoid an APT
+      # mirror dependency for extra system fonts; the app ships its own font.
+      # Browser launch and the full suite still fail on missing runtime libraries.
+      - run: npx playwright install chromium
         working-directory: web
       - name: Production image, two replicas, real authentication and native solves
         run: python3 deploy/acceptance.py ${{ matrix.loading == 'hard' && '--hard-loading' || '' }} --report /tmp/cursus-acceptance-evidence/report.json
