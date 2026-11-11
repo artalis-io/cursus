@@ -986,7 +986,10 @@ export default function App() {
       <IssuesDialog open={issuesOpen} onOpenChange={setIssuesOpen} plan={plan} onSelect={navigate} />
       <ScenariosDialog open={scenariosOpen} onOpenChange={setScenariosOpen} dayId={dayId} currentScenarioId={scenario.id} currentPlanId={plan.id} onOpen={(id) => { if (okToSwitch()) void reopenPlan(id); }} onImport={(s) => void onImportScenario(s)} />
       <HelpOverlay open={helpOpen} onClose={closeHelp} />
-      {features.planningProfiles&&<ProfilesDialog open={profilesOpen} onOpenChange={setProfilesOpen} plan={plan} scenario={scenario} onBound={s=>void onImportScenario(s)}/>}
+      {features.planningProfiles&&<ProfilesDialog open={profilesOpen} onOpenChange={setProfilesOpen} plan={plan} scenario={scenario} blocked={!!solving||manualBusy||dirty||pendingEdits>0||!!candidate||!!freshnessError||workspaceLoading||!!scenario.supersededBy} onBound={s=>void onImportScenario(s)} onCreated={p=>{
+        if(!writeAccess.current.edit||!writeAccess.current.mounted||scenarioRef.current?.id!==scenario.id||scenarioRef.current?.revision!==scenario.revision||planRef.current?.id!==plan.id)return;
+        setProfilesOpen(false);void reopenPlan(p.id);
+      }}/>}
       {features.acknowledgedHandoff&&<HandoffDialog key={plan.id} open={handoffOpen} onOpenChange={setHandoffOpen} plan={plan} scenario={scenario}/>}
       {toast && (
         <div role="status" className="pointer-events-none fixed bottom-16 left-1/2 z-40 -translate-x-1/2 rounded-md bg-graphite px-3.5 py-2 text-xs font-medium text-graphite-foreground shadow-lg">

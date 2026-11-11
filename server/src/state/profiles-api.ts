@@ -1,3 +1,5 @@
+import {ProfileChanges} from './profile-changes.js';
+import {viewIdentity} from '../access-control.js';
 import {unknownOperatingLimits} from '../operating-limits.js';
 import type { FastifyInstance } from 'fastify';
 import type { StatefulStore } from './postgres.js';
@@ -10,6 +12,24 @@ import type { ManualDatasetLoader } from './manual.js';
 
 export function registerProfileApi(app:FastifyInstance,store:StatefulStore,tenantId:string,load?:ManualDatasetLoader){
   const profiles=new ProfileRepository(store,tenantId);
+  const changes=load?new ProfileChanges(store,tenantId,load):null;
+  let reviewing=false;
+  for(const action of ['preview','apply'] as const)app.post<{Params:{id:string}}>(`/api/scenarios/:id/profile-change-${action}`,{config:{permission:action==='preview'?'plan.evaluate':'scenario.edit'}},async(req,reply)=>{
+    reply.header('Cache-Control','private, no-store');
+    if(!changes)return reply.code(503).send({error:'Trusted admitted source and planning settings are required.'});
+    if(req.headers['if-match']===undefined)return reply.code(428).send({error:'If-Match planning revision is required.'});
+    const revision=expectedRevision(req.headers);if(revision===null)return reply.code(400).send({error:'Quoted planning revision is required.'});
+    if(reviewing)return reply.header('Retry-After','2').code(429).send({error:'Profile evaluation is busy. Try again shortly.'});
+    reviewing=true;
+    try{
+      const actor=req.cursusPrincipal?{...req.cursusPrincipal,role:viewIdentity(req.cursusPrincipal,req.headers.cookie).effectiveRole as typeof req.cursusPrincipal.role}:undefined;
+      if(action==='preview')return await changes.preview(req.params.id,revision,req.body,actor);
+      const b=req.body as {intent?:unknown;previewSha256?:unknown;confirm?:unknown};
+      if(!b||Object.keys(b).some(k=>!['intent','previewSha256','confirm'].includes(k)))return reply.code(400).send({error:'Profile intent, preview and confirmation required.'});
+      return reply.code(201).send(await changes.apply(req.params.id,revision,b.intent,b.previewSha256,actor,b.confirm===true));
+    }catch(e){if(e instanceof WorkflowError)return reply.code(e.status).send({error:e.message});return reply.code(422).send({error:'Profile changes cannot be verified with the available source evidence. Reconcile this workspace first.'});}
+    finally{reviewing=false;}
+  });
   app.get('/api/profiles',{config:{permission:'workspace.read'}},async(_req,reply)=>{
     reply.header('Cache-Control','private, no-store');return profiles.list();
   });

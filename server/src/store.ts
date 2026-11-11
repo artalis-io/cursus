@@ -47,6 +47,7 @@ export interface Scenario {
   datasetBinding?:import('./input-update-contract.js').DatasetBinding;
   inputUpdate?:import('./input-update-contract.js').InputUpdateLineage;
   supersededBy?:{scenarioId:string;planId:string;at:string};
+  profileChange?:import('./profile-change-contract.js').ProfileChangeLineage;
   planningProfiles?: import('./planning-profiles.js').ProfileRef[];
   deliveryDatasetSha256?:string;
   selectedPlanId?: string;

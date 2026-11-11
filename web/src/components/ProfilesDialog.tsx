@@ -1,3 +1,4 @@
+import {ReviewedProfileChange} from './ReviewedProfileChange';
 import {operatingSummary} from '@/lib/operating-limits';
 import {useEffect,useState} from 'react';
 import {Dialog,DialogContent,DialogHeader,DialogTitle} from '@/components/ui/dialog';
@@ -39,25 +40,26 @@ function WindowInput({value,onChange,label}:{value:number;onChange:(value:number
  }}/></label>;
 }
 
-export function ProfilesDialog({open,onOpenChange,plan,scenario,onBound}:{open:boolean;onOpenChange:(value:boolean)=>void;plan:Plan;scenario:Scenario;onBound:(scenario:Scenario)=>void}){
+export function ProfilesDialog({open,onOpenChange,plan,scenario,onBound,onCreated,blocked=false}:{open:boolean;onOpenChange:(value:boolean)=>void;plan:Plan;scenario:Scenario;onBound:(scenario:Scenario)=>void;onCreated:(plan:Plan)=>void;blocked?:boolean}){
  const {lang,t}=useI18n(),hu=lang==='hu';
- const propose=usePermission('profile.propose'),approve=usePermission('profile.approve'),edit=usePermission('scenario.edit');
+ const propose=usePermission('profile.propose'),approve=usePermission('profile.approve'),edit=usePermission('scenario.edit'),create=usePermission('scenario.create'),evaluate=usePermission('plan.evaluate');
  const [rows,setRows]=useState<ProfileRevision[]>([]),[busy,setBusy]=useState(false),[error,setError]=useState<string|null>(null);
+ const [reviewBusy,setReviewBusy]=useState(false);const locked=busy||reviewBusy;
  const [draft,setDraft]=useState<{content:ProfileContent;id?:string;version:number}|null>(null);
  const [chosen,setChosen]=useState<ProfileRef[]>(scenario.planningProfiles??[]);
  useEffect(()=>{if(!open)return;let alive=true;setError(null);setDraft(null);setChosen(scenario.planningProfiles??[]);
   api.profiles().then(rows=>{if(alive)setRows(rows);}).catch(e=>{if(alive)setError(describeApiError(e,t));});return()=>{alive=false;};
  },[open,scenario.id,scenario.revision,scenario.planningProfiles,t]);
- async function run(action:()=>Promise<void>){if(busy)return;setBusy(true);setError(null);try{await action();}catch(e){setError(describeApiError(e,t));}finally{setBusy(false);}}
+ async function run(action:()=>Promise<void>){if(locked)return;setBusy(true);setError(null);try{await action();}catch(e){setError(describeApiError(e,t));}finally{setBusy(false);}}
  function change(change:(copy:ProfileContent)=>void){setDraft(d=>{if(!d)return d;const content=structuredClone(d.content);change(content);return {...d,content};});}
  const title=hu?'Tervezési profilok':'Planning profiles';
  const ordered=(refs:ProfileRef[])=>JSON.stringify([...refs].sort((a,b)=>a.kind<b.kind?-1:a.kind>b.kind?1:0));
  const unchanged=ordered(chosen)===ordered(scenario.planningProfiles??[]);
- return <Dialog open={open} onOpenChange={onOpenChange}><DialogContent className="max-h-[85vh] max-w-4xl overflow-y-auto">
+ return <Dialog open={open} onOpenChange={value=>{if(!locked)onOpenChange(value);}}><DialogContent className="max-h-[85vh] max-w-4xl overflow-y-auto">
   <DialogHeader><DialogTitle>{title}</DialogTitle></DialogHeader>
   <p className="text-xs text-muted-foreground">{hu?'A profil jóváhagyása nem módosít meglévő terveket. Válasszon pontos verziót, majd tervezzen újra.':'Approving a profile does not change existing plans. Choose exact revisions, then Replan.'}</p>
   {error&&<p role="alert" className="text-sm text-destructive">{error}</p>}
-  {propose&&<div className="flex flex-wrap gap-2">{(['fleet','locations'] as const).map(kind=><Button key={kind} variant="outline" size="sm" disabled={busy} onClick={()=>void run(async()=>setDraft({content:await api.profileTemplate(plan.id,kind),version:0}))}>
+  {propose&&<div className="flex flex-wrap gap-2">{(['fleet','locations'] as const).map(kind=><Button key={kind} variant="outline" size="sm" disabled={locked} onClick={()=>void run(async()=>setDraft({content:await api.profileTemplate(plan.id,kind),version:0}))}>
    {kind==='fleet'?(hu?'Új flottaprofil':'New fleet profile'):(hu?'Új helyszínprofil':'New location profile')}</Button>)}</div>}
   {draft&&propose&&<form className="space-y-3 rounded border p-3" onSubmit={e=>{e.preventDefault();void run(async()=>{await api.proposeProfile(draft.content,draft.version,draft.id);setRows(await api.profiles());setDraft(null);});}}>
    <label className="block text-sm">{hu?'Profil neve':'Profile name'}<input required maxLength={120} className="mt-1 w-full rounded border bg-background px-2 py-1" value={draft.content.label} onChange={e=>change(c=>{c.label=e.target.value;})}/></label>
@@ -81,7 +83,7 @@ export function ProfilesDialog({open,onOpenChange,plan,scenario,onBound}:{open:b
     <label className="w-full">{hu?'Indok':'Reason'}<input required maxLength={500} className="ml-1 w-full rounded border bg-background p-1" value={rule.reason} onChange={e=>change(c=>{c.locations![i].reason=e.target.value;})}/></label>
    </fieldset>)}
    </div>
-   <div className="flex gap-2"><Button disabled={busy} type="submit">{hu?'Verzió benyújtása':'Propose revision'}</Button><Button variant="outline" type="button" onClick={()=>setDraft(null)}>{hu?'Mégse':'Cancel'}</Button></div>
+   <div className="flex gap-2"><Button disabled={locked} type="submit">{hu?'Verzió benyújtása':'Propose revision'}</Button><Button variant="outline" type="button" onClick={()=>setDraft(null)}>{hu?'Mégse':'Cancel'}</Button></div>
   </form>}
   <div className="space-y-2">{!rows.length&&<p className="text-sm text-muted-foreground">{hu?'Még nincsenek verziózott profilok. A külső forrásbeállítások változatlanul használhatók.':'No versioned profiles yet. External source settings remain available.'}</p>}
   {rows.map(row=><article key={`${row.id}:${row.revision}`} className="space-y-1 rounded border p-3 text-sm">
@@ -93,11 +95,12 @@ export function ProfilesDialog({open,onOpenChange,plan,scenario,onBound}:{open:b
     {row.body.settings&&<details><summary>{hu?'Díjszabás':'Rate card'}</summary><dl className="grid grid-cols-2 gap-1">{Object.entries(row.body.settings.tariff as Record<string,unknown>).map(([key,value])=><div key={key} className="contents"><dt>{({currency:hu?'Pénznem':'Currency',source:hu?'Forrás':'Source',model:hu?'Díjmodell':'Charging model',perKmDefault:hu?'Alap km-díj':'Default rate / km',fixedPerVehicle:hu?'Fix járműdíj':'Fixed / vehicle',perTripBase:hu?'Alap fuvardíj':'Base / trip',perKm:hu?'Km-díj':'Rate / km',perDrop:hu?'Lerakódíj':'Rate / drop',includedDrops:hu?'Beépített lerakók':'Included drops',perKmByClass:hu?'Km-díj kategóriánként':'Rate / km by class',fixedByClass:hu?'Fix díj kategóriánként':'Fixed rate by class',subcontractorMultiplier:hu?'Alvállalkozói szorzó':'Subcontractor multiplier',ownFleetMultiplier:hu?'Saját flotta szorzó':'Own-fleet multiplier'} as Record<string,string>)[key]??key}</dt><dd className="break-words">{value&&typeof value==='object'?Object.entries(value).map(([name,rate])=>`${name}: ${rate}`).join('; '):String(value)}</dd></div>)}</dl></details>}
    </details>
    <div className="flex flex-wrap gap-2">
-    {propose&&<Button size="sm" variant="outline" disabled={busy} onClick={()=>setDraft({id:row.id,version:row.version,content:{...structuredClone(row.body),reason:''}})}>{hu?'Új verzió':'Propose changes'}</Button>}
-    {approve&&row.active_revision!==row.revision&&<Button size="sm" variant="outline" disabled={busy} onClick={()=>void run(async()=>{await api.activateProfile(row.id,row.revision,row.version);setRows(await api.profiles());})}>{hu?'Jóváhagyás és aktiválás':'Approve and activate'}</Button>}
-    {edit&&row.approved_at&&<label className="flex items-center gap-1 text-xs"><input type="checkbox" disabled={busy||row.body.datasetSha256!==plan.provenance.datasetSha256} checked={chosen.some(p=>p.id===row.id&&p.revision===row.revision)} onChange={e=>setChosen(old=>e.target.checked?[...old.filter(p=>p.kind!==row.kind),{id:row.id,kind:row.kind,revision:row.revision,sha256:row.sha256}]:old.filter(p=>p.id!==row.id||p.revision!==row.revision))}/>{hu?'Használat ebben a szcenárióban':'Use in this scenario'}</label>}
+    {propose&&<Button size="sm" variant="outline" disabled={locked} onClick={()=>setDraft({id:row.id,version:row.version,content:{...structuredClone(row.body),reason:''}})}>{hu?'Új verzió':'Propose changes'}</Button>}
+    {approve&&row.active_revision!==row.revision&&<Button size="sm" variant="outline" disabled={locked} onClick={()=>void run(async()=>{await api.activateProfile(row.id,row.revision,row.version);setRows(await api.profiles());})}>{hu?'Jóváhagyás és aktiválás':'Approve and activate'}</Button>}
+    {edit&&row.approved_at&&<label className="flex items-center gap-1 text-xs"><input type="checkbox" disabled={locked||row.body.datasetSha256!==plan.provenance.datasetSha256} checked={chosen.some(p=>p.id===row.id&&p.revision===row.revision)} onChange={e=>setChosen(old=>e.target.checked?[...old.filter(p=>p.kind!==row.kind),{id:row.id,kind:row.kind,revision:row.revision,sha256:row.sha256}]:old.filter(p=>p.id!==row.id||p.revision!==row.revision))}/>{hu?'Használat ebben a szcenárióban':'Use in this scenario'}</label>}
    </div>
   </article>)}</div>
-  {edit&&<Button disabled={busy||unchanged} onClick={()=>void run(async()=>{const updated=await api.bindProfiles(scenario,chosen);onBound(updated);onOpenChange(false);})}>{hu?'Profilválasztás alkalmazása — újratervezés szükséges':'Apply profile selection — Replan required'}</Button>}
+  {edit&&create&&evaluate&&!unchanged&&<ReviewedProfileChange key={`${plan.id}/${scenario.revision}/${ordered(chosen)}`} plan={plan} scenario={scenario} profiles={chosen} blocked={!open||blocked||busy||plan.scenarioRevision!==scenario.revision} onCreated={onCreated} onBusyChange={setReviewBusy}/>}
+  {edit&&<Button disabled={locked||unchanged||!!plan.manual||!!plan.assignments} onClick={()=>void run(async()=>{const updated=await api.bindProfiles(scenario,chosen);onBound(updated);onOpenChange(false);})}>{hu?'Profilválasztás alkalmazása — újratervezés szükséges':'Apply profile selection — Replan required'}</Button>}
  </DialogContent></Dialog>;
 }

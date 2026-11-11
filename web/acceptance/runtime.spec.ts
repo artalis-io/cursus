@@ -636,7 +636,7 @@ async function shortBudget(page: Page) {
   await page.getByRole('menu').locator('input[type=range]').fill('15');
   await page.keyboard.press('Escape');
 }
-async function finishSolve(page: Page, start: () => Promise<unknown>, options:{keep?:boolean;reload?:boolean}={}): Promise<Plan> {
+async function finishSolve(page: Page, start: () => Promise<unknown>, options:{keep?:boolean;reload?:boolean;differentTariff?:boolean}={}): Promise<Plan> {
   const submitted = page.waitForResponse(response => response.request().method() === 'POST' && /\/api\/scenarios\/[^/]+\/solve$/.test(new URL(response.url()).pathname));
   await start();
   const submission = await submitted;
@@ -678,10 +678,11 @@ async function finishSolve(page: Page, start: () => Promise<unknown>, options:{k
   expect(handoff.summary.totalOrders).toBe(plan.stats.totalOrders);
   expect(handoff.summary.cost.total).toBe(Math.round(plan.cost!.total));
   expect(handoff.routes.flatMap(r => r.stops.map(s => s.orderNo)).sort()).toEqual([...expectedOrders].sort());
-  const comparison = await get<{ deltas: { servedOrders: number; costTotal: number } }>(page.request,
+  const comparison = await get<{ deltas: { servedOrders: number; costTotal: number|null };costComparison:string }>(page.request,
     `/api/compare?base=${(await baseline(page)).id}&revised=${plan.id}`);
   expect(comparison.deltas.servedOrders).toBe(0);
-  expect(Number.isFinite(comparison.deltas.costTotal)).toBe(true);
+  if(options.differentTariff){expect(comparison.costComparison).toBe('different_tariff');expect(comparison.deltas.costTotal).toBeNull();}
+  else{expect(comparison.costComparison).toBe('comparable');expect(Number.isFinite(comparison.deltas.costTotal)).toBe(true);}
   return plan;
 }
 
@@ -1570,6 +1571,91 @@ test('fleet operating profiles preserve explicit unlimited and unknown states in
  const id=(await response.json() as {id:string}).id;
  const profiles=await get<{id:string;body:{settings:{vehicles:{ref:string;operatingLimits:unknown}[]}}}[]>(page.request,`${peer}/api/profiles`);
  expect(profiles.find(p=>p.id===id)!.body.settings.vehicles.find(v=>v.ref===ref)!.operatingLimits).toEqual({shift:{state:'unlimited'},maxTrips:{state:'unlimited'},maxDistanceKm:{state:'unknown'},maxDurationSec:{state:'configured',value:1800}});
+});
+
+async function approvedReviewProfile(page:Page,plan:Plan){
+ const response=await page.request.get(`/api/profiles/template?planId=${plan.id}&kind=fleet`);expect(response.status()).toBe(200);
+ const content=await response.json() as import('../../server/src/planning-profile-contract').ProfileContent;
+ content.label='Reviewed manual fleet '+Date.now();content.reason='Verified public rate update';
+ const tariff=content.settings!.tariff as {perKmDefault:number;perKm:number;perKmByClass:Record<string,number>};
+ tariff.perKmDefault+=10;tariff.perKm+=10;for(const key in tariff.perKmByClass)tariff.perKmByClass[key]+=10;
+ const headers={origin:new URL(page.url()).origin,'if-match':'"0"'};
+ const proposed=await page.request.post('/api/profiles',{headers,data:{content}});expect(proposed.status()).toBe(201);
+ const ref=await proposed.json() as import('../../server/src/planning-profile-contract').ProfileRef&{version:number};
+ const active=await page.request.post(`/api/profiles/${ref.id}/activate`,{headers:{...headers,'if-match':`"${ref.version}"`},data:{revision:ref.revision}});expect(active.status()).toBe(200);
+ return {ref,label:content.label};
+}
+async function retainedProfileSource(page:Page){
+ const base=await baseline(page);await page.getByRole('button',{name:'Manual planning',exact:true}).click();await manualStop(page,base,'PUBLIC-2');
+ await page.getByRole('button',{name:'Move to vehicle…',exact:true}).click();
+ const dialog=page.getByRole('dialog',{name:'Manual planning',exact:true});await dialog.getByRole('combobox',{name:'Position',exact:true}).selectOption('');
+ const plan=await applyManualDialog(page);independentManualKpis(plan);return plan;
+}
+for(const hu of [false,true])test(`reviewed profiles: ${hu?'Planner HU':'Admin EN'} preserves manual work, previews costs and creates a distinct draft${hu?'':' after a lost response'}`,async({page})=>{
+ await login(page);await shortBudget(page);const profile=await approvedReviewProfile(page,await baseline(page));
+ if(hu){await page.getByRole('button',{name:'View as Planner',exact:true}).click();await expect(page.getByRole('button',{name:'Return to Admin',exact:true})).toBeVisible();}
+ const source=await retainedProfileSource(page),sourceScenario=await get<Scenario>(page.request,`/api/scenarios/${source.scenarioId}`),before=await get<Plan[]>(page.request,'/api/plans');
+ if(hu){await page.getByRole('button',{name:'HU',exact:true}).click();const menu=await openWorkspaceMenu(page,'Előkészítés');await menu.getByRole('menuitem',{name:'Tervezési profilok',exact:true}).click();}
+ else await selectWorkspaceAction(page,'Planning profiles');
+ const dialog=page.getByRole('dialog',{name:hu?'Tervezési profilok':'Planning profiles',exact:true}),card=dialog.locator('article').filter({hasText:profile.label});
+ await card.getByRole('checkbox',{name:hu?'Használat ebben a szcenárióban':'Use in this scenario',exact:true}).check();
+ const section=dialog.locator('[data-profile-change]');await section.locator(':scope > summary').click();
+ await section.getByRole('textbox',{name:hu?'Profilváltás indoka':'Profile change reason',exact:true}).fill('Reviewed public planning settings');
+ const previewButton=section.getByRole('button',{name:hu?'Profilváltás előnézete':'Preview profile changes',exact:true});await previewButton.click();
+ const preview=section.locator('[data-profile-change-preview]');await expect(preview).toBeVisible();await expect(preview.locator('[data-profile-conflict]')).toHaveCount(0);
+ expect((await get<Plan[]>(page.request,`${peer}/api/plans`)).length).toBe(before.length);
+ // Any setting edit discards the old proof and confirmation.
+ await section.getByRole('textbox',{name:hu?'Profilváltás indoka':'Profile change reason',exact:true}).fill('Reviewed public planning settings, confirmed');await expect(preview).toHaveCount(0);
+ await previewButton.click();await expect(preview).toBeVisible();
+ if(await section.getByRole('checkbox',{name:hu?/Tudomásul veszem/:/I acknowledge an invalid draft/}).count()){
+  await section.getByRole('checkbox',{name:hu?/Tudomásul veszem/:/I acknowledge an invalid draft/}).check();await previewButton.click();await expect(preview).toBeVisible();
+ }
+ await page.setViewportSize({width:600,height:850});expect(await dialog.evaluate(el=>el.scrollWidth<=el.clientWidth+1)).toBe(true);
+ await section.getByRole('checkbox',{name:hu?/Új, külön jóváhagyást/:/Create a new draft requiring its own approval/}).check();
+ const apply=section.getByRole('button',{name:hu?'Tervezet létrehozása új profilokkal':'Create draft with new profiles',exact:true});
+ let committed: {plan:Plan;scenario:Scenario}|null=null;
+ if(!hu){
+  let observed!:()=>void,release!:()=>void;const seen=new Promise<void>(r=>{observed=r;}),pending=new Promise<void>(r=>{release=r;});
+  await page.route('**/profile-change-apply',async route=>{const response=await route.fetch();expect(response.status(),await response.text()).toBe(201);committed=await response.json();observed();await pending;await route.abort('failed');});
+  await apply.click();await seen;try{await expect(card.getByRole('checkbox',{name:'Use in this scenario',exact:true})).toBeDisabled();await page.keyboard.press('Escape');await expect(dialog).toBeVisible();}finally{release();}await expect(section.getByRole('alert')).toBeVisible();await expect(apply).toBeEnabled();await page.unroute('**/profile-change-apply');
+ }
+ const response=page.waitForResponse(r=>r.request().method()==='POST'&&r.url().endsWith('/profile-change-apply'));await apply.click();const applied=await response;expect(applied.status()).toBe(201);
+ const result=await applied.json() as {scenario:Scenario;plan:Plan};if(committed)expect(result.plan.id).toBe((committed as {plan:Plan}).plan.id);
+ await expect(dialog).toHaveCount(0);await expectPlanTotals(page,result.plan);
+ const bookmarkKey=await savedWorkspaceKey(page);await expect.poll(()=>page.evaluate(k=>JSON.parse(localStorage.getItem(k)??'null')?.planId,bookmarkKey)).toBe(result.plan.id);
+ expect(result.plan.scenarioId).not.toBe(source.scenarioId);expect(result.plan.stats).toEqual({...source.stats,solveElapsedSeconds:null});
+ expect(result.plan.vehicles.map(v=>[v.id,v.trips.map(t=>[t.manualTripId,t.stops.map(s=>s.requestId)])])).toEqual(source.vehicles.map(v=>[v.id,v.trips.map(t=>[t.manualTripId,t.stops.map(s=>s.requestId)])]));expect(result.plan.manual!.layout.history).toEqual(source.manual!.layout.history);expect(result.plan.cost!.total).toBeGreaterThan(source.cost!.total);
+ expect((await get<Plan>(page.request,`${peer}/api/plans/${result.plan.id}`)).cost).toEqual(result.plan.cost);
+ expect(await get<Scenario>(page.request,`${peer}/api/scenarios/${source.scenarioId}`)).toEqual(sourceScenario);expect(await get<Plan>(page.request,`${peer}/api/plans/${source.id}?geometry=stored`)).toEqual(source);
+ expect((await get<Plan[]>(page.request,'/api/plans')).length).toBe(before.length+1);
+ expect((await get<Workflow>(page.request,`/api/plans/${result.plan.id}/workflow`)).state).toBe('draft');
+ await page.reload();await expectPlanTotals(page,result.plan);
+ if(hu)await page.getByRole('button',{name:'EN',exact:true}).click();
+ const solved=await finishSolve(page,()=>page.getByRole('button',{name:'Replan',exact:true}).click(),{differentTariff:true});
+ expect(solved.provenance.profileChange).toEqual(result.plan.provenance.profileChange);expect(solved.provenance.validation.valid).toBe(true);
+ const requestId=Number(Object.keys(source.manual!.layout.decisions)[0]);const retained=source.manual!.layout.decisions[String(requestId)] as {kind:string;vehicleId:number};
+ expect(solved.vehicles.find(v=>v.trips.some(t=>t.stops.some(s=>s.requestId===requestId)))!.id).toBe(retained.vehicleId);
+});
+
+test('reviewed profiles: stale peer edits invalidate the preview and cannot create a draft',async({page})=>{
+ await login(page);const profile=await approvedReviewProfile(page,await baseline(page)),source=await retainedProfileSource(page);
+ await selectWorkspaceAction(page,'Planning profiles');const dialog=page.getByRole('dialog',{name:'Planning profiles',exact:true});
+ await dialog.locator('article').filter({hasText:profile.label}).getByRole('checkbox',{name:'Use in this scenario',exact:true}).check();
+ const section=dialog.locator('[data-profile-change]');await section.locator(':scope > summary').click();await section.getByRole('textbox',{name:'Profile change reason',exact:true}).fill('Stale review test');
+ await section.getByRole('button',{name:'Preview profile changes',exact:true}).click();await expect(section.locator('[data-profile-change-preview]')).toBeVisible();
+ if(await section.getByRole('checkbox',{name:/I acknowledge an invalid draft/}).count()){await section.getByRole('checkbox',{name:/I acknowledge an invalid draft/}).check();await section.getByRole('button',{name:'Preview profile changes',exact:true}).click();await expect(section.locator('[data-profile-change-preview]')).toBeVisible();}
+ await section.getByRole('checkbox',{name:/Create a new draft requiring its own approval/}).check();
+ const before=await get<Plan[]>(page.request,'/api/plans');
+ const edit=await page.request.post(`${peer}/api/scenarios/${source.scenarioId}/edit`,{headers:{origin:new URL(page.url()).origin,'if-match':`"${source.scenarioRevision}"`},data:{edit:{op:'setVehicleConstraint',vehicleId:source.vehicles[0]!.id,patch:{maxDistanceKm:10000}}}});expect(edit.status()).toBe(200);
+ const response=page.waitForResponse(r=>r.request().method()==='POST'&&r.url().endsWith('/profile-change-apply'));await section.getByRole('button',{name:'Create draft with new profiles',exact:true}).click();expect((await response).status()).toBe(409);
+ await expect(section.getByRole('alert')).toBeVisible();await expect(section.locator('[data-profile-change-preview]')).toHaveCount(0);expect((await get<Plan[]>(page.request,'/api/plans')).length).toBe(before.length);
+});
+
+test('reviewed profiles: Reviewer and Admin View as Reviewer cannot preview or create through either replica',async({page})=>{
+ await login(page);await page.getByRole('button',{name:'View as Reviewer',exact:true}).click();
+ await selectWorkspaceAction(page,'Planning profiles');const dialog=page.getByRole('dialog',{name:'Planning profiles',exact:true});await expect(dialog.locator('[data-profile-change]')).toHaveCount(0);
+ const base=await baseline(page);
+ for(const origin of ['',peer])for(const suffix of ['preview','apply'])expect((await page.request.post(`${origin}/api/scenarios/${base.scenarioId}/profile-change-${suffix}`,{headers:{origin:new URL(page.url()).origin,'if-match':`"${base.scenarioRevision}"`},data:{}})).status()).toBe(403);
 });
 
 test('Planner may propose profiles but cannot activate them; Reviewer cannot propose',async({page})=>{

@@ -249,6 +249,7 @@ export async function solveConvertedDataset(objects: ObjectStore, tenantId: stri
       plan.physicalLoading=certifyLoading(plan,scenario,day.physicalLoading,day.physicalLoadingSha256!,createHash('sha256').update(JSON.stringify(native.request)).digest('hex'),solverSha256,solution.loading,request,nativeCapabilities);
     }
     if(scenario.inputUpdate)plan.provenance.inputUpdate=structuredClone(scenario.inputUpdate);
+    if(scenario.profileChange)plan.provenance.profileChange=structuredClone(scenario.profileChange);
     if(applied)plan.provenance.tariffSha256=tariffIdentity(policy!.tariff);
     if(incumbent)plan.provenance.warmStart={planId:incumbent.id,used:seeded};
     if (scenario.planningPolicy) plan.provenance.planningPolicy = structuredClone(scenario.planningPolicy);

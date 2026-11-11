@@ -61,6 +61,8 @@ export const api = {
   profileTemplate:(planId:string,kind:ProfileKind)=>jget<ProfileContent>(`/api/profiles/template?planId=${encodeURIComponent(planId)}&kind=${kind}`),
   proposeProfile:(content:ProfileContent,version:number,id?:string)=>jsend<ProfileRef&{version:number}>(id?`/api/profiles/${encodeURIComponent(id)}/revisions`:'/api/profiles','POST',{content},version),
   activateProfile:(id:string,revision:number,version:number)=>jsend<ProfileRef&{version:number}>(`/api/profiles/${encodeURIComponent(id)}/activate`,'POST',{revision},version),
+  profileChangePreview:(scenario:Scenario,intent:import('../../../server/src/profile-change-contract').ProfileChangeIntent)=>jsend<import('../../../server/src/profile-change-contract').ProfileChangePreview>(`/api/scenarios/${encodeURIComponent(scenario.id)}/profile-change-preview`,'POST',intent,scenario.revision),
+  profileChangeApply:(scenario:Scenario,intent:import('../../../server/src/profile-change-contract').ProfileChangeIntent,previewSha256:string)=>jsend<{scenario:Scenario;plan:Plan}>(`/api/scenarios/${encodeURIComponent(scenario.id)}/profile-change-apply`,'POST',{intent,previewSha256,confirm:true},scenario.revision),
   bindProfiles:(scenario:Scenario,profiles:ProfileRef[])=>jsend<Scenario>(`/api/scenarios/${encodeURIComponent(scenario.id)}/profiles`,'POST',{profiles},scenario.revision),
   selectPlan:(id:string,revision:number,planId:string,selectionVersion:number,acknowledgeIncomplete=false)=>jsend<Scenario>(`/api/scenarios/${encodeURIComponent(id)}/select-plan`,'POST',{planId,selectionVersion,acknowledgeIncomplete},revision),
   manualContext:(id:string)=>jget<import('../types').ManualContext>(`/api/plans/${encodeURIComponent(id)}/manual-context`),

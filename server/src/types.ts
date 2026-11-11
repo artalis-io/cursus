@@ -180,6 +180,7 @@ export interface PlanUnassigned {
 }
 
 export interface PlanProvenance {
+  profileChange?:import('./profile-change-contract.js').ProfileChangeLineage;
   fleet?:import('./fleet-contract.js').FleetSnapshot;
   costing?:import('./cost-review-contract.js').CostingSnapshot;
   inputUpdate?:import('./input-update-contract.js').InputUpdateLineage;

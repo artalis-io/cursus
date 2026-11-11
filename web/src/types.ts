@@ -7,6 +7,8 @@
 export type PlanSource = 'saved' | 'live' | 'sample';
 
 export interface PlanProvenance {
+  profileChange?:import('../../server/src/profile-change-contract').ProfileChangeLineage;
+
   fleet?:import('../../server/src/fleet-contract').FleetSnapshot;
   costing?:import('../../server/src/cost-review-contract').CostingSnapshot;
   inputUpdate?: import('../../server/src/input-update-contract').InputUpdateLineage;
@@ -211,6 +213,8 @@ export interface VehicleOverride {
 export type VehicleConstraintPatch = Omit<VehicleOverride, 'vehicleId'>;
 
 export interface Scenario {
+  profileChange?:import('../../server/src/profile-change-contract').ProfileChangeLineage;
+
   datasetBinding?:import('../../server/src/input-update-contract').DatasetBinding;
   inputUpdate?:import('../../server/src/input-update-contract').InputUpdateLineage;
   supersededBy?:{scenarioId:string;planId:string;at:string};
