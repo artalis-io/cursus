@@ -74,7 +74,7 @@ export function reconcileInputs(source:Plan,oldScenario:Scenario,old:ManualDatas
  // Source history remains immutable on its source plan. Namespace transitions
  // are recorded by lineage, not by rewriting old events onto new numeric IDs.
  scenario.manualDecisions={datasetSha256:target.day.datasetRequestSha256!,decisions,requestIds:newRows.map(r=>r.id),
-  tariff:structuredClone(target.tariff),tariffSha256:tariffIdentity(target.tariff),fleetInfo:structuredClone([...target.vehicleInfo]),reloadSeconds:[...target.reloadSeconds],
+  tariff:structuredClone(target.tariff),tariffSha256:tariffIdentity(target.tariff),fleetInfo:structuredClone([...target.vehicleInfo]),reloadSeconds:[...target.reloadSeconds],operatingLimits:[...(target.operatingLimits??[])],
   unavailableVehicleIds:[...(target.unavailableVehicleIds??[])],origins,history:[]};
  const scaffold=mapSolutionToPlan({day:target.day,request:target.day.request,solution:target.day.solution,enrichment:target.day.enrichment,vehicleInfo:target.vehicleInfo,
   tariff:target.tariff,scenarioId:scenario.id,scenarioRevision:scenario.revision,planId:'input-update-preview',createdAt:source.createdAt,source:'live'});

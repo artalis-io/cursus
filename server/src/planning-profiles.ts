@@ -25,7 +25,7 @@ export function parseProfile(value: unknown): ProfileContent {
       throw new Error('Unsupported tariff fields.');
     manualSettings(settings);
     for(const vehicle of settings.vehicles as unknown[]){
-      if(!record(vehicle)||!keys(vehicle,['id','ref','vehicleClass','isSubcontractor','tonnage','hasTailLift','reloadSec','available','capacityKg','capacityPallets','configurationRef'])||
+      if(!record(vehicle)||!keys(vehicle,['id','ref','vehicleClass','isSubcontractor','tonnage','hasTailLift','reloadSec','available','capacityKg','capacityPallets','configurationRef','operatingLimits'])||
         ['capacityKg','capacityPallets'].some(key=>vehicle[key]!==undefined&&(typeof vehicle[key]!=='number'||!Number.isFinite(vehicle[key])||Number(vehicle[key])<=0))||
         vehicle.configurationRef!==undefined&&!text(vehicle.configurationRef,128))throw new Error('Invalid fleet capacity or configuration.');
       if(vehicle.available!==false&&(vehicle.tonnage===null||typeof vehicle.capacityKg==='number'&&vehicle.capacityKg>Number(vehicle.tonnage)*1000))

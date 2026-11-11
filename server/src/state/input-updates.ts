@@ -64,7 +64,7 @@ export class InputUpdates{
   const profileRows=await new ProfileRepository(this.store,this.tenant).list();
   const fleetRows=target.day.request.vehicles.map(v=>{const info=old.vehicleInfo.get(v.ref.replace(/[^a-z0-9]/gi,'').toUpperCase()),reload=old.reloadSeconds.get(v.id);
    return info&&reload!==undefined?{id:v.id,ref:v.ref,vehicleClass:info.vehicleClass,isSubcontractor:info.isSubcontractor,tonnage:info.tonnage,hasTailLift:info.hasTailLift,reloadSec:reload,
-    capacityKg:v.capacity[0],capacityPallets:v.capacity[1],available:!(old.unavailableVehicleIds??[]).includes(v.id)}:null;});
+    capacityKg:v.capacity[0],capacityPallets:v.capacity[1],operatingLimits:old.operatingLimits?.get(v.id),available:!(old.unavailableVehicleIds??[]).includes(v.id)}:null;});
   const locations=new Map<number,unknown>();let consistent=true;
   for(const order of target.day.request.requests){const task=target.day.request.tasks.find(t=>t.id===order.delivery_task_id)!,info=target.day.deliveryEnrichment?.get(order.id)??target.day.enrichment.get(task.ref)!;
    const rule={locationId:task.location_id,maxGrossWeightKg:info.maxTonnage===null?null:info.maxTonnage*1000,requiresTailLift:info.requiresTailLift,serviceSeconds:task.service_seconds,
@@ -114,7 +114,7 @@ export class InputUpdates{
    LEFT JOIN handoff_intents c ON c.tenant_id=h.tenant_id AND c.id=h.current_intent WHERE h.tenant_id=$1 AND h.scenario_id=ANY($2::text[]) AND
    (a.operation IS NOT NULL AND a.operation<>'cancel' OR c.state IN ('queued','sending','retrying','needs_reconciliation')) LIMIT 1`,[this.tenant,scope.map(s=>s.id)]);
   if(pending.rowCount)result.diff.conflicts.push({code:'downstream_commitment',message:'Accepted, pending or uncertain handoff: cancel/reconcile downstream instructions first.'});
-  const hash=planDigest({intent,sourcePlan:source.plan,scope,target:target.row,profiles:target.profiles,context:{fleet:[...context.vehicleInfo],reload:[...context.reloadSeconds],tariff:context.tariff},diff:result.diff,stats:result.plan.stats,validation:result.plan.provenance.validation});
+  const hash=planDigest({intent,sourcePlan:source.plan,scope,target:target.row,profiles:target.profiles,context:{fleet:[...context.vehicleInfo],reload:[...context.reloadSeconds],operating:[...(context.operatingLimits??[])],tariff:context.tariff},diff:result.diff,stats:result.plan.stats,validation:result.plan.provenance.validation});
   return {source,target,scope,result,hash};
  }
  async preview(id:string,revision:number,body:unknown,actor?:Principal){

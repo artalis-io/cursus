@@ -1,3 +1,4 @@
+import {assertOperatingBounds} from './operating-limits.js';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { resolve } from 'node:path';
@@ -127,6 +128,11 @@ export function applyVehicleOverrides(request: SurgeRequest, scenario: Scenario)
     if (o.maxTrips != null) v.max_trips = o.maxTrips;
     if (o.maxDistanceKm != null) v.max_distance = o.maxDistanceKm * 1000;
     if (o.maxDurationMin != null) v.max_duration = o.maxDurationMin * 60;
+    if(v.approved_operating&&(o.shiftEarlySec!=null||o.shiftLateSec!=null)){
+      v.shift_early??=0;v.shift_late??=172800;
+      if(v.shift_early>v.shift_late)throw new Error('Scenario shift start must not follow its end.');
+    }
+    assertOperatingBounds(v);
   }
 }
 

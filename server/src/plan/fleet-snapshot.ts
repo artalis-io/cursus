@@ -7,7 +7,8 @@ export function captureFleet(plan:Plan,source:FleetSource):FleetSnapshot {
   return {version:1,planId:plan.id,scenarioId:plan.scenarioId,scenarioRevision:plan.scenarioRevision,inputSha256:plan.provenance.inputSha256,
     scope:source.complete?'complete':'eligible_only',vehicles:source.vehicles.map(v=>({id:v.id,ref:v.ref,
       availability:source.unavailableVehicleIds?.includes(v.id)?'unavailable':source.excludedVehicleIds?.includes(v.id)?'excluded':'available',
-      capacityKg:positive(v.capacity[0]),capacityPallets:positive(v.capacity[1]),shiftStartSec:nonnegative(v.shift_early),shiftEndSec:positive(v.shift_late),
+      ...(v.operating_limits?{operatingLimits:structuredClone(v.operating_limits)}:{}),
+      capacityKg:positive(v.capacity[0]),capacityPallets:positive(v.capacity[1]),shiftStartSec:nonnegative(v.shift_early),shiftEndSec:v.operating_limits?.shift.state==='configured'?nonnegative(v.shift_late):positive(v.shift_late),
       maxDurationSec:positive(v.max_duration),maxDistanceKm:positive(v.max_distance)==null?null:v.max_distance!/1000,maxTrips:positive(v.max_trips),reloadSec:nonnegative(v.trip_reload_seconds)}))};
 }
 /** Input replacement changes IDs only after its new facts have been materialized. */

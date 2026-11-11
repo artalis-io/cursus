@@ -7,6 +7,7 @@ RUN npm ci
 COPY web/ ./
 COPY server/src/cost-review-contract.ts /src/server/src/cost-review-contract.ts
 COPY server/src/fleet-contract.ts /src/server/src/fleet-contract.ts
+COPY server/src/operating-limits.ts /src/server/src/operating-limits.ts
 COPY server/src/fleet-utilization.ts /src/server/src/fleet-utilization.ts
 COPY server/src/schedule-review.ts /src/server/src/schedule-review.ts
 COPY server/src/plan/timing.ts /src/server/src/plan/timing.ts

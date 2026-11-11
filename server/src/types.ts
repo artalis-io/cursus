@@ -14,6 +14,8 @@ export interface SurgeTask {
 }
 
 export interface SurgeRequestVehicle {
+  approved_operating?:import('./planning-profile-contract.js').OperatingLimits;
+  operating_limits?:import('./planning-profile-contract.js').OperatingLimits;
   approved_capacity?:number[]; // application-only upper bounds from an approved profile
   trip_reload_seconds?:number;
   id: number;

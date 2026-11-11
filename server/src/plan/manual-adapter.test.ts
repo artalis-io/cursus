@@ -170,3 +170,12 @@ test('approval policy requires current fleet and tariff evidence and is scoped t
   f.context.datasetSha256='b'.repeat(64);assert.deepEqual(fleetPolicyBlockers(f.parent,f.context),[]);
   delete f.parent.provenance.datasetSha256;assert.ok(fleetPolicyBlockers(f.parent,f.context).length);
 });
+
+test('retained manual operating limits cannot drift between validation and replan',()=>{
+ const f=manualFixture();
+ f.context.operatingLimits=new Map([[7,{shift:{state:'configured',startSec:0,endSec:10000},maxTrips:{state:'configured',value:2},maxDistanceKm:{state:'unlimited'},maxDurationSec:{state:'unknown'}}]]);
+ f.scenario.manualDecisions={datasetSha256:'a'.repeat(64),decisions:{},tariff:structuredClone(f.context.tariff),tariffSha256:tariffIdentity(f.context.tariff),fleetInfo:structuredClone([...f.context.vehicleInfo]),reloadSeconds:[...f.context.reloadSeconds],operatingLimits:structuredClone([...f.context.operatingLimits])};
+ assert.doesNotThrow(()=>prepareManualInput(f.parent,f.scenario,f.context));
+ f.context.operatingLimits.get(7)!.maxTrips={state:'unlimited'};
+ assert.throws(()=>prepareManualInput(f.parent,f.scenario,f.context),/settings changed/);
+});

@@ -1,3 +1,4 @@
+import {unknownOperatingLimits} from '../operating-limits.js';
 import type { FastifyInstance } from 'fastify';
 import type { StatefulStore } from './postgres.js';
 import { ProfileRepository } from './profiles.js';
@@ -27,7 +28,7 @@ export function registerProfileApi(app:FastifyInstance,store:StatefulStore,tenan
         const info=context.vehicleInfo.get(v.ref.replace(/[^a-z0-9]/gi,'').toUpperCase());
         if(!info)throw new Error('Trusted vehicle evidence missing.');
         return {id:v.id,ref:v.ref,vehicleClass:info.vehicleClass,isSubcontractor:info.isSubcontractor,tonnage:info.tonnage,
-          hasTailLift:info.hasTailLift,reloadSec:context.reloadSeconds.get(v.id),available:!context.unavailableVehicleIds?.includes(v.id),capacityKg:v.capacity[0],capacityPallets:v.capacity[1]};
+          hasTailLift:info.hasTailLift,reloadSec:context.reloadSeconds.get(v.id),available:!context.unavailableVehicleIds?.includes(v.id),capacityKg:v.capacity[0],capacityPallets:v.capacity[1],operatingLimits:context.operatingLimits?.get(v.id)??unknownOperatingLimits()};
       });
       return {...common,settings:{datasetSha256,vehicles,tariff:context.tariff}};
     }

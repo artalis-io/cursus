@@ -1,3 +1,4 @@
+import {applyOperatingLimits} from '../operating-limits.js';
 import type { LoadedDay } from '../data/dataset.js';
 import type { ApprovedProfile } from '../planning-profiles.js';
 import { parseProfile, profileDigest } from '../planning-profiles.js';
@@ -29,9 +30,11 @@ export function applyProfileSnapshots(original: LoadedDay, profiles: ApprovedPro
         vehicle.gross_weight_kg=info.tonnage===null?0:info.tonnage*1000;
         vehicle.has_tail_lift=info.hasTailLift;vehicle.trip_reload_seconds=settings.reloadSeconds.get(vehicle.id)!;
         const entry=content.settings!.vehicles.find(v=>v.id===vehicle.id)!;
+        if(entry.ref.replace(/[^a-z0-9]/gi,'').toUpperCase()!==vehicle.ref.replace(/[^a-z0-9]/gi,'').toUpperCase())throw new Error('Profile vehicle ID/registration binding mismatch.');
         vehicle.capacity=[entry.capacityKg??vehicle.capacity[0]!,entry.capacityPallets??vehicle.capacity[1]!];
         if(entry.available!==false&&(info.tonnage===null||vehicle.capacity[0]!>info.tonnage*1000))throw new Error('Fleet profile payload exceeds verified GVW.');
         vehicle.approved_capacity=[...vehicle.capacity];
+        if(entry.operatingLimits)applyOperatingLimits(vehicle,entry.operatingLimits);
       }
     }else{
       const tasks=new Map(day.request.tasks.map(t=>[t.id,t]));

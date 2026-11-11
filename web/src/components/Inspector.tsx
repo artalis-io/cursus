@@ -1,3 +1,4 @@
+import {operatingSummary} from '@/lib/operating-limits';
 import {deadlineSlack} from '../../../server/src/schedule-review';
 import { Ban, CheckCircle2, AlertTriangle, Pin, PinOff, X, RotateCcw, SlidersHorizontal, ChevronRight, ChevronUp, ChevronDown, ArrowLeft, ArrowRight, Lock, LockOpen, GripVertical, ListOrdered, Loader2 } from 'lucide-react';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -13,7 +14,7 @@ import {SelectionTrail} from './SelectionTrail';
 import {ShipmentDetails} from '@/components/ShipmentDetails';
 import {selectedStop} from '@/lib/stop-selection';
 import { api } from '@/lib/api';
-import { useT } from '@/i18n';
+import { useI18n, useT } from '@/i18n';
 import { useEffect, useRef, useState } from 'react';
 import type { Plan, Scenario, Selection, Vehicle, Trip, Stop, ValidationViolation, VehicleConstraintPatch } from '@/types';
 import { usePermission } from '@/permissions';
@@ -331,11 +332,11 @@ function AssignmentSection({ plan, scenario, orderNo,requestId, currentVehicleId
 /* Staged per-vehicle constraint editor: capacity, shift window, and max trips/
  * distance/duration. Blank fields keep the dataset default; changes stage on the
  * scenario and apply on the next Replan. */
-function ConstraintsEditor({ vehicle, override, onSet, onClear, disabled }: {
-  vehicle: Vehicle; override?: import('@/types').VehicleOverride;
+function ConstraintsEditor({ vehicle, limits, override, onSet, onClear, disabled }: {
+  vehicle: Vehicle; limits?:import('../../../server/src/fleet-contract').FleetFact; override?: import('@/types').VehicleOverride;
   onSet: (patch: VehicleConstraintPatch) => void; onClear: () => void; disabled?: boolean;
 }) {
-  const t = useT();
+  const t = useT();const {lang}=useI18n();
   const [open, setOpen] = useState(Boolean(override));
   const timeToSec = (v: string): number | undefined => { if (!v) return undefined; const [h, m] = v.split(':').map(Number); return h * 3600 + m * 60; };
   const secToTime = (s?: number): string => (s == null ? '' : hhmm(s));
@@ -355,10 +356,12 @@ function ConstraintsEditor({ vehicle, override, onSet, onClear, disabled }: {
             <Num label={t('inspector.capPlt')} def={override?.capacityPallets} ph={vehicle.capacityPallets} onCommit={(v) => onSet({ capacityPallets: v })} disabled={disabled} />
             <Field2 label={t('inspector.shiftStart')}><input type="time" disabled={disabled} defaultValue={secToTime(override?.shiftEarlySec)} onChange={(e) => onSet({ shiftEarlySec: timeToSec(e.target.value) })} className="h-7 w-full rounded border border-divider bg-card px-1 text-xs disabled:opacity-40" /></Field2>
             <Field2 label={t('inspector.shiftEnd')}><input type="time" disabled={disabled} defaultValue={secToTime(override?.shiftLateSec)} onChange={(e) => onSet({ shiftLateSec: timeToSec(e.target.value) })} className="h-7 w-full rounded border border-divider bg-card px-1 text-xs disabled:opacity-40" /></Field2>
-            <Num label={t('inspector.maxTrips')} def={override?.maxTrips} ph={vehicle.tripCount} onCommit={(v) => onSet({ maxTrips: v })} disabled={disabled} />
-            <Num label={t('inspector.maxDist')} def={override?.maxDistanceKm} ph={Math.round(vehicle.distanceKm)} onCommit={(v) => onSet({ maxDistanceKm: v })} disabled={disabled} />
+            <Num label={t('inspector.maxTrips')} def={override?.maxTrips} ph={limits?.maxTrips??undefined} onCommit={(v) => onSet({ maxTrips: v })} disabled={disabled} />
+            <Num label={t('inspector.maxDist')} def={override?.maxDistanceKm} ph={limits?.maxDistanceKm??undefined} onCommit={(v) => onSet({ maxDistanceKm: v })} disabled={disabled} />
+            <Num label={lang==='hu'?'Max. időtartam (perc)':'Maximum duration (minutes)'} def={override?.maxDurationMin} ph={limits?.maxDurationSec==null?undefined:limits.maxDurationSec/60} onCommit={v=>onSet({maxDurationMin:v})} disabled={disabled}/>
           </div>
           <p className="text-[10px] text-muted-foreground">{t('inspector.constraintsHint')}</p>
+          {limits?.operatingLimits&&<p className="text-[10px] text-muted-foreground">{operatingSummary(limits.operatingLimits,lang==='hu')}</p>}
           {has && (
             <button type="button" onClick={onClear} className="flex w-full items-center justify-center gap-1.5 rounded border border-divider px-2 py-1 text-[11px] text-muted-foreground hover:bg-accent">
               <X className="h-3 w-3" /> {t('inspector.clearConstraints')}
@@ -373,10 +376,10 @@ function ConstraintsEditor({ vehicle, override, onSet, onClear, disabled }: {
 function Field2({ label, children }: { label: string; children: React.ReactNode }) {
   return <label className="block"><span className="mb-0.5 block text-[10px] text-muted-foreground">{label}</span>{children}</label>;
 }
-function Num({ label, def, ph, onCommit, disabled }: { label: string; def?: number; ph: number; onCommit: (v: number | undefined) => void; disabled?: boolean }) {
+function Num({ label, def, ph, onCommit, disabled }: { label: string; def?: number; ph?: number; onCommit: (v: number | undefined) => void; disabled?: boolean }) {
   return (
     <Field2 label={label}>
-      <input type="number" disabled={disabled} defaultValue={def ?? ''} placeholder={String(ph)}
+      <input type="number" disabled={disabled} defaultValue={def ?? ''} placeholder={ph===undefined?'—':String(ph)}
         onBlur={(e) => { const n = Number(e.target.value); onCommit(e.target.value.trim() === '' || Number.isNaN(n) ? undefined : n); }}
         onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
         className="h-7 w-full rounded border border-divider bg-card px-1.5 text-xs disabled:opacity-40" />
@@ -610,7 +613,7 @@ export function Inspector({ plan, scenario, selection, onSelect, onBack, onForwa
               <Separator />
               <ValidationRow plan={plan} vehicle={vehicle} />
               {canEdit && !vehicle.unavailable && !stop && !trip && (
-                <ConstraintsEditor vehicle={vehicle}
+                <ConstraintsEditor vehicle={vehicle} limits={plan.provenance.fleet?.vehicles.find(v=>v.id===vehicle.id)}
                   override={scenario.vehicleOverrides.find((o) => o.vehicleId === vehicle.id)}
                   onSet={(patch) => onSetConstraint(vehicle.id, patch)} onClear={() => onClearConstraint(vehicle.id)} disabled={solving} />
               )}

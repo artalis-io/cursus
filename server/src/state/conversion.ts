@@ -1,3 +1,4 @@
+import {operatingViolations} from '../operating-limits.js';
 import {probeLoadingCapabilities} from '../native-loading.js';
 import {factRequirement,validateRequirement,sameRequirement} from '../axle-loading.js';
 import type {NativeLoadingCapabilities,LoadingRequirement} from '../loading-contract.js';
@@ -204,7 +205,7 @@ export async function solveConvertedDataset(objects: ObjectStore, tenantId: stri
   if(retained&&(!retained.tariff||!retained.fleetInfo||tariffIdentity(retained.tariff)!==retained.tariffSha256))
     throw new Error('manual solve tariff/fleet snapshot is missing or inconsistent');
   const policy=retained?{datasetSha256:retained.datasetSha256,vehicleInfo:new Map(retained.fleetInfo),
-    reloadSeconds:new Map(retained.reloadSeconds),tariff:retained.tariff!,unavailableVehicleIds:retained.unavailableVehicleIds??[]}:configuredSettings;
+    reloadSeconds:new Map(retained.reloadSeconds),operatingLimits:new Map(retained.operatingLimits??[]),tariff:retained.tariff!,unavailableVehicleIds:retained.unavailableVehicleIds??[]}:configuredSettings;
   const applied=policy?applyFleetSettings(request,day.datasetRequestSha256,policy):false;
   if(retained&&!applied)throw new Error('manual fleet snapshot dataset mismatch');
   const vehicleInfo=applied?policy!.vehicleInfo:loadVehicleInfo();
@@ -254,6 +255,10 @@ export async function solveConvertedDataset(objects: ObjectStore, tenantId: stri
     plan.stats.solveElapsedSeconds = Math.round((Date.now() - startedAt) / 100) / 10;
     if (plan.provenance.validation.violations.some(v => ['VEHICLE_SIZE', 'TAIL_LIFT'].includes((v as {type?: string}).type ?? '')))
       throw new Error('solver violated mandatory destination access or tail-lift requirements');
+    for(const vehicle of plan.vehicles){
+      const limits=request.vehicles.find(v=>v.id===vehicle.id)?.approved_operating;
+      if(limits&&operatingViolations(vehicle,limits).length)throw new Error('Native result violates approved fleet operating limits');
+    }
     await fillPlanGeometry(plan).catch(() => false); return plan;
   } finally { await rm(workspace, { recursive: true, force: true }); }
 }

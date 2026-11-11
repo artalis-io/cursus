@@ -10,8 +10,12 @@ export function nativeSolveRequest(request: SurgeRequest, sequences: Scenario['s
   const requests = new Map(request.requests.map((r, i) => [r.id, i]));
   const native: SurgeRequest = {
     ...request,
-    config: populationConfig(request.config),
-    vehicles: request.vehicles.map((v, id) => ({ ...v, id })),
+    config: populationConfig({...request.config,...(request.vehicles.some(v=>v.approved_operating?.maxDurationSec.state==='configured')?{hard_max_duration:true}:{})}),
+    vehicles: request.vehicles.map((v, id) => {
+      const {approved_operating,operating_limits,approved_capacity,...nativeVehicle}=v;
+      void approved_operating;void operating_limits;void approved_capacity;
+      return {...nativeVehicle,id};
+    }),
     tasks: request.tasks.map((t, id) => ({ ...t, id })),
     requests: request.requests.map((r, id) => ({ ...r, id, delivery_task_id: tasks.get(r.delivery_task_id)!,
       ...(r.allowed_vehicles ? { allowed_vehicles: r.allowed_vehicles.filter(v => vehicles.has(v)).map(v => vehicles.get(v)!) } : {}),
