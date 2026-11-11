@@ -1064,7 +1064,7 @@ test('an immediate Replan waits for a delayed real edit response', async ({ page
   // Even before the edit response arrives, readiness cannot certify the old
   // snapshot as current. This also covers the queue-to-server race window.
   const readiness = page.locator('details[aria-label="Dispatch readiness"]');
-  await expect(readiness.locator('summary')).toContainText('Action required');
+  await expect(readiness.locator(':scope > summary')).toContainText('Action required');
   const solving = finishSolve(page, async () => {
     await page.getByRole('button', { name: /^(Optimize|Replan)$/ }).click();
     release();
@@ -1073,7 +1073,7 @@ test('an immediate Replan waits for a delayed real edit response', async ({ page
   const plan = await solving;
   expect(plan.scenarioId).toBe(scenario.id);
   expect(plan.scenarioRevision).toBe(scenario.revision);
-  await expect(readiness.locator('summary')).toContainText('Matches the loaded scenario revision');
+  await expect(readiness.locator(':scope > summary')).toContainText('Matches the loaded scenario revision');
 });
 
 test('Reviewer can review snapshot readiness, baseline metrics and Hungarian details without write controls', async ({ page }) => {
@@ -1082,7 +1082,7 @@ test('Reviewer can review snapshot readiness, baseline metrics and Hungarian det
   const panel = page.locator('details[aria-label="Dispatch readiness"]');
   await expectPlanTotals(page,plan);
   await expect(panel.getByTestId('status-coverage')).toBeVisible();
-  await panel.locator('summary').click();
+  await panel.locator(':scope > summary').click();
   await expect(panel.getByRole('region', { name: 'Coverage', exact: true })).toContainText(`${plan.stats.servedOrders}/${plan.stats.totalOrders} orders served`);
   const constraints = panel.getByRole('region', { name: 'Constraints', exact: true });
   for (const label of ['Gross vehicle weight (GVW)', 'Tail-lift', 'Payload / pallet capacity', 'Time windows', 'Locked routes'])
@@ -1259,12 +1259,12 @@ test('workspace resizing clamps to the viewport, cancels safely and leaves mobil
   await inspector.focus(); await page.keyboard.press('End');
   await page.setViewportSize({ width: 1024, height: 900 });
   await expect.poll(async () => (await page.locator('#cursus-map-pane').boundingBox())!.width).toBeGreaterThanOrEqual(320);
-  await page.locator('details[aria-label="Dispatch readiness"] summary').click();
+  await page.locator('details[aria-label="Dispatch readiness"] > summary').click();
   await expect.poll(async () => (await page.locator('#cursus-map-pane').boundingBox())!.height).toBeGreaterThanOrEqual(120);
   await page.setViewportSize({ width: 375, height: 900 });
   await expect(fleet).toHaveCount(0); await expect(inspector).toHaveCount(0); await expect(timeline).toHaveCount(0);
   await page.setViewportSize({ width: 1440, height: 900 });
-  await page.locator('details[aria-label="Dispatch readiness"] summary').click();
+  await page.locator('details[aria-label="Dispatch readiness"] > summary').click();
   await expect(fleet).toHaveAttribute('aria-valuenow', '520');
   // A resize at a constrained desktop width must follow the user's gesture,
   // not shrink due to the sibling's larger saved desktop preference.
@@ -1338,8 +1338,8 @@ test('native reduced-fleet result reports unassigned orders without claiming eff
   await history.locator(`[data-plan-id="${revised.id}"]`).getByRole('button', { name: 'Reopen', exact: true }).click();
   await expect(history).toHaveCount(0);
   const panel = page.locator('details[aria-label="Dispatch readiness"]');
-  await expect(panel.locator('summary')).toContainText('Action required');
-  await panel.locator('summary').click();
+  await expect(panel.locator(':scope > summary')).toContainText('Action required');
+  await panel.locator(':scope > summary').click();
   await expect(panel).toHaveAttribute('open','');navigation.release();
   const coverage = panel.getByRole('region', { name: 'Coverage', exact: true });
   await expect(coverage).toContainText('PUBLIC-1');
@@ -1757,7 +1757,7 @@ for(const role of ['admin','planner','reviewer'] as const)test(`compact status: 
  try{
   const base=await baseline(page),writes:string[]=[];
   page.on('request',r=>{if(new URL(r.url()).pathname.startsWith('/api/')&&!['GET','HEAD','OPTIONS'].includes(r.method()))writes.push(r.url());});
-  const details=page.locator('#cursus-status-details'),summary=details.locator('summary');
+  const details=page.locator('#cursus-status-details'),summary=details.locator(':scope > summary');
   await expect(summary.getByTestId('status-approval')).toContainText('Draft');
   await expect(details).not.toHaveAttribute('open','');
   await expect(page.getByRole('region',{name:'Plan approval',exact:true})).toHaveCount(0);
@@ -1880,7 +1880,7 @@ test('compact status: another replica changes approval evidence and invalidates 
  const panel=page.getByRole('region',{name:'Plan approval',exact:true});await panel.getByRole('checkbox').check();
  const response=await page.request.post(`${peer}/api/plans/${plan.id}/review`,{headers,data:{version:0,revision:scenario.revision,acknowledgeExceptions:true}});expect(response.status()).toBe(200);
  await expect(page.getByTestId('status-approval')).toContainText('Reviewed');await expect(panel.getByRole('checkbox')).not.toBeChecked();await expect(panel.getByRole('button',{name:'Approve plan',exact:true})).toBeDisabled();
- await panel.getByRole('checkbox').check();await page.locator('#cursus-status-details summary').click();
+ await panel.getByRole('checkbox').check();await page.locator('#cursus-status-details > summary').click();
  await selectWorkspaceAction(page,'Plan approval');await expect(panel.getByRole('checkbox')).toBeChecked();
  // Use the real preview API plus auth refresh to exercise a permission change
  // in the same mounted workspace; the account buttons intentionally reload.
@@ -1916,7 +1916,7 @@ test('compact status: manual eligibility warnings stay visible without changing 
  await expect(page.getByTestId('status-freshness')).toContainText('Matches the loaded scenario revision');
  await expect(page.getByTestId('status-approval')).toContainText('Draft');
  await selectWorkspaceAction(page,'Plan approval');await expect(page.getByRole('region',{name:'Plan approval',exact:true}).getByRole('checkbox')).toBeVisible();
- await details.locator('summary').click();
+ await details.locator(':scope > summary').click();
  await expect(page.getByText('This historical plan has no unambiguous delivery identities. Replan to create a fresh plan before manual editing.',{exact:true})).toBeVisible();
 });
 

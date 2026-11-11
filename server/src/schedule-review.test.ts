@@ -80,7 +80,7 @@ test('seeded timing regression: replay matches the matrix evaluator across windo
  let state=71;const draw=(max:number)=>{state=(Math.imul(state,1664525)+1013904223)>>>0;return state%max;};
  for(let iteration=0;iteration<60;iteration++){
   const f=fixture(),reload=draw(601);f.input.fleet.get(7)!.reloadSec=reload;f.input.request.vehicles[0]!.trip_reload_seconds=reload;
-  f.input.request.vehicles[0]!.shift_late=2000+draw(4000);f.input.request.vehicles[0]!.max_duration=100+draw(4000);
+  f.input.request.vehicles[0]!.shift_early=draw(700);f.input.request.vehicles[0]!.shift_late=2000+draw(4000);f.input.request.vehicles[0]!.max_duration=100+draw(4000);
   for(const task of f.input.request.tasks){task.tw_early=draw(2000);task.tw_late=task.tw_early+1+draw(2000);task.service_seconds=draw(181);}
   f.input.departures.set('7:first',draw(1000));f.input.departures.set('7:second',draw(3000));
   const base=evaluateManualInput(f.input,f.input.layout,f.scenario),p=materializeManualPlan(f.parent,f.scenario,f.input,base,f.context,'generated',f.plan.createdAt),before=structuredClone(p);
@@ -96,4 +96,8 @@ test('seeded timing regression: replay matches the matrix evaluator across windo
   });
   assert.ok(cases[1]!.vehicles[0]!.finishSec!>=cases[0]!.vehicles[0]!.finishSec!);assert.ok(cases[1]!.late>=cases[0]!.late);assert.deepEqual(p,before);
  }
+});
+
+test('a saved departure substantially before its recorded shift start cannot establish zero-delay replay parity',()=>{
+ const {plan}=fixture();plan.provenance.fleet!.vehicles[0]!.shiftStartSec=1000;assert.equal(departureDelay(plan,900).vehicles[0]!.reason,'schedule');
 });

@@ -55,7 +55,7 @@ export function departureDelay(plan:SchedulePlan,seconds:900|1800):DelayReview {
     const replay=(delay:number):Replay|null=>{
       let previous=0,first=0;const stops:DelayStop[]=[];
       for(const [i,t] of v.trips.entries()){
-        const start=i?tripDeparture(t.startSec,previous,limits!.reloadSec!):t.startSec+delay;if(!i)first=start;
+        const start=i?tripDeparture(t.startSec,previous,limits!.reloadSec!):tripDeparture(t.startSec+delay,limits?.shiftStartSec??t.startSec,0);if(!i)first=start;
         let cursor=start;
         for(const s of t.stops){
           const arrival=cursor+s.travelToSec,clock=stopTiming(arrival,s.twStartSec,s.departureSec-s.serviceStartSec);
