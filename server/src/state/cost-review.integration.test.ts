@@ -1,3 +1,4 @@
+import {scheduleReview,departureDelay} from '../schedule-review.js';
 import {fleetUtilization} from '../fleet-utilization.js';
 import type {Plan} from '../types.js';
 import test from 'node:test';
@@ -29,7 +30,7 @@ test('cost and fleet inspection on two APIs is immutable, tenant-scoped and avai
  try{
   const before=await digest();
   const fleetReads=await Promise.all(apps.map(app=>app.inject({method:'GET',url:`/api/plans/${plan.id}?geometry=stored`,headers})));
-  for(const response of fleetReads){assert.equal(response.statusCode,200);assert.equal(response.headers['cache-control'],'private, no-store');const saved=response.json<Plan>();const use=fleetUtilization(saved);assert.equal(use.inventory,'complete');assert.equal(use.excluded,1);assert.equal(use.unusedAvailable,0);assert.equal(saved.provenance.fleet!.planId,plan.id);}
+  for(const response of fleetReads){assert.equal(response.statusCode,200);assert.equal(response.headers['cache-control'],'private, no-store');const saved=response.json<Plan>();const use=fleetUtilization(saved);assert.equal(use.inventory,'complete');assert.equal(use.excluded,1);assert.equal(use.unusedAvailable,0);assert.equal(saved.provenance.fleet!.planId,plan.id);assert.equal(scheduleReview(saved).rows.length,2);assert.equal(departureDelay(saved,900).unknownVehicles,0);assert.equal(departureDelay(saved,1800).vehicles[0]!.stops.length,2);}
   assert.deepEqual(fleetReads[0]!.json(),fleetReads[1]!.json());
   assert.equal((await outsider.inject({method:'GET',url:`/api/plans/${plan.id}?geometry=stored`,headers})).statusCode,404);
   const responses=await Promise.all(apps.map(app=>app.inject({method:'GET',url,headers})));

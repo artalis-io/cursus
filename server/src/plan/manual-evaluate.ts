@@ -1,3 +1,4 @@
+import {tripDeparture,stopTiming} from './timing.js';
 import { vehicleCostFor, tripCost, reconcileTripCosts, type Tariff } from '../cost.js';
 import type { SurgeRequest, SurgeTask } from '../types.js';
 import { assertManualLayout, type ManualLayout } from './manual.js';
@@ -116,7 +117,7 @@ export function evaluateManualLayout(input: ManualEvaluationInput): ManualEvalua
     for (const route of routes) {
       const anchor = input.departures.get(manualTripKey(vehicleId, route.tripId));
       need(nonnegative(anchor), 'departure anchor missing');
-      const startSec = Math.max(anchor, previousEnd + (trips.length ? info.reloadSec : 0));
+      const startSec = tripDeparture(anchor,previousEnd,trips.length?info.reloadSec:0);
       let time = startSec, position = 0, distance = 0, loadKg = 0, loadPallets = 0;
       const stops: ManualEvaluatedTrip['stops'] = [];
       for (const requestId of route.requestIds) {
@@ -126,10 +127,10 @@ export function evaluateManualLayout(input: ManualEvaluationInput): ManualEvalua
           (requirements.maxTonnage === null || nonnegative(requirements.maxTonnage) && requirements.maxTonnage > 0), 'missing access evidence');
         const edge = leg(position, task.location_id);
         distance += edge.distance;
-        const arrivalSec = time + edge.duration, serviceStartSec = Math.max(arrivalSec, task.tw_early);
-        const departureSec = serviceStartSec + task.service_seconds;
+        const arrivalSec = time + edge.duration;
+        const {serviceStartSec,departureSec,waitSec}=stopTiming(arrivalSec,task.tw_early,task.service_seconds);
         stops.push({ requestId, taskId: task.id, arrivalSec, serviceStartSec, departureSec,
-          waitSec: serviceStartSec-arrivalSec, lateSec: task.tw_late > 0 ? Math.max(0, serviceStartSec-task.tw_late) : 0 });
+          waitSec, lateSec: task.tw_late > 0 ? Math.max(0, serviceStartSec-task.tw_late) : 0 });
         loadKg += task.demand[0]!; loadPallets += task.demand[1]!;
         if (task.tw_late > 0 && serviceStartSec > task.tw_late) issue('HARD_TW', requestId, { actual: serviceStartSec, limit: task.tw_late });
         if (requirements.maxTonnage !== null && (info.grossTonnage === null || info.grossTonnage > requirements.maxTonnage)) issue('VEHICLE_SIZE', requestId, { ...(info.grossTonnage === null ? {} : { actual: info.grossTonnage }), limit: requirements.maxTonnage });

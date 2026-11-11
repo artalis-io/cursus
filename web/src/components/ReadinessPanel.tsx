@@ -1,3 +1,4 @@
+import {ScheduleReview} from './ScheduleReview';
 import {unassignedReviewSelection} from '@/lib/review-targets';
 import {LoadingEvidence} from './LoadingEvidence';
 import type {ReactNode} from 'react';
@@ -85,6 +86,7 @@ export function ReadinessPanel({ plan, baseline, scenario, pending, freshness, a
               ].map(([label, before, after, delta]) => <tr key={label} className="border-t border-divider"><th className="py-1.5 text-left font-normal">{label}</th><td className="pl-2">{before}</td><td className="pl-2">{after}</td><td className="pl-2">{comparison.sameScope ? delta : '—'}</td></tr>)}
             </tbody></table></div>
           </section>
+          <ScheduleReview key={`${plan.id}/${scenario.id}/${scenario.revision}`} plan={plan} scenario={scenario} pending={pending} onSelect={onSelect}/>
         </div>
       </div>
     </details>

@@ -1,6 +1,6 @@
 import {savedWorkspaceKey} from '../tests/workspace-navigation';
 import {compactHeaderChecks,dismissPolicyChecks,stalePolicyResponse} from '../tests/compact-header';
-import {km,money} from '../src/lib/format';
+import {km,money,hhmm} from '../src/lib/format';
 import type {Workflow} from '../../server/src/workflow-contract';
 import {selectWorkspaceAction,openWorkspaceMenu} from '../tests/workspace-navigation';
 import { test, expect, type Page, type APIRequestContext } from '@playwright/test';
@@ -1033,6 +1033,7 @@ test(`${role}: excluding a vehicle preserves service and stable identities throu
   const edited=page.waitForResponse(r=>r.request().method()==='POST'&&r.url().endsWith('/edit'));await page.getByRole('button',{name:`Mark ${stillUsed.ref} unavailable`}).click();expect((await edited).status()).toBe(200);
   const staleFleet=await openFleetUse(page);await expect(staleFleet).toContainText('The scenario has changed since this plan was saved.');await page.keyboard.press('Escape');await expectPlanTotals(page,plan);
   expect((await get<Plan>(page.request,`${peer}/api/plans/${plan.id}?geometry=stored`)).provenance.fleet).toEqual(plan.provenance.fleet);
+  const schedule=await openSchedule(page);await expect(schedule).toContainText('Pending work or scenario changes are not included');await schedule.getByRole('button',{name:'Check 15-minute later departure',exact:true}).click();await expectPlanTotals(page,plan);
 });
 
 test(`${role}: locking a route preserves its vehicle and exact stop order`, async ({ page }) => {
@@ -2661,4 +2662,50 @@ test('fleet utilization: borrowed historical inventory withholds unused counts a
  await page.reload();await expectPlanTotals(page,plan);const dialog=await openFleetUse(page);await expect(dialog.locator('[data-fleet-inventory="invalid"]')).toBeVisible();
  await expect(dialog.locator('[data-fleet-count="unused"]')).toHaveText('Not recorded');const row=dialog.locator('[data-fleet-use-vehicle]').first();await row.locator('summary').click();await expect(row.locator('[data-fleet-headroom="shift"]')).toHaveText('Not recorded');
  await page.keyboard.press('Escape');await expectPlanTotals(page,plan);expect((await get<Plan>(page.request,`${peer}/api/plans/${plan.id}?geometry=stored`)).provenance.fleet).toEqual(plan.provenance.fleet);
+});
+
+async function openSchedule(page:Page){
+ const outer=page.locator('#cursus-status-details');if(await outer.getAttribute('open')===null)await outer.locator(':scope > summary').click();
+ const review=outer.locator('[data-schedule-review]');if(await review.getAttribute('open')===null)await review.locator(':scope > summary').click();await expect(review).toBeVisible();return review;
+}
+for(const role of ['admin','planner','reviewer'] as const)test(`schedule review: ${role} inspects slack and delay checks without writes or changed KPIs`,async({page})=>{
+ await login(page,`${role}@acceptance.example.test`);const plan=await baseline(page),writes:string[]=[];
+ page.on('request',r=>{if(new URL(r.url()).pathname.startsWith('/api/')&&!['GET','HEAD','OPTIONS'].includes(r.method()))writes.push(r.url());});
+ const review=await openSchedule(page);await expect(review).toContainText(plan.id);await expect(review).toContainText('Starting exactly at closing is on time');
+ await review.getByRole('button',{name:'Show all assigned stops',exact:true}).click();
+ const vehicle=plan.vehicles[0]!,trip=vehicle.trips[0]!,stop=trip.stops[0]!,row=review.locator(`[data-schedule-stop="${vehicle.id}/${trip.index}/${stop.seq}"]`);
+ await expect(row).toContainText(stop.orderNo);await expect(row).toContainText('Service start:');
+ const closingSlack=stop.twEndSec-stop.serviceStartSec;const expectedSlack=Math.abs(closingSlack)<60?`${new Intl.NumberFormat('en-US',{maximumFractionDigits:1}).format(closingSlack)} s`:`${new Intl.NumberFormat('en-US',{maximumFractionDigits:1}).format(closingSlack/60)} min`;await expect(row.locator('[data-schedule-slack]')).toContainText(`Closing slack: ${expectedSlack}`);
+ for(const seconds of [900,1800] as const){await review.getByRole('button',{name:`Check ${seconds/60}-minute later departure`,exact:true}).click();await expect(review.locator(`[data-delay-review="${seconds}"]`)).toBeVisible();}
+ await expect(review).toContainText('No plan is changed');await review.getByRole('button',{name:'Clear delay check',exact:true}).click();await expect(review.locator('[data-delay-review]')).toHaveCount(0);
+ await row.locator('button').click();await expect(page.locator('#cursus-inspector-pane')).toContainText(stop.orderNo);await expectPlanTotals(page,plan);
+ expect(await get<Plan>(page.request,`${peer}/api/plans/${plan.id}?geometry=stored`)).toEqual(plan);expect(writes).toEqual([]);
+});
+test('schedule review: Reviewer EN/HU delay checks fit narrow layout and do not submit work',async({page})=>{
+ await login(page,'reviewer@acceptance.example.test');const plan=await baseline(page),writes:string[]=[];await page.setViewportSize({width:430,height:920});
+ page.on('request',r=>{if(new URL(r.url()).pathname.startsWith('/api/')&&!['GET','HEAD','OPTIONS'].includes(r.method()))writes.push(r.url());});
+ for(const lang of ['en','hu']){
+  if(lang==='hu')await page.getByRole('button',{name:'HU',exact:true}).click();const review=await openSchedule(page);
+  await review.getByRole('button',{name:lang==='hu'?'Indulás 15 perccel később':'Check 15-minute later departure',exact:true}).click();await expect(review.locator('[data-delay-review="900"]')).toBeVisible();
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth)).toBe(false);await expect(review.locator('input,select,textarea')).toHaveCount(0);
+ }
+ expect(writes).toEqual([]);expect((await get<Plan>(page.request,`${peer}/api/plans/${plan.id}?geometry=stored`)).stats).toEqual(plan.stats);
+});
+test('schedule review: manual saved evidence supports replay and day navigation discards the old delay mode',async({page})=>{
+ await login(page);const base=await baseline(page),first=base.vehicles[0]!.trips[0]!.stops[0]!;
+ await page.getByRole('button',{name:'Manual planning',exact:true}).click();await manualStop(page,base,first.orderNo);await page.getByRole('button',{name:'Return to unassigned',exact:true}).click();const plan=await applyManualDialog(page);
+ const before=await get<Plan>(page.request,`${peer}/api/plans/${plan.id}?geometry=stored`),review=await openSchedule(page);await review.getByRole('button',{name:'Check 30-minute later departure',exact:true}).click();
+ await expect(review.locator('[data-delay-review="1800"]')).toBeVisible();await expectPlanTotals(page,plan);
+ const vehicle=plan.vehicles[0]!,trip=vehicle.trips[0]!,stop=trip.stops[0]!,start=Math.max(trip.startSec+1800+stop.travelToSec,stop.twStartSec);await review.locator(`[data-delay-vehicle="${vehicle.id}"] > summary`).click();await expect(review.locator(`[data-delay-stop="${vehicle.id}/${trip.index}/${stop.seq}"]`)).toContainText(`${hhmm(stop.serviceStartSec)} → ${hhmm(start)}`);
+ const day=(await get<DaySummary[]>(page.request,'/api/days')).find(d=>d.id==='acceptance-day-two')!,next=await get<Plan>(page.request,`/api/plans/${day.baselinePlanId}`);
+ page.once('dialog',async dialog=>{expect(dialog.message()).toContain('Switch away');await dialog.accept();});await page.getByRole('combobox').first().click();await page.getByRole('option',{name:/7 May 2026/}).click();await expectPlanTotals(page,next);
+ const changed=await openSchedule(page);await expect(changed).toContainText(next.id);await expect(changed).not.toContainText(plan.id);await expect(changed.locator('[data-delay-review]')).toHaveCount(0);
+ expect(await get<Plan>(page.request,`${peer}/api/plans/${plan.id}?geometry=stored`)).toEqual(before);
+});
+test('schedule review: zero closing bounds remain Unknown and cannot become optimistic delay evidence',async({page})=>{
+ await login(page);const plan=await baseline(page),v=plan.vehicles[0]!,trip=v.trips[0]!,stop=trip.stops[0]!;
+ await page.route('**/api/plans/*',async route=>{const response=await route.fetch(),body=await response.json() as Plan;if(body.id===plan.id&&body.vehicles){body.vehicles[0]!.trips[0]!.stops[0]!.twEndSec=0;delete body.provenance.fleet;}await route.fulfill({response,json:body});});
+ await page.reload();await expectPlanTotals(page,plan);const review=await openSchedule(page),row=review.locator(`[data-schedule-stop="${v.id}/${trip.index}/${stop.seq}"]`);await expect(row).toContainText('Timing evidence unknown');
+ await review.getByRole('button',{name:'Check 15-minute later departure',exact:true}).click();const vehicle=review.locator(`[data-delay-vehicle="${v.id}"]`);await vehicle.locator('summary').click();await expect(vehicle).toContainText('Closing bounds or delivery-only timing facts are missing');
+ expect((await get<Plan>(page.request,`${peer}/api/plans/${plan.id}?geometry=stored`)).provenance).toEqual(plan.provenance);await expectPlanTotals(page,plan);
 });
