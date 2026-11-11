@@ -1,3 +1,4 @@
+import {captureFleet,type FleetSource} from './fleet-snapshot.js';
 import {captureCosting} from '../cost-review.js';
 import {loadingSnapshot} from '../loading.js';
 import { createHash } from 'node:crypto';
@@ -35,6 +36,7 @@ export function classifyUnassigned(
 }
 
 export interface MapInputs {
+  fleet?:FleetSource;
   day: LoadedDay;
   request: SurgeRequest;     // the exact request solved (may be scope-filtered)
   solution: SurgeSolution;
@@ -270,5 +272,6 @@ export function mapSolutionToPlan(inp: MapInputs): Plan {
     unassigned,
   };
   plan.provenance.costing=captureCosting(plan,tariff);
+  plan.provenance.fleet=captureFleet(plan,inp.fleet??{vehicles:request.vehicles,complete:false});
   return plan;
 }

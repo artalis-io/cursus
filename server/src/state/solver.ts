@@ -42,7 +42,7 @@ export async function executeSurgeLease(lease: Lease, signal: AbortSignal): Prom
     solution = native.restore(solution);
     verifyRetainedSolution(built.request, payload.scenario, solution);
     const planId = `pln_${randomUUID().slice(0, 8)}`;
-    const mapped = mapSolutionToPlan({ day: built.day, request: built.request, solution, enrichment: built.day.enrichment,
+    const mapped = mapSolutionToPlan({ fleet:{vehicles:built.day.request.vehicles.map(v=>built.request.vehicles.find(current=>current.id===v.id)??v),excludedVehicleIds:payload.scenario.removedVehicleIds,complete:true},day: built.day, request: built.request, solution, enrichment: built.day.enrichment,
       vehicleInfo: loadVehicleInfo(), scenarioId: payload.scenarioId, scenarioRevision: payload.scenarioRevision,
       planId, source: 'live', createdAt: new Date().toISOString() });
     const plan = withRetainedProvenance(mapped, payload.scenario, built.day.request.vehicles.map(vehicle => vehicle.id));

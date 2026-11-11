@@ -1,3 +1,4 @@
+import {FleetUtilizationDialog} from '@/components/FleetUtilizationDialog';
 import {CostDialog} from '@/components/CostDialog';
 import type {Instruction} from '../../server/src/change-review-contract';
 import {workspaceBookmarkKey,parseWorkspaceBookmark} from '@/lib/workspace-resume';
@@ -223,6 +224,7 @@ export default function App() {
   const [importOpen, setImportOpen] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [costOpen,setCostOpen]=useState(false);
+  const [fleetUseOpen,setFleetUseOpen]=useState(false);
   const [changesOpen, setChangesOpen] = useState(false);
   const [weekOpen, setWeekOpen] = useState(false);
   const [issuesOpen, setIssuesOpen] = useState(false);
@@ -866,7 +868,7 @@ export default function App() {
         <div id="cursus-kpi-pane" className="shrink-0">
           <KpiStrip plan={plan} baseline={baseline} compare={isReplan} job={job}
             previewDistanceKm={previewTotals?.distanceKm} previewCostTotal={previewTotals?.costTotal}
-            onOpenCost={()=>setCostOpen(true)} compact={!workspace.visibility.kpis} onToggleDetails={()=>workspace.toggleVisibility('kpis')} />
+            onOpenCost={()=>setCostOpen(true)} onOpenFleet={()=>setFleetUseOpen(true)} compact={!workspace.visibility.kpis} onToggleDetails={()=>workspace.toggleVisibility('kpis')} />
         </div>
         {manualContext?.requiresRevalidation&&<PolicyNotice key={`${plan.id}/${scenario.id}/${scenario.revision}`} />}
         {manualContext?.reason==='fresh_plan_required'&&<div role="status" className="shrink-0 border-b border-warning/40 bg-warning/10 px-4 py-2 text-sm">{t('manual.freshPlanRequired')}</div>}
@@ -968,6 +970,8 @@ export default function App() {
           scenarioLabel={scenario.label}
         />
       )}
+      <FleetUtilizationDialog key={`fleet/${plan.id}/${scenario.id}/${scenario.revision}`} open={fleetUseOpen} onOpenChange={setFleetUseOpen} plan={plan} scenario={scenario}
+        onSelect={selection=>{if(planRef.current?.id!==plan.id)return;navigate(selection);requestAnimationFrame(()=>document.querySelector<HTMLElement>('#cursus-inspector-pane [data-inspector-heading]')?.focus({preventScroll:true}));}} />
       <CostDialog key={`${plan.id}/${scenario.id}/${scenario.revision}`} open={costOpen} onOpenChange={setCostOpen} plan={plan} scenario={scenario} reference={baseline}/>
       <ChangesDialog
         open={changesOpen} onOpenChange={setChangesOpen}

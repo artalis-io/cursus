@@ -127,7 +127,7 @@ const vehicleInfo = loadVehicleInfo();
 function buildBaseline(dayId: string, label: string): Plan {
   const scenario = store.ensureBaseScenario(dayId, label);
   const day = loadDay(dayId);
-  const plan = mapSolutionToPlan({
+  const plan = mapSolutionToPlan({ fleet:{vehicles:day.request.vehicles,complete:true},
     day, request: day.request, solution: day.solution,
     enrichment: day.enrichment, vehicleInfo,
     scenarioId: scenario.id, scenarioRevision: 0,

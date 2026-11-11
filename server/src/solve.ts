@@ -265,6 +265,7 @@ function runSolveProcess(job: Job, scenario: Scenario, budgetSec: number, object
 
       const planId = store.newId('pln');
       const plan = mapSolutionToPlan({
+        fleet:{vehicles:built.day.request.vehicles.map(v=>built.request.vehicles.find(current=>current.id===v.id)??v),excludedVehicleIds:scenario.removedVehicleIds,complete:true},
         day: built.day, request: built.request, solution, enrichment: built.day.enrichment, vehicleInfo: loadVehicleInfo(),
         scenarioId: scenario.id, scenarioRevision: scenario.revision, planId,
         source: 'live', createdAt: new Date().toISOString(),

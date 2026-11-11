@@ -211,6 +211,7 @@ export async function solveConvertedDataset(objects: ObjectStore, tenantId: stri
   const policyUnavailable=new Set(applied?policy!.unavailableVehicleIds??[]:[]);
   if(scenario.pins.some(pin=>policyUnavailable.has(pin.vehicleId))||scenario.sequences.some(sequence=>policyUnavailable.has(sequence.vehicleId)))
     throw new Error('Pinned or sequenced vehicle is unavailable; clear that edit before replanning');
+  const fleetVehicles=request.vehicles.map(v=>structuredClone(v));
   const unavailable=new Set([...scenario.removedVehicleIds,...(applied?policy!.unavailableVehicleIds??[]:[])]);
   request.vehicles=request.vehicles.filter(v=>!unavailable.has(v.id));
   const available = new Set(request.vehicles.map((v) => v.id));
@@ -238,7 +239,7 @@ export async function solveConvertedDataset(objects: ObjectStore, tenantId: stri
     if (!Array.isArray(solution.routes) || !Array.isArray(solution.unassigned) || !['OK', 'LIMIT', 'INFEASIBLE'].includes(solution.status))
       throw new Error('converted dataset solve produced an invalid solution');
     verifyRetainedSolution(request, scenario, solution);
-    const mapped = mapSolutionToPlan({ day, request, solution, enrichment: day.enrichment, vehicleInfo, tariff:applied?policy!.tariff:undefined, scenarioId: scenario.id,
+    const mapped = mapSolutionToPlan({ fleet:{vehicles:fleetVehicles.map(v=>request.vehicles.find(current=>current.id===v.id)??v),excludedVehicleIds:scenario.removedVehicleIds,unavailableVehicleIds:[...policyUnavailable],complete:true},day, request, solution, enrichment: day.enrichment, vehicleInfo, tariff:applied?policy!.tariff:undefined, scenarioId: scenario.id,
       scenarioRevision: scenario.revision, planId: `pln_${randomUUID().slice(0, 8)}`, source: 'live', createdAt: new Date().toISOString() });
     const plan = withRetainedProvenance(mapped, scenario, datasetVehicles);
     if(enforceLoading&&day.physicalLoading){

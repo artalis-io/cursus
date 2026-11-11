@@ -1027,6 +1027,12 @@ test(`${role}: excluding a vehicle preserves service and stable identities throu
   await page.getByRole('button', { name: `Mark ${vehicle.ref} unavailable` }).click();
   const plan = await finishSolve(page, () => page.getByRole('button', { name: 'Replan', exact: true }).click());
   expect(plan.vehicles.some(v => v.id === vehicle.id || v.ref === vehicle.ref)).toBe(false);
+  expect(plan.provenance.fleet!.scope).toBe('complete');expect(plan.provenance.fleet!.planId).toBe(plan.id);expect(plan.provenance.fleet!.vehicles.find(v=>v.id===vehicle.id)!.availability).toBe('excluded');
+  const fleetDialog=await openFleetUse(page);await fleetDialog.locator('[data-fleet-unused] > summary').click();await expect(fleetDialog.locator(`[data-fleet-unused-vehicle="${vehicle.id}"]`)).toContainText('Excluded from planning');await page.keyboard.press('Escape');await expectPlanTotals(page,plan);
+  const stillUsed=plan.vehicles[0]!;await page.locator('aside').first().locator('[data-inspect-vehicle]').getByText(stillUsed.ref,{exact:true}).click();
+  const edited=page.waitForResponse(r=>r.request().method()==='POST'&&r.url().endsWith('/edit'));await page.getByRole('button',{name:`Mark ${stillUsed.ref} unavailable`}).click();expect((await edited).status()).toBe(200);
+  const staleFleet=await openFleetUse(page);await expect(staleFleet).toContainText('The scenario has changed since this plan was saved.');await page.keyboard.press('Escape');await expectPlanTotals(page,plan);
+  expect((await get<Plan>(page.request,`${peer}/api/plans/${plan.id}?geometry=stored`)).provenance.fleet).toEqual(plan.provenance.fleet);
 });
 
 test(`${role}: locking a route preserves its vehicle and exact stop order`, async ({ page }) => {
@@ -2609,4 +2615,50 @@ test('cost review: late previous-day response cannot replace another plan or its
   await page.getByRole('combobox').first().click();await page.getByRole('option',{name:/7 May 2026/}).click();await expect(page.getByText('2 / 2',{exact:true})).toBeVisible();
   const dialog=await openCosts(page);await expect(dialog).toContainText(next.id);held.release();await finished.wait;await expect(dialog).not.toContainText(before.id);await expect(dialog.locator('[data-cost-summary="total"]')).toHaveText(fullCost(next.cost!.total,next.cost!.currency));await page.keyboard.press('Escape');await expectPlanTotals(page,next);
  }finally{held.release();}
+});
+
+async function openFleetUse(page:Page,lang='en'){
+ await page.getByRole('button',{name:lang==='hu'?'Flottakihasználtság részletezése':'Explain fleet utilization',exact:true}).click();
+ const dialog=page.getByRole('dialog',{name:lang==='hu'?'Flottakihasználtság':'Fleet utilization',exact:true});await expect(dialog).toBeVisible();return dialog;
+}
+for(const role of ['admin','planner','reviewer'] as const)test(`fleet utilization: ${role} inspects peaks and trips by keyboard without writes or changed KPIs`,async({page})=>{
+ await login(page,`${role}@acceptance.example.test`);const plan=await baseline(page),writes:string[]=[];
+ page.on('request',r=>{if(new URL(r.url()).pathname.startsWith('/api/')&&!['GET','HEAD','OPTIONS'].includes(r.method()))writes.push(r.url());});
+ const button=page.getByRole('button',{name:'Explain fleet utilization',exact:true});await button.focus();await page.keyboard.press('Enter');const dialog=page.getByRole('dialog',{name:'Fleet utilization',exact:true});
+ await expect(dialog.locator('[data-fleet-count="used"]')).toHaveText(String(plan.stats.vehiclesUsed));await expect(dialog).toContainText(plan.id);
+ const v=plan.vehicles[0]!,row=dialog.locator(`[data-fleet-use-vehicle="${v.id}"]`);await row.locator('summary').click();
+ const peak=Math.max(...v.trips.map(tr=>tr.stops.reduce((sum,s)=>sum+s.weightKg,0)));
+ await expect(row.locator('[data-fleet-peak="kg"]')).toContainText(new Intl.NumberFormat('en-US',{maximumFractionDigits:1}).format(peak));
+ await expect(row.locator('[data-fleet-use-trip]')).toHaveCount(v.trips.length);await expect(dialog.locator('input,select,textarea')).toHaveCount(0);
+ await expect(dialog).toContainText('Spare capacity or time does not prove');await page.keyboard.press('Escape');await expect(button).toBeFocused();await expectPlanTotals(page,plan);
+ await button.click();await dialog.locator(`[data-fleet-use-vehicle="${v.id}"] > summary`).click();
+ await dialog.getByRole('button',{name:`Inspect ${v.ref}, trip ${v.trips[0]!.index+1}`,exact:true}).click();await expect(dialog).not.toBeVisible();await expect(page.locator('#cursus-inspector-pane')).toContainText(v.ref);
+ await expectPlanTotals(page,plan);expect(await get<Plan>(page.request,`${peer}/api/plans/${plan.id}?geometry=stored`)).toEqual(plan);expect(writes).toEqual([]);
+});
+test('fleet utilization: Reviewer EN/HU narrow layout stays read-only and within bounds',async({page})=>{
+ await login(page,'reviewer@acceptance.example.test');const plan=await baseline(page),writes:string[]=[];
+ page.on('request',r=>{if(new URL(r.url()).pathname.startsWith('/api/')&&!['GET','HEAD','OPTIONS'].includes(r.method()))writes.push(r.url());});
+ await page.setViewportSize({width:430,height:920});
+ for(const lang of ['en','hu']){
+  if(lang==='hu')await page.getByRole('button',{name:'HU',exact:true}).click();const dialog=await openFleetUse(page,lang);
+  await dialog.locator('[data-fleet-use-vehicle]').first().locator('summary').click();await expect(dialog.locator('input,select,textarea')).toHaveCount(0);
+  await expect(dialog).toContainText(lang==='hu'?'Rögzített időfelhasználás':'Recorded time usage');expect(await dialog.evaluate(e=>e.scrollWidth>e.clientWidth)).toBe(false);await page.keyboard.press('Escape');
+ }
+ expect(writes).toEqual([]);expect((await get<Plan>(page.request,`${peer}/api/plans/${plan.id}?geometry=stored`)).provenance).toEqual(plan.provenance);
+});
+test('fleet utilization: manual save captures full inventory, fresh identity and recomputed peaks on both replicas',async({page})=>{
+ await login(page);const base=await baseline(page),first=base.vehicles[0]!.trips[0]!.stops[0]!;
+ await page.getByRole('button',{name:'Manual planning',exact:true}).click();await manualStop(page,base,first.orderNo);await page.getByRole('button',{name:'Return to unassigned',exact:true}).click();const plan=await applyManualDialog(page);
+ expect(plan.provenance.fleet!.planId).toBe(plan.id);expect(plan.provenance.fleet!.scenarioRevision).toBe(plan.scenarioRevision);expect(plan.provenance.fleet!.scope).toBe('complete');
+ const before=await get<Plan>(page.request,`${peer}/api/plans/${plan.id}?geometry=stored`),dialog=await openFleetUse(page);await expect(dialog.locator('[data-fleet-inventory]')).toHaveCount(0);
+ const used=new Set(plan.vehicles.map(v=>v.id)),unused=plan.provenance.fleet!.vehicles.filter(v=>!used.has(v.id)&&v.availability==='available');await expect(dialog.locator('[data-fleet-count="unused"]')).toHaveText(String(unused.length));
+ for(const vehicle of plan.vehicles){const row=dialog.locator(`[data-fleet-use-vehicle="${vehicle.id}"]`);await row.locator('summary').click();const peak=Math.max(...vehicle.trips.map(t=>t.stops.reduce((sum,s)=>sum+s.weightKg,0)));expect(peak).toBe(vehicle.peakKg);await expect(row.locator('[data-fleet-peak="kg"]')).toContainText(new Intl.NumberFormat('en-US',{maximumFractionDigits:1}).format(peak));}
+ await page.keyboard.press('Escape');await expectPlanTotals(page,plan);expect(await get<Plan>(page.request,`${peer}/api/plans/${plan.id}?geometry=stored`)).toEqual(before);
+});
+test('fleet utilization: borrowed historical inventory withholds unused counts and shift limits without replacing saved KPIs',async({page})=>{
+ await login(page);const plan=await baseline(page);
+ await page.route('**/api/plans/*',async route=>{const response=await route.fetch(),body=await response.json() as Plan;if(body.id===plan.id&&body.vehicles&&body.provenance.fleet)body.provenance.fleet.planId='borrowed-plan';await route.fulfill({response,json:body});});
+ await page.reload();await expectPlanTotals(page,plan);const dialog=await openFleetUse(page);await expect(dialog.locator('[data-fleet-inventory="invalid"]')).toBeVisible();
+ await expect(dialog.locator('[data-fleet-count="unused"]')).toHaveText('Not recorded');const row=dialog.locator('[data-fleet-use-vehicle]').first();await row.locator('summary').click();await expect(row.locator('[data-fleet-headroom="shift"]')).toHaveText('Not recorded');
+ await page.keyboard.press('Escape');await expectPlanTotals(page,plan);expect((await get<Plan>(page.request,`${peer}/api/plans/${plan.id}?geometry=stored`)).provenance.fleet).toEqual(plan.provenance.fleet);
 });
