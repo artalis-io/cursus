@@ -41,7 +41,7 @@ services:
       - -c
       - archive_mode=on
       - -c
-      - archive_command=test ! -f /backup/wal/%f && cp %p /backup/wal/%f
+      - archive_command=/opt/cursus/archive-wal.sh %p %f
     ports:
       - ${CURSUS_POSTGRES_BIND_IP:?set CURSUS_POSTGRES_BIND_IP}:${CURSUS_POSTGRES_HOST_PORT:-55432}:5432
     volumes:
@@ -52,6 +52,10 @@ services:
       - type: bind
         source: ./deploy/postgres/init-primary.sh
         target: /docker-entrypoint-initdb.d/20-cursus-replication.sh
+        read_only: true
+      - type: bind
+        source: ./deploy/postgres/archive-wal.sh
+        target: /opt/cursus/archive-wal.sh
         read_only: true
       - type: bind
         source: ${CURSUS_POSTGRES_BACKUP_PATH:?set CURSUS_POSTGRES_BACKUP_PATH}
@@ -88,7 +92,7 @@ services:
       - -c
       - archive_mode=always
       - -c
-      - archive_command=test ! -f /backup/wal/%f && cp %p /backup/wal/%f
+      - archive_command=/opt/cursus/archive-wal.sh %p %f
     ports:
       - ${CURSUS_POSTGRES_BIND_IP:?set CURSUS_POSTGRES_BIND_IP}:${CURSUS_POSTGRES_HOST_PORT:-55432}:5432
     volumes:
@@ -99,6 +103,10 @@ services:
       - type: bind
         source: ./deploy/postgres/standby-entrypoint.sh
         target: /opt/cursus/standby-entrypoint.sh
+        read_only: true
+      - type: bind
+        source: ./deploy/postgres/archive-wal.sh
+        target: /opt/cursus/archive-wal.sh
         read_only: true
       - type: bind
         source: ${CURSUS_POSTGRES_BACKUP_PATH:?set CURSUS_POSTGRES_BACKUP_PATH}
