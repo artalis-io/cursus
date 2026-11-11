@@ -20,6 +20,7 @@ test('adapter maps stable IDs and materializes coherent manual plan, provenance 
   assert.deepEqual(plan.stats,{totalOrders:2,servedOrders:1,deliveryStops:1,vehiclesUsed:1,trips:1,totalDistanceKm:4,solveElapsedSeconds:null});
   assert.equal(plan.cost?.total,1040); assert.equal(plan.unassigned[0]?.reason,'Manually unassigned');
   assert.equal(plan.unassigned[0]?.requestId,91); assert.equal(plan.vehicles[0]?.trips[0]?.stops[0]?.requestId,92);
+  assert.equal(plan.provenance.fleet!.planId,'new');assert.equal(plan.provenance.fleet!.scenarioRevision,2);assert.equal(plan.provenance.fleet!.scope,'complete');assert.equal(plan.provenance.fleet!.vehicles.length,context.day.request.vehicles.length);
   assert.equal(plan.provenance.termination,'MANUAL'); assert.equal(plan.manual?.parentPlanId,parent.id);
   assert.equal(plan.scenarioRevision,2); assert.equal(plan.provenance.validation.valid,true);
   assert.equal(parent.unassigned.length,0);

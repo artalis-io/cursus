@@ -6,6 +6,8 @@ COPY web/package.json web/package-lock.json ./
 RUN npm ci
 COPY web/ ./
 COPY server/src/cost-review-contract.ts /src/server/src/cost-review-contract.ts
+COPY server/src/fleet-contract.ts /src/server/src/fleet-contract.ts
+COPY server/src/fleet-utilization.ts /src/server/src/fleet-utilization.ts
 COPY server/src/change-review-contract.ts /src/server/src/change-review-contract.ts
 COPY server/src/roles.ts /src/server/src/roles.ts
 COPY server/src/workflow-contract.ts /src/server/src/workflow-contract.ts

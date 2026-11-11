@@ -1,3 +1,4 @@
+import {captureFleet} from './fleet-snapshot.js';
 import {captureCosting} from '../cost-review.js';
 import {config} from '../config.js';
 import {loadingSnapshot} from '../loading.js';
@@ -193,6 +194,7 @@ export function materializeManualPlan(parent: Plan, scenario: Scenario, input: M
         fixedCost: cost.fixed, variableCost: cost.variable, totalCost: cost.total };
     }) } };
   plan.provenance.costing=captureCosting(plan,input.tariff);
+  plan.provenance.fleet=captureFleet(plan,{vehicles:input.request.vehicles,excludedVehicleIds:input.layout.excludedVehicleIds,unavailableVehicleIds:context.unavailableVehicleIds,complete:true});
   delete plan.assignments;
   // Rebuild round counts from the current immutable declarations, never from
   // the parent's layout. These facts still make no feasibility claim.

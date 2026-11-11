@@ -7,6 +7,7 @@
 export type PlanSource = 'saved' | 'live' | 'sample';
 
 export interface PlanProvenance {
+  fleet?:import('../../server/src/fleet-contract').FleetSnapshot;
   costing?:import('../../server/src/cost-review-contract').CostingSnapshot;
   inputUpdate?: import('../../server/src/input-update-contract').InputUpdateLineage;
   shipmentSha256?:string;

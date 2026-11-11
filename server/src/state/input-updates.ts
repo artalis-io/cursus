@@ -1,3 +1,4 @@
+import {rebindFleet} from '../plan/fleet-snapshot.js';
 import {captureCosting} from '../cost-review.js';
 import {randomUUID} from 'node:crypto';
 import {isDeepStrictEqual} from 'node:util';
@@ -148,9 +149,11 @@ export class InputUpdates{
   if(scenario.planningPolicy)scenario.planningPolicy.approvedAt=now;
   const plan={...x.result.plan,id:planId,scenarioId,createdAt:now,provenance:{...x.result.plan.provenance,inputUpdate:lineage,...(scenario.planningPolicy?{planningPolicy:scenario.planningPolicy}:{})}};
   plan.provenance.costing=captureCosting(plan,scenario.manualDecisions!.tariff!);
+  rebindFleet(plan);
   const baseScenario:Scenario={...structuredClone(scenario),id:baseId,parentId:null,kind:'base',label:`${x.source.plan.day} · updated inputs`,manualPlanId:basePlanId,selectedPlanId:basePlanId};
   const basePlan={...structuredClone(plan),id:basePlanId,scenarioId:baseId};
   basePlan.provenance.costing=captureCosting(basePlan,scenario.manualDecisions!.tariff!);
+  rebindFleet(basePlan);
   return this.store.tx(async client=>{
    const again=await receipt(client);if(again)return again;
    await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))',[`input-day/${this.tenant}/${x.source.scenario.day}`]);

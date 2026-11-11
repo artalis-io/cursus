@@ -1,3 +1,4 @@
+import {fleetUtilization} from '../fleet-utilization.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {randomUUID} from 'node:crypto';
@@ -133,9 +134,11 @@ test('snapshot replacement through two APIs is atomic, idempotent, tenant-scoped
   assert.deepEqual(race.map(r=>r.statusCode).sort(),[201,409],race.map(r=>r.body).join('\n'));
   const winner=race.findIndex(r=>r.statusCode===201),updated=race[winner]!.json() as Plan;
   const replay=await post<Plan>(1-winner,path+'apply',winner===0?apply:{intent:other,previewSha256:otherPreview.previewSha256,acknowledgeSupersession:true},scenario.revision);
+  assert.equal(updated.provenance.fleet!.planId,updated.id);assert.equal(updated.provenance.fleet!.scenarioId,updated.scenarioId);
   const costResponse=await apps[1-winner]!.inject({url:`/api/plans/${updated.id}/cost-breakdown`});assert.equal(costResponse.statusCode,200);assert.equal(costResponse.json().status,'verified');assert.equal(costResponse.json().total,updated.cost!.total);
   assert.equal(replay.id,updated.id);assert.equal((await a.listPlans(tenant)).length,4);
   const current=(await b.getScenario(tenant,updated.scenarioId))!;
+  const newBase=(await b.getScenario(tenant,current.parentId!))!,baseResult=(await b.getPlan(tenant,newBase.selectedPlanId!))!;assert.equal(baseResult.provenance.fleet!.planId,baseResult.id);assert.equal(baseResult.provenance.fleet!.scenarioId,newBase.id);assert.equal(fleetUtilization(baseResult).inventory,'complete');assert.equal(fleetUtilization(updated).inventory,'complete');
   assert.equal((await new ScenarioRepository(a,tenant).ensureBase(current.day,'Ignored duplicate')).id,current.parentId,'logical aliases reuse their actual base');
   assert.equal(current.datasetBinding?.datasetId,next.datasetId);assert.equal(current.datasetBinding?.dayId,'revised-day');
   assert.deepEqual(current.manualDecisions?.decisions['1091'],{kind:'vehicle',vehicleId:7});

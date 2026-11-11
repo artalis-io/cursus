@@ -32,10 +32,10 @@ function Kpi({ name, label, value, detail, compact, warning=false, onClick, acti
  * previewDistanceKm/previewCostTotal, when set, reflect staged-but-not-replanned
  * reorders: saved totals remain authoritative, with a separately labeled
  * preview beside them until Replan commits it. Compact never hides core metrics. */
-export function KpiStrip({ plan, baseline, compare, job, previewDistanceKm, previewCostTotal, compact=false, onToggleDetails, onOpenCost }: {
+export function KpiStrip({ plan, baseline, compare, job, previewDistanceKm, previewCostTotal, compact=false, onToggleDetails, onOpenCost, onOpenFleet }: {
   plan: Plan; baseline: Plan; compare: boolean; job: JobView | null;
   previewDistanceKm?: number | null; previewCostTotal?: number | null;
-  compact?:boolean; onToggleDetails?:()=>void; onOpenCost?:()=>void;
+  compact?:boolean; onToggleDetails?:()=>void; onOpenCost?:()=>void; onOpenFleet?:()=>void;
 }) {
   const t = useT();
   const s = plan.stats;
@@ -61,7 +61,7 @@ export function KpiStrip({ plan, baseline, compare, job, previewDistanceKm, prev
       <Kpi name="served" compact={compact} label={t('kpi.servedTotal')} value={`${s.servedOrders} / ${s.totalOrders}`}
         detail={!compact&&compare?<Delta value={s.servedOrders-b.servedOrders} goodWhenNegative={false}/>:undefined}/>
       <Kpi name="unassigned" compact={compact} label={t('kpi.unassigned')} value={`${plan.unassigned.length}`} warning={plan.unassigned.length>0}/>
-      <Kpi name="vehicles" compact={compact} label={t('kpi.vehiclesUsed')} value={`${s.vehiclesUsed}`}
+      <Kpi name="vehicles" onClick={onOpenFleet} actionLabel={t('fleetUse.open')} compact={compact} label={t('kpi.vehiclesUsed')} value={`${s.vehiclesUsed}`}
         detail={!compact&&compare?<Delta value={s.vehiclesUsed-b.vehiclesUsed} goodWhenNegative allowImprovement={allowImprovement}/>:undefined}/>
       <Kpi name="trips" compact={compact} label={t('compare.trips')} value={`${s.trips}`}
         detail={!compact&&compare?<Delta value={s.trips-b.trips} goodWhenNegative allowImprovement={allowImprovement}/>:undefined}/>
