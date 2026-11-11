@@ -149,5 +149,29 @@ test('prepared commercial data and approved fleet/location revisions run through
   const bundle=await portable.json() as {otto_scenario:number};assert.equal(bundle.otto_scenario,2);
   const imported=await post<Scenario>(origins[1]!,'/api/scenarios/import',bundle);
   assert.deepEqual(imported.planningProfiles,scenario.planningProfiles);assert.equal(imported.deliveryDatasetSha256,f.document.datasetSha256);
+  // Actual manual decision -> reviewed profile draft -> native HGS -> peer read.
+  const manualPlan=await post<Plan>(origins[0]!,`/api/scenarios/${scenario.id}/manual-plan`,{parentPlanId:plan.id,batch:{operationId:'profile-manual-'+randomUUID(),datasetSha256:f.document.datasetSha256,
+    commands:[{op:'assign',requestId:91,vehicleId:restricted.id,tripId:'trip-0',position:0}]}},scenario.revision);
+  const manualScenario=await a.getScenario(tenant,manualPlan.scenarioId);assert.ok(manualScenario);
+  const revised=structuredClone(fleet);revised.reason='Reviewed operating envelope';revised.settings!.vehicles.forEach(v=>{v.capacityKg=800;});
+  const proposal=await post<ProfileRef&{version:number}>(origins[0]!,`/api/profiles/${refs[0]!.id}/revisions`,{content:revised},2);
+  await post(origins[1]!,`/api/profiles/${proposal.id}/activate`,{revision:proposal.revision},proposal.version);
+  const intent={operationId:'native-profile-change-'+randomUUID(),parentPlanId:manualPlan.id,reason:'Verified smaller public payload',profiles:[{id:proposal.id,kind:'fleet',revision:proposal.revision,sha256:proposal.sha256},refs[1]],
+    releaseRequestIds:[],unlockVehicleIds:[],clearVehicleOverrideIds:[],acknowledgeInvalid:false};
+  const preview=await post<{previewSha256:string;conflicts:unknown[];stats:{servedOrders:number}}>(origins[0]!,`/api/scenarios/${manualScenario.id}/profile-change-preview`,intent,manualScenario.revision);
+  assert.deepEqual(preview.conflicts,[]);assert.equal(preview.stats.servedOrders,2);
+  const draft=await post<{plan:Plan;scenario:Scenario}>(origins[1]!,`/api/scenarios/${manualScenario.id}/profile-change-apply`,{intent,previewSha256:preview.previewSha256,confirm:true},manualScenario.revision);
+  assert.deepEqual(draft.plan.manual!.layout.routes,manualPlan.manual!.layout.routes);assert.deepEqual(draft.plan.manual!.layout.history,manualPlan.manual!.layout.history);
+  assert.equal(draft.plan.vehicles[0]!.capacityKg,800);
+  const nextJob=await post<{jobId:string}>(origins[1]!,`/api/scenarios/${draft.scenario.id}/solve`,{budgetSec:1},draft.scenario.revision);
+  const nextLease=await a.claimJob('solve','profile-change-native',30,tenant);assert.ok(nextLease);assert.equal(nextLease.id,nextJob.jobId);
+  const nextProfiles=await new ProfileRepository(b,tenant).resolve(draft.scenario.planningProfiles!);
+  const solved=await solveConvertedDataset(objects,tenant,admitted.manifest,draft.scenario,1,'vehicles',AbortSignal.timeout(30000),false,f.context,draft.plan,nextProfiles);
+  assert.equal(solved.stats.servedOrders,2);assert.equal(solved.vehicles.find(v=>v.trips.some(t=>t.stops.some(s=>s.requestId===91)))!.id,restricted.id);
+  assert.equal(solved.provenance.profileChange!.sourcePlanId,manualPlan.id);assert.deepEqual(solved.assignments!.layout.history,draft.plan.manual!.layout.history);
+  await b.completeSolve(nextLease,solved.id,draft.scenario.id,draft.scenario.revision,solved);
+  const cross=await fetch(origins[0]+`/api/plans/${solved.id}`);assert.equal(cross.status,200);assert.deepEqual((await cross.json() as Plan).provenance.profileChange,solved.provenance.profileChange);
+  assert.deepEqual(await a.getPlan(tenant,manualPlan.id),manualPlan,'source plan is immutable');
+
  }finally{testConfig.surgeBin=oldBin;for(const app of apps)await app.close();await Promise.all([a.close(),b.close()]);s3.destroy();}
 });
