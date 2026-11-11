@@ -1,3 +1,4 @@
+import {deadlineSlack} from '../../../server/src/schedule-review';
 import { Ban, CheckCircle2, AlertTriangle, Pin, PinOff, X, RotateCcw, SlidersHorizontal, ChevronRight, ChevronUp, ChevronDown, ArrowLeft, ArrowRight, Lock, LockOpen, GripVertical, ListOrdered, Loader2 } from 'lucide-react';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { ScrollArea } from '@/components/ui/scroll-area';
@@ -75,8 +76,9 @@ function routeRationale(trip: Trip): { windowDriven: boolean; tight: number; lat
   for (const s of trip.stops) {
     const hasWindow = s.twEndSec < 86_400 || s.twStartSec > 0;
     if (hasWindow) windowed++;
-    if (s.lateBySec > 1) late++;
-    else if (hasWindow && s.twEndSec - s.arrivalSec < 1800) tight++; // <30 min slack
+    const slack=deadlineSlack(s);
+    if(slack.state==='late')late++;
+    else if(slack.state==='within30')tight++; // service-start closing slack; review threshold only
     if (s.waitSec > 60) waits++;
   }
   return { windowDriven: windowed >= Math.ceil(trip.stops.length / 2), tight, late, waits };
