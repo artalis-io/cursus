@@ -1,3 +1,5 @@
+import {unknownOperatingLimits} from '../operating-limits.js';
+import {prepareManualInput,evaluateManualInput} from '../plan/manual-adapter.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {randomUUID,createHash} from 'node:crypto';
@@ -47,6 +49,14 @@ test('profile governance across two APIs is tenant-isolated, revision-fenced and
   const bindings=await Promise.all(stores.map(store=>new ProfileRepository(store,tenant).bind(f.scenario.id,1,[ref],actor)) .map(p=>p.then(v=>({ok:true,value:v}),()=>({ok:false}))));
   assert.equal(bindings.filter(r=>r.ok).length,1);
   assert.equal((await a.getScenario(tenant,f.scenario.id))!.revision,2);
+  const fleetValue:ProfileContent={schemaVersion:1,kind:'fleet',label:'Operating envelope',reason:'Verified fleet shift',datasetSha256:value.datasetSha256,
+   settings:{datasetSha256:value.datasetSha256,tariff:f.context.tariff,vehicles:f.context.day.request.vehicles.map(v=>({id:v.id,ref:v.ref,vehicleClass:null,isSubcontractor:false,tonnage:12,hasTailLift:true,reloadSec:120,operatingLimits:{...unknownOperatingLimits(),maxTrips:{state:'configured',value:2}}}))}};
+  const fleetVersion=await repo.propose(fleetValue,0,undefined,actor);await repo.activate(fleetVersion.id,1,1,actor);
+  const fleetRef={id:fleetVersion.id,kind:'fleet' as const,revision:1,sha256:fleetVersion.sha256};
+  assert.deepEqual((await new ProfileRepository(stores[1]!,tenant).resolve([fleetRef]))[0]!.content,fleetValue);
+  const fleetRace=await Promise.all(stores.map(store=>new ProfileRepository(store,tenant).propose({...fleetValue,reason:'Shift change'},2,fleetVersion.id,actor).then(()=>true,()=>false)));
+  assert.equal(fleetRace.filter(Boolean).length,1);
+  assert.deepEqual((await repo.resolve([fleetRef]))[0]!.content,fleetValue,'new proposal must not mutate approved revision');
   const other={...value,datasetSha256:'b'.repeat(64),label:'Other admitted day'};
   await a.pool.query("INSERT INTO datasets(tenant_id,id,status,manifest) VALUES($1,'other-input','admitted',$2)",[tenant,{artifacts:{request:{sha256:other.datasetSha256}},days:[{dayId:'other-day'}]}]);
   const otherVersion=await repo.propose(other,0,undefined,actor);await repo.activate(otherVersion.id,1,1,actor);
@@ -93,7 +103,7 @@ test('prepared commercial data and approved fleet/location revisions run through
   assert.ok(admitted.manifest.artifacts?.shipments);
   const initial=await post<Scenario>(origins[0]!,'/api/scenarios',{day:'commercial-day'});
   const fleet:ProfileContent={schemaVersion:1,kind:'fleet',datasetSha256:f.document.datasetSha256,label:'Verified public fleet',reason:'Verified equipment',settings:{datasetSha256:f.document.datasetSha256,tariff:f.context.tariff,
-   vehicles:f.request.vehicles.map(v=>({id:v.id,ref:v.ref,vehicleClass:null,isSubcontractor:false,tonnage:v.id===42?3.5:12,hasTailLift:true,reloadSec:120,available:true,capacityKg:1000,capacityPallets:10}))}};
+   vehicles:f.request.vehicles.map(v=>({id:v.id,ref:v.ref,vehicleClass:null,isSubcontractor:false,tonnage:v.id===42?3.5:12,hasTailLift:true,reloadSec:120,available:true,capacityKg:1000,capacityPallets:10,operatingLimits:{shift:{state:'configured',startSec:1000,endSec:10000},maxTrips:{state:'configured',value:1},maxDistanceKm:{state:'configured',value:10},maxDurationSec:{state:'configured',value:1000}}}))}};
   const locations:ProfileContent={schemaVersion:1,kind:'locations',datasetSha256:f.document.datasetSha256,label:'Verified public site',reason:'Verified GVW and unloading',locations:[
    {locationId:1,maxGrossWeightKg:7500,requiresTailLift:true,serviceSeconds:60,windowStartSeconds:0,windowEndSeconds:10000,reason:'Site verification'}]};
   const refs:ProfileRef[]=[];
@@ -107,12 +117,25 @@ test('prepared commercial data and approved fleet/location revisions run through
   const profiles=await new ProfileRepository(b,tenant).resolve(scenario.planningProfiles??[]);
   const plan=await solveConvertedDataset(objects,tenant,admitted.manifest,scenario,1,'vehicles',AbortSignal.timeout(30000),false,f.context,undefined,profiles);
   assert.equal(plan.stats.servedOrders,2);assert.equal(plan.stats.deliveryStops,2);
+  assert.ok(plan.vehicles.every(v=>v.trips.length===1&&v.distanceKm<=10&&v.trips.every(t=>t.startSec>=1000&&t.endSec<=10000&&t.endSec-t.startSec<=1000)));
+  assert.ok(plan.provenance.fleet!.vehicles.every(v=>v.maxTrips===1&&v.maxDistanceKm===10&&v.maxDurationSec===1000&&v.shiftStartSec===1000));
+  const manualContext=await admittedManualDatasetLoader(b,objects,tenant,f.context)(plan,scenario);
+  const manualInput=prepareManualInput(plan,scenario,manualContext),manual=evaluateManualInput(manualInput,manualInput.layout,scenario);
+  assert.equal(manual.validation.valid,true);assert.deepEqual(manual.stats.totalDistanceKm,plan.stats.totalDistanceKm);
+  assert.ok(manualInput.request.vehicles.every(v=>v.max_trips===1&&v.max_distance===10000&&v.max_duration===1000&&v.shift_early===1000));
   const restricted=plan.vehicles.find(v=>v.trips.some(t=>t.stops.some(s=>s.requestId===91)))!;
   assert.equal(restricted.id,42);assert.equal(restricted.tonnage,3.5);assert.equal(restricted.hasTailLift,true);
   assert.deepEqual(plan.shipmentMetadata?.deliveries.map(d=>d.requestId),[91,92]);
   assert.equal(plan.shipmentMetadata?.shipments.length,2);
   assert.equal(plan.vehicles.flatMap(v=>v.trips.flatMap(t=>t.stops)).reduce((sum,s)=>sum+s.weightKg,0),200);
   await b.completeSolve(lease,plan.id,scenario.id,scenario.revision,plan);
+  const workflow=await fetch(origins[1]+`/api/plans/${plan.id}/workflow`);assert.equal(workflow.status,200);
+  assert.ok(!(await workflow.json() as {blockers:string[]}).blockers.some(m=>m.includes('operating')));
+  const bad=structuredClone(plan);bad.id='bad-operating-'+randomUUID();bad.provenance.fleet!.planId=bad.id;for(const v of bad.provenance.fleet!.vehicles)delete v.operatingLimits;
+  await b.pool.query('INSERT INTO plans(tenant_id,id,scenario_id,scenario_revision,body) VALUES($1,$2,$3,$4,$5)',[tenant,bad.id,scenario.id,scenario.revision,bad]);
+  const blocked=await fetch(origins[0]+`/api/plans/${bad.id}/workflow`);assert.equal(blocked.status,200);
+  assert.ok((await blocked.json() as {blockers:string[]}).blockers.some(m=>m.includes('operating')));
+  assert.equal((await fetch(origins[1]+`/api/plans/${bad.id}/handoff.json?approval=required`)).status,409);
   const peer=await fetch(origins[1]+`/api/plans/${plan.id}`);assert.equal(peer.status,200);
   assert.deepEqual((await peer.json() as Plan).shipmentMetadata,plan.shipmentMetadata);
   assert.equal(plan.provenance.fleet!.scope,'complete');assert.equal(plan.provenance.fleet!.planId,plan.id);assert.equal(plan.provenance.fleet!.inputSha256,plan.provenance.inputSha256);

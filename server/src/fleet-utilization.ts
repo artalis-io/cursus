@@ -1,3 +1,4 @@
+import {parseOperatingLimits} from './operating-limits.js';
 // Browser-safe pure projection of an immutable saved plan. No current settings,
 // matrix loading, native calls, mutations, or guesses about consolidation.
 import type {FleetFact,FleetSnapshot} from './fleet-contract.js';
@@ -25,14 +26,24 @@ const nonnegative=(n:unknown):n is number=>finite(n)&&n>=0;
 const positive=(n:unknown):n is number=>finite(n)&&n>0;
 const close=(a:number,b:number,tolerance=1e-6)=>Math.abs(a-b)<=tolerance;
 const nullable=(n:unknown)=>n===null||nonnegative(n);
+function operatingFactValid(v:FleetFact):boolean {
+ const l=v.operatingLimits;if(!l)return true;
+ try{parseOperatingLimits(l);}catch{return false;}
+ if(l.shift.state==='configured'&&(l.shift.startSec!==v.shiftStartSec||l.shift.endSec!==v.shiftEndSec))return false;
+ if(l.shift.state==='unlimited'&&(v.shiftStartSec!==null||v.shiftEndSec!==null))return false;
+ for(const [key,field] of [['maxTrips','maxTrips'],['maxDistanceKm','maxDistanceKm'],['maxDurationSec','maxDurationSec']] as const){
+  const bound=l[key];if(bound.state==='configured'&&bound.value!==v[field]||bound.state==='unlimited'&&v[field]!==null)return false;
+ }
+ return true;
+}
 function validSnapshot(s:FleetSnapshot,p:FleetPlan):boolean {
   return s.version===1&&s.planId===p.id&&s.scenarioId===p.scenarioId&&s.scenarioRevision===p.scenarioRevision&&s.inputSha256===p.provenance.inputSha256&&
     /^[a-f0-9]{64}$/.test(s.inputSha256)&&['complete','eligible_only'].includes(s.scope)&&Array.isArray(s.vehicles)&&
-    new Set(s.vehicles.map(v=>v?.id)).size===s.vehicles.length&&s.vehicles.every(v=>v&&Number.isSafeInteger(v.id)&&v.id>=0&&typeof v.ref==='string'&&v.ref.length>0&&
+    new Set(s.vehicles.map(v=>v?.id)).size===s.vehicles.length&&s.vehicles.every(v=>v&&operatingFactValid(v)&&Number.isSafeInteger(v.id)&&v.id>=0&&typeof v.ref==='string'&&v.ref.length>0&&
       ['available','excluded','unavailable'].includes(v.availability)&&[v.capacityKg,v.capacityPallets,v.shiftStartSec,v.shiftEndSec,v.maxDurationSec,v.maxDistanceKm,v.maxTrips,v.reloadSec].every(nullable)&&
       (v.capacityKg===null||positive(v.capacityKg))&&(v.capacityPallets===null||positive(v.capacityPallets))&&
       (v.shiftStartSec===null||v.shiftEndSec===null||v.shiftStartSec<=v.shiftEndSec)&&
-      [v.shiftEndSec,v.maxDurationSec,v.maxDistanceKm].every(n=>n===null||positive(n))&&
+      (v.shiftEndSec===null||positive(v.shiftEndSec)||v.shiftEndSec===0&&v.operatingLimits?.shift.state==='configured'&&v.operatingLimits.shift.endSec===0)&&[v.maxDurationSec,v.maxDistanceKm].every(n=>n===null||positive(n))&&
       (v.maxTrips===null||Number.isSafeInteger(v.maxTrips)&&v.maxTrips>0))&&
     new Set(p.vehicles.map(v=>v.id)).size===p.vehicles.length&&
     p.vehicles.every(v=>s.vehicles.some(f=>f.id===v.id&&f.ref===v.ref&&f.capacityKg===(positive(v.capacityKg)?v.capacityKg:null)&&f.capacityPallets===(positive(v.capacityPallets)?v.capacityPallets:null)));

@@ -92,3 +92,11 @@ test('fractional pallet demand remains scalar and percentage overflow is withhel
  v.capacityKg=source.vehicles[0]!.capacity[0]=1e-308;p.provenance.fleet=captureFleet(p,source);
  assert.equal(fleetUtilization(p).vehicles[0]!.kg!.percent,null);
 });
+
+test('explicit unlimited remains distinct from old unknown evidence and conflicting metadata fails closed',()=>{
+ const {p,source}=fixture();const l={shift:{state:'unlimited'},maxTrips:{state:'unlimited'},maxDistanceKm:{state:'unlimited'},maxDurationSec:{state:'unlimited'}} as const;
+ for(const v of source.vehicles){delete v.shift_early;delete v.shift_late;v.max_trips=0;v.max_distance=0;v.max_duration=0;v.operating_limits=structuredClone(l);}
+ p.provenance.fleet=captureFleet(p,source);assert.equal(fleetUtilization(p).inventory,'complete');
+ assert.equal(fleetUtilization(p).vehicles[0]!.limits!.operatingLimits!.maxTrips.state,'unlimited');assert.equal(fleetUtilization(p).vehicles[0]!.remainingTrips,null);
+ p.provenance.fleet.vehicles[0]!.maxTrips=3;assert.equal(fleetUtilization(p).inventory,'invalid');
+});

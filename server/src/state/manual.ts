@@ -157,7 +157,7 @@ export class ManualPlanPublisher {
       revision: revision+1, manualPlanId: `pln_${randomUUID()}`,
       manualDecisions: { datasetSha256: input.datasetSha256, decisions: structuredClone(input.layout.decisions),
         tariff:structuredClone(context.tariff),tariffSha256:input.tariffSha256,fleetInfo:structuredClone([...context.vehicleInfo]),
-        reloadSeconds:structuredClone([...context.reloadSeconds]),
+        reloadSeconds:structuredClone([...context.reloadSeconds]),operatingLimits:structuredClone([...(context.operatingLimits??[])]),
         unavailableVehicleIds:[...(context.unavailableVehicleIds??[])],
         requestIds: [...input.layout.requestIds],
         origins: structuredClone(input.layout.origins), history: structuredClone(input.layout.history) } };

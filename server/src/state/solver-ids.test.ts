@@ -86,3 +86,11 @@ test('native Surge solves a filtered day with an excluded vehicle and locked reo
       assert.deepEqual(solution.unassigned, []);
     } finally { await rm(scratch, { recursive: true, force: true }); }
   });
+
+test('operating profile duration is hard and application evidence never enters native JSON',()=>{
+ const limits={shift:{state:'configured',startSec:0,endSec:1000},maxTrips:{state:'configured',value:2},maxDistanceKm:{state:'configured',value:3},maxDurationSec:{state:'configured',value:500}} as const;
+ const request={config:{hard_max_duration:false},vehicles:[{id:7,ref:'PUBLIC',approved_operating:limits,operating_limits:limits,approved_capacity:[1000,10],shift_early:0,shift_late:1000,max_trips:2,max_distance:3000,max_duration:500}],tasks:[],requests:[]} as unknown as SurgeRequest;
+ const before=structuredClone(request),native=nativeSolveRequest(request).request;
+ assert.equal(native.config.hard_max_duration,true);assert.equal(native.vehicles[0]!.approved_operating,undefined);assert.equal(native.vehicles[0]!.operating_limits,undefined);assert.equal(native.vehicles[0]!.approved_capacity,undefined);
+ assert.equal(native.vehicles[0]!.shift_early,0);assert.equal(native.vehicles[0]!.max_duration,500);assert.deepEqual(request,before);
+});

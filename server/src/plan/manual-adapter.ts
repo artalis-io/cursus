@@ -19,6 +19,7 @@ import { evaluateManualLayout, manualTripKey, type ManualEvaluation, type Manual
 export interface ManualDatasetContext {
   datasetSha256?: string;
   unavailableVehicleIds?: number[];
+  operatingLimits?:Map<number,import('../planning-profile-contract.js').OperatingLimits>;
   day: LoadedDay;
   vehicleInfo: Map<string, VehicleInfo>;
   tariff: Tariff;
@@ -37,7 +38,8 @@ export function prepareManualInput(parent: Plan, scenario: Scenario, context: Ma
     requireThat(snapshot.tariff && snapshot.tariffSha256 === tariffIdentity(snapshot.tariff) &&
       snapshot.tariffSha256 === tariffIdentity(tariff) && snapshot.fleetInfo && snapshot.reloadSeconds &&
       isDeepStrictEqual(new Map(snapshot.fleetInfo),vehicleInfo) &&
-      isDeepStrictEqual(new Map(snapshot.reloadSeconds),context.reloadSeconds),
+      isDeepStrictEqual(new Map(snapshot.reloadSeconds),context.reloadSeconds) &&
+      isDeepStrictEqual(new Map(snapshot.operatingLimits??[]),context.operatingLimits??new Map()),
       'manual tariff, fleet or reload settings changed; reconcile settings before editing');
     requireThat(isDeepStrictEqual([...(snapshot.unavailableVehicleIds??[])].sort((a,b)=>a-b),[...unavailable].sort((a,b)=>a-b)), 'manual vehicle availability policy changed');
   }

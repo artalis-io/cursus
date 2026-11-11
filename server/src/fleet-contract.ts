@@ -1,5 +1,6 @@
 /** Saved decision evidence, not a live fleet registry or feasibility certificate. */
 export interface FleetFact {
+  operatingLimits?:import('./planning-profile-contract.js').OperatingLimits;
   id:number;ref:string;availability:'available'|'excluded'|'unavailable';
   capacityKg:number|null;capacityPallets:number|null;
   shiftStartSec:number|null;shiftEndSec:number|null;

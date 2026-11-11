@@ -1,3 +1,4 @@
+import {operatingSummary} from '@/lib/operating-limits';
 import {useEffect,useState} from 'react';
 import {Dialog,DialogContent,DialogHeader,DialogTitle} from '@/components/ui/dialog';
 import {Button} from '@/components/ui/button';
@@ -5,8 +6,27 @@ import {useI18n,describeApiError} from '@/i18n';
 import {usePermission} from '@/permissions';
 import {api} from '@/lib/api';
 import type {Plan,Scenario} from '@/types';
-import type {ProfileContent,ProfileRef,ProfileRevision} from '../../../server/src/planning-profile-contract';
+import type {OperatingLimits,ProfileContent,ProfileRef,ProfileRevision} from '../../../server/src/planning-profile-contract';
 
+const unknownLimits=():OperatingLimits=>({shift:{state:'unknown'},maxTrips:{state:'unknown'},maxDistanceKm:{state:'unknown'},maxDurationSec:{state:'unknown'}});
+function OperatingLimitsEditor({value,onChange,hu,vehicle}:{value:OperatingLimits;onChange:(value:OperatingLimits)=>void;hu:boolean;vehicle:string}){
+ const labels={shift:hu?'Műszak':'Shift',maxTrips:hu?'Max. fordulók':'Maximum trips',maxDistanceKm:hu?'Max. távolság (km)':'Maximum distance (km)',maxDurationSec:hu?'Max. időtartam (perc)':'Maximum duration (minutes)'};
+ return <div className="w-full space-y-2 border-t pt-2" data-operating-limits={vehicle}>
+  <p className="text-muted-foreground">{hu?'Jóváhagyott korlátok. Az ismeretlen érték megőrzi a forrásbeállítást; a szcenárió csak szigoríthatja a beállított korlátot.':'Approved limits. Unknown preserves source settings; scenario overrides may only tighten configured limits.'}</p>
+  <div className="flex flex-wrap gap-3">{(['shift','maxTrips','maxDistanceKm','maxDurationSec'] as const).map(key=>{
+   const limit=value[key];const update=(next:OperatingLimits[typeof key])=>onChange({...value,[key]:next});
+   return <fieldset key={key} className="space-y-1"><legend>{labels[key]}</legend>
+    <select aria-label={`${vehicle} ${labels[key]} ${hu?'állapota':'state'}`} className="rounded border bg-background p-1" value={limit.state} onChange={e=>{
+     const state=e.target.value;if(state==='configured')update(key==='shift'?{state,startSec:21600,endSec:64800}:{state,value:key==='maxDurationSec'?36000:key==='maxDistanceKm'?500:1});else update({state:state as 'unknown'|'unlimited'});
+    }}><option value="unknown">{hu?'Ismeretlen / forrás szerint':'Unknown / source settings'}</option><option value="unlimited">{hu?'Korlátlan':'Unlimited'}</option><option value="configured">{hu?'Beállított':'Configured'}</option></select>
+    {limit.state==='configured'&&('value' in limit?<input required aria-label={`${vehicle} ${labels[key]} ${hu?'értéke':'value'}`} className="ml-1 w-24 rounded border bg-background p-1" type="number" min={key==='maxDurationSec'?1/60:key==='maxDistanceKm'?0.001:1} step={key==='maxDurationSec'?'any':key==='maxDistanceKm'?0.001:1} max={key==='maxTrips'?10000:key==='maxDistanceKm'?1000000:2880} value={limit.value/(key==='maxDurationSec'?60:1)} onChange={e=>update({state:'configured',value:Number(e.target.value)*(key==='maxDurationSec'?60:1)})}/>:<div className="flex gap-2">
+     <WindowInput label={`${vehicle} ${hu?'Műszakkezdés':'Shift start'} (HH:MM)`} value={limit.startSec} onChange={startSec=>update({...limit,startSec})}/>
+     <WindowInput label={`${vehicle} ${hu?'Műszak vége':'Shift end'} (HH:MM)`} value={limit.endSec} onChange={endSec=>update({...limit,endSec})}/>
+    </div>)}
+   </fieldset>;
+  })}</div>
+ </div>;
+}
 function WindowInput({value,onChange,label}:{value:number;onChange:(value:number)=>void;label:string}){
  const format=(s:number)=>`${String(Math.floor(s/3600)).padStart(2,'0')}:${String(Math.floor(s%3600/60)).padStart(2,'0')}${s%60?`:${String(s%60).padStart(2,'0')}`:''}`;
  const [text,setText]=useState(format(value));
@@ -50,6 +70,7 @@ export function ProfilesDialog({open,onOpenChange,plan,scenario,onBound}:{open:b
     <label><input type="checkbox" checked={v.hasTailLift} onChange={e=>change(c=>{c.settings!.vehicles[i].hasTailLift=e.target.checked;})}/> {hu?'Emelőhátfal':'Tail-lift'}</label>
     <label><input type="checkbox" checked={v.available!==false} onChange={e=>change(c=>{c.settings!.vehicles[i].available=e.target.checked;})}/> {hu?'Elérhető':'Available'}</label>
     <label>{hu?'Újrarakodás (perc)':'Reload (minutes)'}<input className="ml-1 w-20 rounded border bg-background p-1" type="number" min="0" step="any" required value={v.reloadSec/60} onChange={e=>change(c=>{c.settings!.vehicles[i].reloadSec=Math.round(Number(e.target.value)*60);})}/></label>
+    <OperatingLimitsEditor vehicle={v.ref} hu={hu} value={v.operatingLimits??unknownLimits()} onChange={limits=>change(c=>{c.settings!.vehicles[i].operatingLimits=limits;})}/>
    </fieldset>)}
    {draft.content.locations?.map((rule,i)=><fieldset key={rule.locationId} className="flex flex-wrap items-center gap-3 rounded border p-2 text-xs"><legend>{rule.label??`${hu?'Helyszín':'Location'} ${rule.locationId}`}</legend>
     <label>{hu?'Max. össztömeg (kg)':'Maximum GVW (kg)'}<input className="ml-1 w-24 rounded border bg-background p-1" type="number" min="1" step="1" value={rule.maxGrossWeightKg??''} onChange={e=>change(c=>{c.locations![i].maxGrossWeightKg=e.target.value===''?null:Number(e.target.value);})}/></label>
@@ -67,7 +88,7 @@ export function ProfilesDialog({open,onOpenChange,plan,scenario,onBound}:{open:b
    <strong>{row.body.label} · v{row.revision}</strong> <span className="text-xs text-muted-foreground">{row.approved_at?(row.active_revision===row.revision?(hu?'Aktív':'Active'):(hu?'Jóváhagyott':'Approved')):(hu?'Javaslat':'Proposed')}</span>
    <p>{row.body.reason}</p><p className="break-all text-xs text-muted-foreground">{row.sha256}</p>
    <details className="text-xs"><summary className="cursor-pointer">{hu?'Profil részletei':'Profile details'}</summary>
-    {row.body.settings?.vehicles.map(v=><p key={v.id}>{v.ref} · {hu?'Össztömeg':'GVW'}: {v.tonnage??(hu?'ismeretlen':'unknown')} t · {hu?'Teherbírás':'Payload'}: {v.capacityKg??'—'} kg / {v.capacityPallets??'—'} {hu?'raklap':'pallets'} · {v.hasTailLift?(hu?'emelőhátfal':'tail-lift'):(hu?'nincs emelőhátfal':'no tail-lift')} · {v.available===false?(hu?'nem elérhető':'unavailable'):(hu?'elérhető':'available')} · {v.reloadSec/60} {hu?'perc újrarakodás':'min reload'}</p>)}
+    {row.body.settings?.vehicles.map(v=><p key={v.id}>{v.ref} · {hu?'Össztömeg':'GVW'}: {v.tonnage??(hu?'ismeretlen':'unknown')} t · {hu?'Teherbírás':'Payload'}: {v.capacityKg??'—'} kg / {v.capacityPallets??'—'} {hu?'raklap':'pallets'} · {v.hasTailLift?(hu?'emelőhátfal':'tail-lift'):(hu?'nincs emelőhátfal':'no tail-lift')} · {v.available===false?(hu?'nem elérhető':'unavailable'):(hu?'elérhető':'available')} · {v.reloadSec/60} {hu?'perc újrarakodás':'min reload'} · {operatingSummary(v.operatingLimits,hu)}</p>)}
     {row.body.locations?.map(rule=><p key={rule.locationId}>{rule.label??rule.locationId} · {hu?'Max. össztömeg':'Maximum GVW'}: {rule.maxGrossWeightKg??'—'} kg · {rule.requiresTailLift?(hu?'emelőhátfal szükséges':'tail-lift required'):(hu?'emelőhátfal nem szükséges':'tail-lift not required')} · {rule.reason}</p>)}
     {row.body.settings&&<details><summary>{hu?'Díjszabás':'Rate card'}</summary><dl className="grid grid-cols-2 gap-1">{Object.entries(row.body.settings.tariff as Record<string,unknown>).map(([key,value])=><div key={key} className="contents"><dt>{({currency:hu?'Pénznem':'Currency',source:hu?'Forrás':'Source',model:hu?'Díjmodell':'Charging model',perKmDefault:hu?'Alap km-díj':'Default rate / km',fixedPerVehicle:hu?'Fix járműdíj':'Fixed / vehicle',perTripBase:hu?'Alap fuvardíj':'Base / trip',perKm:hu?'Km-díj':'Rate / km',perDrop:hu?'Lerakódíj':'Rate / drop',includedDrops:hu?'Beépített lerakók':'Included drops',perKmByClass:hu?'Km-díj kategóriánként':'Rate / km by class',fixedByClass:hu?'Fix díj kategóriánként':'Fixed rate by class',subcontractorMultiplier:hu?'Alvállalkozói szorzó':'Subcontractor multiplier',ownFleetMultiplier:hu?'Saját flotta szorzó':'Own-fleet multiplier'} as Record<string,string>)[key]??key}</dt><dd className="break-words">{value&&typeof value==='object'?Object.entries(value).map(([name,rate])=>`${name}: ${rate}`).join('; '):String(value)}</dd></div>)}</dl></details>}
    </details>

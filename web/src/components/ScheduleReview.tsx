@@ -52,7 +52,7 @@ export function ScheduleReview({plan,scenario,pending,onSelect}:{plan:Plan;scena
       <div className="mt-2 space-y-1">
        {v.reason?<p>{t(`schedule.reason.${v.reason}`)}</p>:<>
         <p>{t('schedule.finalReturn')}: {clock(v.finishSec!)}</p>
-        {(['shift','duration'] as const).map(key=><p key={key}>{t(`schedule.limit.${key}`)}: {v[key]?key==='shift'?`${clock(v[key]!.baseline)} → ${clock(v[key]!.delayed)} / ${clock(v[key]!.limit)}`:`${minutes(v[key]!.baseline)} → ${minutes(v[key]!.delayed)} / ${minutes(v[key]!.limit)}`:t('schedule.unknown')}</p>)}
+        {(['shift','duration'] as const).map(key=><p key={key}>{t(`schedule.limit.${key}`)}: {v[key]?key==='shift'?`${clock(v[key]!.baseline)} → ${clock(v[key]!.delayed)} / ${clock(v[key]!.limit)}`:`${minutes(v[key]!.baseline)} → ${minutes(v[key]!.delayed)} / ${minutes(v[key]!.limit)}`:v.unlimited?.[key]?(lang==='hu'?'Korlátlan':'Unlimited'):t('schedule.unknown')}</p>)}
         <p className="text-muted-foreground">{t('schedule.minutesNote')}</p>
         {v.stops.map((s,index)=><p key={`${s.tripIndex}/${s.seq}/${index}`} data-delay-stop={`${v.vehicleId}/${s.tripIndex}/${s.seq}`} className="break-words">{link(s,`${s.orderNo}${s.requestId!==undefined?` · ${t('review.delivery',{id:s.requestId})}`:''}`)} · {t(s.slackSec>=0?'schedule.notPastClosing':s.newlyLate?'schedule.newlyLate':'schedule.alreadyLate')}<br/>{t('schedule.serviceChange')}: {clock(s.baselineServiceStartSec)} → {clock(s.serviceStartSec)} · {t('schedule.slack')}: {slack(s.baselineSlackSec)} → {slack(s.slackSec)}</p>)}
        </>}

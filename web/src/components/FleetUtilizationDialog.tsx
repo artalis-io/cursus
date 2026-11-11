@@ -13,6 +13,7 @@ export function FleetUtilizationDialog({open,onOpenChange,plan,scenario,onSelect
  // Road geometry can arrive after the saved plan; it is not utilization evidence.
  const report=useMemo(()=>fleetUtilization(plan),[plan]);
  const num=(n:number|null|undefined,decimals=1)=>n==null||!Number.isFinite(n)?t('fleetUse.unknown'):new Intl.NumberFormat(lang==='hu'?'hu-HU':'en-US',{maximumFractionDigits:decimals}).format(n);
+ const unlimited=lang==='hu'?'Korlátlan':'Unlimited';
  const duration=(n:number|null|undefined)=>n==null?t('fleetUse.unknown'):`${num(n/60,1)} ${t('fleetUse.minutes')}`;
  const percent=(n:number|null|undefined)=>n==null?t('fleetUse.unknown'):`${num(n)}%`;
  const clock=(n:number|null|undefined)=>n==null?t('fleetUse.unknown'):hhmm(n);
@@ -52,12 +53,12 @@ export function FleetUtilizationDialog({open,onOpenChange,plan,scenario,onSelect
      </section>
      <section aria-label={t('fleetUse.headroom')} className="space-y-1 rounded border border-divider p-2">
       <h3 className="font-semibold">{t('fleetUse.headroom')}</h3>
-      <p>{t('fleetUse.shiftBounds')}: {clock(v.limits?.shiftStartSec)} — {clock(v.limits?.shiftEndSec)}</p>
+      <p>{t('fleetUse.shiftBounds')}: {v.limits?.operatingLimits?.shift.state==='unlimited'?unlimited:`${clock(v.limits?.shiftStartSec)} — ${clock(v.limits?.shiftEndSec)}`}</p>
       <dl className="grid grid-cols-2 gap-1 tnum">
-       <dt>{t('fleetUse.remainingShift')}</dt><dd data-fleet-headroom="shift">{duration(v.remainingShiftSec)}</dd>
-       <dt>{t('fleetUse.remainingDuration')}</dt><dd>{duration(v.remainingDurationSec)}</dd>
-       <dt>{t('fleetUse.remainingDistance')}</dt><dd>{v.remainingDistanceKm==null?t('fleetUse.unknown'):`${num(v.remainingDistanceKm)} km`}</dd>
-       <dt>{t('fleetUse.remainingTrips')}</dt><dd>{num(v.remainingTrips,0)}</dd>
+       <dt>{t('fleetUse.remainingShift')}</dt><dd data-fleet-headroom="shift">{v.limits?.operatingLimits?.shift.state==='unlimited'?unlimited:duration(v.remainingShiftSec)}</dd>
+       <dt>{t('fleetUse.remainingDuration')}</dt><dd>{v.limits?.operatingLimits?.maxDurationSec.state==='unlimited'?unlimited:duration(v.remainingDurationSec)}</dd>
+       <dt>{t('fleetUse.remainingDistance')}</dt><dd>{v.limits?.operatingLimits?.maxDistanceKm.state==='unlimited'?unlimited:v.remainingDistanceKm==null?t('fleetUse.unknown'):`${num(v.remainingDistanceKm)} km`}</dd>
+       <dt>{t('fleetUse.remainingTrips')}</dt><dd>{v.limits?.operatingLimits?.maxTrips.state==='unlimited'?unlimited:num(v.remainingTrips,0)}</dd>
        <dt>{t('fleetUse.requiredReload')}</dt><dd>{duration(v.limits?.reloadSec)}</dd>
       </dl>
      </section>

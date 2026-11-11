@@ -35,6 +35,7 @@ export interface DelayStop extends ScheduleTarget {serviceStartSec:number;baseli
 export interface TimingLimit {baseline:number;delayed:number;limit:number}
 export interface DelayVehicle {
   vehicleId:number;ref:string;reason:'schedule'|'window'|'reload'|'fleet'|null;
+  unlimited?:{shift:boolean;duration:boolean};
   stops:DelayStop[];finishSec:number|null;shift:TimingLimit|null;duration:TimingLimit|null;
 }
 export interface DelayReview {seconds:900|1800;vehicles:DelayVehicle[];newlyLate:number;late:number;unknownVehicles:number;shiftBreaches:number;durationBreaches:number}
@@ -75,6 +76,7 @@ export function departureDelay(plan:SchedulePlan,seconds:900|1800):DelayReview {
     const baseline=replay(0),delayed=baseline?replay(seconds):null;
     if(!baseline||!delayed){out.reason='schedule';return out;}
     out.stops=delayed.stops;out.finishSec=delayed.finish;
+    if(limits?.operatingLimits)out.unlimited={shift:limits.operatingLimits.shift.state==='unlimited',duration:limits.operatingLimits.maxDurationSec.state==='unlimited'};
     if(limits?.shiftEndSec!=null)out.shift={baseline:baseline.finish,delayed:delayed.finish,limit:limits.shiftEndSec};
     if(limits?.maxDurationSec!=null)out.duration={baseline:baseline.finish-baseline.start,delayed:delayed.finish-delayed.start,limit:limits.maxDurationSec};
     return out;

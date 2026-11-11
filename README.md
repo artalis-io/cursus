@@ -1,7 +1,8 @@
 # Cursus
 
 Product planning foundations: [safe replanning](docs/safe-replan-and-delivery-identity.md),
-[profiles and shipments](docs/profiles-and-shipments.md), and
+[profiles and shipments](docs/profiles-and-shipments.md),
+[fleet operating limits](docs/fleet-operating-profiles.md), and
 [acknowledged integration handoff](docs/acknowledged-handoff.md).
 
 ## Access roles

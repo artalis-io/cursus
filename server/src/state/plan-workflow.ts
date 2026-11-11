@@ -1,3 +1,5 @@
+import {parseProfile,profileDigest} from '../planning-profiles.js';
+import {manualSettings,operatingPolicyChanged} from './manual-settings.js';
 import {loadingBlockers,loadingSource,loadingRequired} from '../hard-loading.js';
 import { createHash } from 'node:crypto';
 import type { PoolClient } from 'pg';
@@ -102,6 +104,14 @@ export class PlanWorkflow {
        AND e.detail->>'planId'=$2 ORDER BY e.id DESC LIMIT 1`, [this.tenantId, id]);
     const event = prepared?prepared.event:events?.rows[0];
     const policyIssues=[...(this.policyBlockers?.(plan)??[])];
+    for(const ref of scenario?.planningProfiles?.filter(p=>p.kind==='fleet')??[]){
+      const found=await client.query<{body:import('../planning-profile-contract.js').ProfileContent;sha256:string;approved_at:Date|null}>(
+        'SELECT body,sha256,approved_at FROM planning_profile_revisions WHERE tenant_id=$1 AND profile_id=$2 AND revision=$3',[this.tenantId,ref.id,ref.revision]);
+      const row=found.rows[0];
+      if(!row?.approved_at||row.sha256!==ref.sha256||profileDigest(parseProfile(row.body))!==ref.sha256){policyIssues.push('Pinned fleet profile evidence is unavailable.');continue;}
+      const limits=manualSettings(row.body.settings).operatingLimits;
+      if(limits&&operatingPolicyChanged(plan,limits))policyIssues.push('Fleet operating evidence is missing or exceeds its approved limits; Replan before approval.');
+    }
     const extra:ApprovalBlocker[]=policyIssues.map(message=>({code:'settings_changed',message,target:{kind:'section',section:'constraints'}}));
     const physical=(messages:string[])=>{policyIssues.push(...messages);extra.push(...messages.map(message=>({code:'physical_loading' as const,message,target:{kind:'section' as const,section:'loading' as const}})));};
     if(scenario){

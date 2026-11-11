@@ -101,3 +101,14 @@ test('seeded timing regression: replay matches the matrix evaluator across windo
 test('a saved departure substantially before its recorded shift start cannot establish zero-delay replay parity',()=>{
  const {plan}=fixture();plan.provenance.fleet!.vehicles[0]!.shiftStartSec=1000;assert.equal(departureDelay(plan,900).vehicles[0]!.reason,'schedule');
 });
+
+test('delay replay distinguishes verified unlimited operating bounds from unknown and corrupt evidence',()=>{
+ const f=fixture();
+ for(const v of f.plan.provenance.fleet!.vehicles){
+  v.shiftStartSec=null;v.shiftEndSec=null;v.maxDurationSec=null;
+  v.operatingLimits={shift:{state:'unlimited'},maxTrips:{state:'unknown'},maxDistanceKm:{state:'unknown'},maxDurationSec:{state:'unlimited'}};
+ }
+ const result=departureDelay(f.plan,900);assert.equal(result.vehicles[0]!.reason,null);assert.deepEqual(result.vehicles[0]!.unlimited,{shift:true,duration:true});
+ f.plan.provenance.fleet!.vehicles[0]!.maxDurationSec=1;
+ const invalid=departureDelay(f.plan,900);assert.equal(invalid.vehicles[0]!.reason,'fleet');assert.equal(invalid.vehicles[0]!.unlimited,undefined);
+});

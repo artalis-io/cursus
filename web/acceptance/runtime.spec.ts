@@ -1517,8 +1517,20 @@ test('approved fleet profiles are explicitly pinned, replan with native Surge an
  const label='Public approved fleet '+Date.now();
  await dialog.getByRole('textbox',{name:'Profile name',exact:true}).fill(label);
  await dialog.getByRole('textbox',{name:'Change reason',exact:true}).fill('Verified public fleet and capacity evidence');
+ const operating=dialog.locator('[data-operating-limits]').first();const ref=await operating.getAttribute('data-operating-limits');
+ await operating.getByRole('combobox',{name:`${ref} Shift state`,exact:true}).selectOption('configured');
+ await operating.getByRole('textbox',{name:`${ref} Shift start (HH:MM)`,exact:true}).fill('00:00');
+ await operating.getByRole('textbox',{name:`${ref} Shift end (HH:MM)`,exact:true}).fill('48:00');
+ for(const [label,value] of [['Maximum trips','3'],['Maximum distance (km)','10000'],['Maximum duration (minutes)','2880']] as const){
+  await operating.getByRole('combobox',{name:`${ref} ${label} state`,exact:true}).selectOption('configured');
+  await operating.getByRole('spinbutton',{name:`${ref} ${label} value`,exact:true}).fill(value);
+ }
+ const proposedResponse=page.waitForResponse(r=>r.request().method()==='POST'&&new URL(r.url()).pathname==='/api/profiles');
  await dialog.getByRole('button',{name:'Propose revision',exact:true}).click();
  const card=dialog.locator('article').filter({hasText:label});
+ const response=await proposedResponse;expect(response.status()).toBe(201);
+ const proposed=response.request().postDataJSON() as {content:{settings:{vehicles:{ref:string;operatingLimits:unknown}[]}}};
+ expect(proposed.content.settings.vehicles.find(v=>v.ref===ref)!.operatingLimits).toEqual({shift:{state:'configured',startSec:0,endSec:172800},maxTrips:{state:'configured',value:3},maxDistanceKm:{state:'configured',value:10000},maxDurationSec:{state:'configured',value:172800}});
  await expect(card).toContainText('Proposed');
  await card.getByText('Profile details',{exact:true}).click();
  await expect(card).toContainText('Payload'); // accessible business values, not raw JSON
@@ -1529,6 +1541,8 @@ test('approved fleet profiles are explicitly pinned, replan with native Surge an
  await expect(dialog).toHaveCount(0);
  const plan=await finishSolve(page,()=>page.getByRole('button',{name:'Replan',exact:true}).click());
  expect(plan.provenance.planningProfiles).toHaveLength(1);expect(plan.provenance.planningProfiles![0].revision).toBe(1);
+ const savedLimits=plan.provenance.fleet!.vehicles.find(v=>v.ref===ref)!;
+ expect(savedLimits.maxTrips).toBe(3);expect(savedLimits.maxDurationSec).toBe(172800);expect(savedLimits.maxDistanceKm).toBe(10000);expect(savedLimits.shiftEndSec).toBe(172800);
  await selectWorkspaceAction(page,'Planning profiles');
  await dialog.locator('article').filter({hasText:label}).getByRole('button',{name:'Propose changes',exact:true}).click();
  await dialog.getByRole('textbox',{name:'Change reason',exact:true}).fill('Later proposed revision, not activated');
@@ -1536,6 +1550,26 @@ test('approved fleet profiles are explicitly pinned, replan with native Surge an
  await expect(dialog.locator('article').filter({hasText:label})).toHaveCount(2);
  expect((await get<Scenario>(page.request,`${peer}/api/scenarios/${plan.scenarioId}`)).planningProfiles).toEqual(plan.provenance.planningProfiles);
  expect((await get<Plan>(page.request,`${peer}/api/plans/${plan.id}`)).provenance.planningProfiles![0].revision).toBe(1);
+});
+
+test('fleet operating profiles preserve explicit unlimited and unknown states in Hungarian',async({page})=>{
+ await login(page);await page.getByRole('button',{name:'HU',exact:true}).click();
+ const menu=await openWorkspaceMenu(page,'Előkészítés');await menu.getByRole('menuitem',{name:'Tervezési profilok',exact:true}).click();
+ const dialog=page.getByRole('dialog',{name:'Tervezési profilok',exact:true});
+ await dialog.getByRole('button',{name:'Új flottaprofil',exact:true}).click();await page.setViewportSize({width:600,height:780});
+ await dialog.getByRole('textbox',{name:'Profil neve',exact:true}).fill('Public HU operating limits '+Date.now());
+ await dialog.getByRole('textbox',{name:'Változtatás indoka',exact:true}).fill('Verified public operating limits');
+ const row=dialog.locator('[data-operating-limits]').first(),ref=await row.getAttribute('data-operating-limits');
+ await row.getByRole('combobox',{name:`${ref} Műszak állapota`,exact:true}).selectOption('unlimited');
+ await row.getByRole('combobox',{name:`${ref} Max. fordulók állapota`,exact:true}).selectOption('unlimited');
+ await row.getByRole('combobox',{name:`${ref} Max. időtartam (perc) állapota`,exact:true}).selectOption('configured');
+ await row.getByRole('spinbutton',{name:`${ref} Max. időtartam (perc) értéke`,exact:true}).fill('30');
+ expect(await dialog.evaluate(el=>el.getBoundingClientRect().width<=innerWidth)).toBe(true);
+ const submitted=page.waitForResponse(r=>r.request().method()==='POST'&&new URL(r.url()).pathname==='/api/profiles');
+ await dialog.getByRole('button',{name:'Verzió benyújtása',exact:true}).click();const response=await submitted;expect(response.status()).toBe(201);
+ const id=(await response.json() as {id:string}).id;
+ const profiles=await get<{id:string;body:{settings:{vehicles:{ref:string;operatingLimits:unknown}[]}}}[]>(page.request,`${peer}/api/profiles`);
+ expect(profiles.find(p=>p.id===id)!.body.settings.vehicles.find(v=>v.ref===ref)!.operatingLimits).toEqual({shift:{state:'unlimited'},maxTrips:{state:'unlimited'},maxDistanceKm:{state:'unknown'},maxDurationSec:{state:'configured',value:1800}});
 });
 
 test('Planner may propose profiles but cannot activate them; Reviewer cannot propose',async({page})=>{

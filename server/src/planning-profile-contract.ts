@@ -9,9 +9,13 @@ export interface LocationRule {
   windowEndSeconds: number;
   reason: string;
 }
+export type OperatingLimit = {state:'unknown'} | {state:'unlimited'} | {state:'configured';value:number};
+export type OperatingShift = {state:'unknown'} | {state:'unlimited'} | {state:'configured';startSec:number;endSec:number};
+export interface OperatingLimits {shift:OperatingShift;maxTrips:OperatingLimit;maxDistanceKm:OperatingLimit;maxDurationSec:OperatingLimit}
 export interface FleetProfileVehicle {
   id: number; ref: string; vehicleClass: string | null; isSubcontractor: boolean;
   tonnage: number | null; hasTailLift: boolean; reloadSec: number; available?: boolean;
+  operatingLimits?:OperatingLimits;
   capacityKg?:number;capacityPallets?:number;configurationRef?:string;
 }
 export interface ProfileContent {
