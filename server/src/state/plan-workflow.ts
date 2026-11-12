@@ -116,8 +116,9 @@ export class PlanWorkflow {
     }
     // Recheck authoritative dataset evidence inside the approval/export
     // transaction: stripping a plan's warning must never permit approval.
-    if(prepared?.preliminary?await prepared.preliminary():await this.preliminarySource(client,plan,scenario))policyIssues.push('Admitted dataset contains unresolved preliminary facts; approval requires a reviewed dataset revision.');
+    const preliminary=prepared?.preliminary?await prepared.preliminary():await this.preliminarySource(client,plan,scenario);
     const extra:ApprovalBlocker[]=policyIssues.map(message=>({code:'settings_changed',message,target:{kind:'section',section:'constraints'}}));
+    if(preliminary)extra.push({code:'constraint_evidence_missing',message:'Admitted dataset contains unresolved preliminary facts; approval requires a reviewed dataset revision.',target:{kind:'section',section:'constraints'}});
     const physical=(messages:string[])=>{policyIssues.push(...messages);extra.push(...messages.map(message=>({code:'physical_loading' as const,message,target:{kind:'section' as const,section:'loading' as const}})));};
     if(scenario){
       try{const context=prepared?await prepared.loading():await this.loadingContext(client,scenario);
@@ -127,13 +128,13 @@ export class PlanWorkflow {
         if(plan.physicalLoading?.mode==='hard'&&!source)physical(['Physical loading source is no longer admitted.']);
       }catch(error){if(!(error as Error).message.startsWith('Physical loading:'))throw error;physical([(error as Error).message]);}
     }
-    const state = event ? revision !== plan.scenarioRevision || event.detail.planSha256 !== hash || policyIssues.length>0 || loadingBlockers(plan,scenario??undefined).length>0 ? 'superseded'
+    const state = event ? revision !== plan.scenarioRevision || event.detail.planSha256 !== hash || policyIssues.length>0 || preliminary || loadingBlockers(plan,scenario??undefined).length>0 ? 'superseded'
       : event.action === 'plan.approve' ? 'approved' : 'reviewed' : 'draft';
     const core=approvalIssues(plan,revision,scenario??undefined);
     const freshness:PlanIdentity['freshness']=!scenario?'unknown':scenario.supersededBy?'archived':revision!==plan.scenarioRevision||policyIssues.length>0||canonical(plan.provenance?.planningProfiles??[])!==canonical(scenario.planningProfiles??[])?'stale':'current';
     return { plan, scenario, event, freshness, workflow: { state, version: event?.detail.version ?? 0, scenarioRevision: plan.scenarioRevision,
       currentRevision: revision, planSha256: hash, actor: event?.user_id ?? null, at: event?.created_at.toISOString() ?? null,
-      blockers: [...new Set(core.map(issue=>issue.message)),...policyIssues],
+      blockers: [...new Set([...core,...extra].map(issue=>issue.message))],
       blockerDetails:{version:1,planId:plan.id,scenarioId:plan.scenarioId,planRevision:plan.scenarioRevision,currentRevision:revision,planSha256:hash,items:[...core,...extra]} } satisfies Workflow };
   }
 
