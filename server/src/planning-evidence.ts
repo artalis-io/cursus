@@ -5,8 +5,8 @@ export type {PlanningIssue,PlanningEvidence} from './planning-evidence-contract.
 export function parsePlanningEvidence(value:unknown,request?:SurgeRequest):PlanningEvidence{
  const v=value as PlanningEvidence;
  const need=(ok:unknown):void=>{if(!ok)throw Error('Invalid preliminary planning evidence');};
- need(v&&v.version===1&&/^[a-f0-9]{64}$/.test(v.sourceSha256)&&v.pricing==='unverified'&&Array.isArray(v.issues)&&v.issues.length>0&&v.issues.length<=20000);
- need(v.datasetSha256===undefined||/^[a-f0-9]{64}$/.test(v.datasetSha256!));
+ need(v&&typeof v==='object'&&!Array.isArray(v)&&v.version===1&&typeof v.sourceSha256==='string'&&/^[a-f0-9]{64}$/.test(v.sourceSha256)&&v.pricing==='unverified'&&Array.isArray(v.issues)&&v.issues.length>0&&v.issues.length<=20000);
+ need(v.datasetSha256===undefined||typeof v.datasetSha256==='string'&&/^[a-f0-9]{64}$/.test(v.datasetSha256!));
  const reqs=request&&new Set(request.requests.map(r=>r.id)),vehicles=request&&new Set(request.vehicles.map(v=>v.id)),seen=new Set<string>();
  for(const i of v.issues){
   need(i&&evidenceCodes.includes(i.code)&&typeof i.message==='string'&&i.message.trim().length>0&&i.message.length<=1000);

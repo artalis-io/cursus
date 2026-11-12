@@ -36,6 +36,8 @@ test('unknown requirements cannot bypass strict admission without scoped evidenc
  assert.throws(()=>preparedBundle({...b,planningEvidence:undefined}));
  assert.throws(()=>preparedBundle({...b,planningSettings:undefined}));
  const bad=evidence();bad.issues[1]!.requestId=92;assert.throws(()=>preparedBundle({...b,planningEvidence:bad}));
+ assert.throws(()=>parsePlanningEvidence({...evidence(),sourceSha256:['b'.repeat(64)]},b.surgeRequest));
+ assert.throws(()=>parsePlanningEvidence({...evidence(),datasetSha256:['b'.repeat(64)]},b.surgeRequest));
  assert.throws(()=>parsePlanningEvidence({...evidence(),issues:[...evidence().issues,{code:'tail_lift',requestId:91,message:'Duplicate'}]},b.surgeRequest));
  assert.throws(()=>parsePlanningEvidence({...evidence(),issues:[{code:'tariff',message:'x'},{code:'tail_lift',requestId:999,message:'Foreign'}]},b.surgeRequest));
 });

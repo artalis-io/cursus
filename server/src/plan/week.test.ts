@@ -45,3 +45,14 @@ test('weekSummary: totals, distinct vehicles, and per-vehicle two-day rollup', (
   // sorted by total km desc: A(180) first
   assert.equal(w.vehicles[0]!.ref, 'A');
 });
+
+test('weekSummary never presents a priced subset as the cost of priced plus preliminary days',()=>{
+ const priced=plan([veh(1,'A',100,1,100)],1,1,100),unknown=plan([veh(1,'A',50,1,0)],1,1,0);unknown.cost=null;
+ const result=weekSummary([{dayId:'old',isoDate:'2026-05-06',label:'Prior',plan:priced},{dayId:'new',isoDate:'2026-09-21',label:'Preliminary',plan:unknown}]);
+ assert.equal(result.totals.costTotal,null);assert.equal(result.vehicles[0]!.totalCost,null);assert.equal(result.days[0]!.costTotal,100);assert.equal(result.days[1]!.costTotal,null);assert.equal(result.totals.totalDistanceKm,150);
+});
+test('weekSummary does not sum or relabel costs in different currencies',()=>{
+ const huf=plan([veh(1,'A',100,1,100)],1,1,100),eur=plan([veh(1,'A',50,1,20)],1,1,20);eur.cost!.currency='EUR';
+ const result=weekSummary([{dayId:'a',isoDate:'2026-05-06',label:'HUF',plan:huf},{dayId:'b',isoDate:'2026-05-07',label:'EUR',plan:eur}]);
+ assert.equal(result.currency,'HUF');assert.equal(result.totals.costTotal,null);assert.equal(result.vehicles[0]!.totalCost,null);assert.equal(result.days[1]!.costTotal,null);
+});
