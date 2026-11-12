@@ -25,7 +25,10 @@ test('hard loading stays unconfirmed until the matching authoritative check succ
  });
  await page.reload();await page.locator('#cursus-status-details > summary').click();const evidence=page.getByTestId('loading-evidence');
  await expect(evidence).toContainText('not yet confirmed');await expect(evidence).not.toContainText('Physical loading verified');
- unavailable=false;await page.getByRole('button',{name:'Retry approval status',exact:true}).click();await expect(evidence).toContainText('Physical loading verified');
+ unavailable=false;
+ // Polling may recover between enabling the fixture and the pointer action.
+ // A vanished Retry control is valid only after authoritative verification.
+ await page.getByRole('button',{name:'Retry approval status',exact:true}).click({timeout:2000}).catch(async()=>{await expect(evidence).toContainText('Physical loading verified');});await expect(evidence).toContainText('Physical loading verified');
  changed=true;await expect(evidence).toContainText('Replan required',{timeout:10000});await expect(evidence).not.toContainText('Physical loading verified');
  await page.getByRole('button',{name:'HU',exact:true}).click();await expect(evidence).toContainText('Újratervezés szükséges');
 });
@@ -50,7 +53,7 @@ test('axle status needs V2 evidence and authoritative confirmation, and invalida
  });
  await page.reload();await page.locator('#cursus-status-details > summary').click();
  const status=page.getByTestId('axle-loading-status');await expect(status).toHaveText('Axle loads · Not verified');
- ready=true;await page.getByRole('button',{name:'Retry approval status',exact:true}).click();await expect(status).toHaveText('Axle loads · Verified');
+ ready=true;await page.getByRole('button',{name:'Retry approval status',exact:true}).click({timeout:2000}).catch(async()=>{await expect(status).toHaveText('Axle loads · Verified');});await expect(status).toHaveText('Axle loads · Verified');
  changed=true;await expect(status).toHaveText('Axle loads · Not verified',{timeout:10000});
  await page.getByRole('button',{name:'HU',exact:true}).click();await expect(status).toHaveText('Tengelyterhelések · Nem ellenőrzött');
 });
