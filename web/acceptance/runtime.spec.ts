@@ -44,6 +44,14 @@ async function applyManualDialog(page:Page):Promise<Plan>{
   const result=await response;expect(result.status()).toBe(201);
   const plan=await result.json() as Plan;
   await expect(dialog).toHaveCount(0);
+  // A freshness poll may hide the old dialog while the saved scenario is
+  // still loading. Wait for the actual rendered result and persisted bookmark
+  // before testing reload; the HTTP response alone is not UI completion.
+  await expectPlanTotals(page,plan);
+  const key=await savedWorkspaceKey(page);
+  await expect.poll(()=>page.evaluate(k=>{
+    try{return JSON.parse(localStorage.getItem(k)??'null')?.planId;}catch{return null;}
+  },key)).toBe(plan.id);
   return plan;
 }
 function independentManualKpis(plan:Plan){
