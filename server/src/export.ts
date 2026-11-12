@@ -47,15 +47,17 @@ const CSV_HEADER = [
 ];
 
 export function planToCsv(plan: Plan, metadata?: HandoffMetadata): string {
-  const rows: string[] = [CSV_HEADER.join(',')];
+  const extended=!!plan.provenance.planningEvidence||plan.vehicles.some(v=>v.trips.some(t=>t.stops.some(s=>s.timeWindows)));
+  const rows: string[] = [[...CSV_HEADER,...(extended?['window_intervals','unverified_facts']:[])].join(',')];
   for (const v of plan.vehicles) {
     for (const trip of v.trips) {
       for (const s of trip.stops) {
         rows.push([
           'assigned', v.ref, v.vehicleClass ?? '', trip.index + 1, s.seq, s.orderNo, s.customer ?? '', s.city ?? '',
           s.lon.toFixed(6), s.lat.toFixed(6), hhmm(s.arrivalSec), hhmm(s.serviceStartSec), hhmm(s.departureSec),
-          hhmm(s.twStartSec), hhmm(s.twEndSec), round1(s.pallets), Math.round(s.weightKg),
+          s.timeWindows?'':hhmm(s.twStartSec), s.timeWindows?'':hhmm(s.twEndSec), s.unknownFacts?.includes('pallet_quantity')?'':round1(s.pallets), Math.round(s.weightKg),
           s.lateBySec > 0 ? Math.round(s.lateBySec / 60) : 0,s.requestId,datasetIdentity(plan),
+          ...(extended?[(s.timeWindows??[{early:s.twStartSec,late:s.twEndSec}]).map(w=>`${hhmm(w.early)}–${hhmm(w.late)}`).join(' / '),(s.unknownFacts??[]).join(';')]:[]),
         ].map(csvCell).join(','));
       }
     }
@@ -64,7 +66,7 @@ export function planToCsv(plan: Plan, metadata?: HandoffMetadata): string {
     rows.push([
       'unassigned', '', '', '', '', u.orderNo, u.customer ?? '', u.city ?? '',
       u.lon != null ? u.lon.toFixed(6) : '', u.lat != null ? u.lat.toFixed(6) : '',
-      '', '', '', '', '', '', '', '',u.requestId,datasetIdentity(plan),
+      '', '', '', '', '', '', '', '',u.requestId,datasetIdentity(plan),...(extended?['','']:[]),
     ].map(csvCell).join(','));
   }
   return csvHandoff(rows, metadata);
@@ -167,10 +169,10 @@ function vehicleBlock(plan: Plan, v: PlanVehicle, metadata?: HandoffMetadata): s
         <td class="n">${s.seq}</td>
         <td>${esc(s.customer ?? s.orderNo)}<div class="sub">#${esc(s.orderNo)}${s.city ? ` · ${esc(s.city)}` : ''}</div></td>
         <td class="n">${hhmm(s.arrivalSec)}</td>
-        <td class="n">${hhmm(s.twStartSec)}–${hhmm(s.twEndSec)}</td>
-        <td class="n">${round1(s.pallets)}</td>
+        <td class="n">${(s.timeWindows??[{early:s.twStartSec,late:s.twEndSec}]).map(w=>`${hhmm(w.early)}–${hhmm(w.late)}`).join(' / ')}</td>
+        <td class="n">${s.unknownFacts?.includes('pallet_quantity')?'Unknown':round1(s.pallets)}</td>
         <td class="n">${Math.round(s.weightKg).toLocaleString('en-US')}</td>
-        <td class="n">${s.maxTonnage === null ? 'Unrestricted' : s.maxTonnage === undefined ? 'Unknown' : `${s.maxTonnage} t`}</td>
+        <td class="n">${s.unknownFacts?.includes('gvw') ? 'Unverified' : s.maxTonnage === null ? 'Unrestricted' : s.maxTonnage === undefined ? 'Unknown' : `${s.maxTonnage} t`}</td>
         <td>${s.requiresTailLift === true ? 'Required' : s.requiresTailLift === false ? 'No' : 'Unknown'}</td>
       </tr>`).join('');
     return `

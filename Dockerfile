@@ -9,6 +9,8 @@ COPY server/src/cost-review-contract.ts /src/server/src/cost-review-contract.ts
 COPY server/src/fleet-contract.ts /src/server/src/fleet-contract.ts
 COPY server/src/operating-limits.ts /src/server/src/operating-limits.ts
 COPY server/src/fleet-utilization.ts /src/server/src/fleet-utilization.ts
+COPY server/src/time-windows.ts /src/server/src/time-windows.ts
+COPY server/src/planning-evidence-contract.ts /src/server/src/planning-evidence-contract.ts
 COPY server/src/schedule-review.ts /src/server/src/schedule-review.ts
 COPY server/src/plan/timing.ts /src/server/src/plan/timing.ts
 COPY server/src/change-review-contract.ts /src/server/src/change-review-contract.ts
@@ -50,7 +52,8 @@ ARG OTTO_REVISION=unknown
 ARG CURSUS_REVISION=unknown
 ARG CURSUS_SCHEMA_MIN=1
 ARG CURSUS_SCHEMA_MAX=5
-LABEL org.opencontainers.image.title="Cursus" \
+LABEL io.artalis.cursus.capabilities="prepared-planning-v2" \
+      org.opencontainers.image.title="Cursus" \
       org.opencontainers.image.source="https://github.com/artalis-io/cursus" \
       org.opencontainers.image.revision="$CURSUS_REVISION" \
       io.artalis.otto.revision="$OTTO_REVISION" \

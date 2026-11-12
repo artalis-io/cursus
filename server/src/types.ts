@@ -3,6 +3,7 @@
 export interface SurgeLocation { x: number; y: number } // x=lon, y=lat
 
 export interface SurgeTask {
+  time_windows?:import('./time-windows.js').ServiceWindow[];
   id: number;
   type: string;
   location_id: number;
@@ -14,6 +15,7 @@ export interface SurgeTask {
 }
 
 export interface SurgeRequestVehicle {
+  qualifications?:number;
   approved_operating?:import('./planning-profile-contract.js').OperatingLimits;
   operating_limits?:import('./planning-profile-contract.js').OperatingLimits;
   approved_capacity?:number[]; // application-only upper bounds from an approved profile
@@ -34,6 +36,7 @@ export interface SurgeRequestVehicle {
 }
 
 export interface SurgeRequestDef {
+  required_qualifications?:number;
   id: number;
   delivery_task_id: number;
   unassigned_penalty?: number;
@@ -100,6 +103,8 @@ export interface SurgeSolution {
 /* ---- backend <-> frontend Plan contract (see docs/data-api-mapping.md) ---- */
 
 export interface PlanStop {
+  timeWindows?:import('./time-windows.js').ServiceWindow[];
+  unknownFacts?:string[];
   requestId?: number; // stable dataset-scoped solver identity; never infer ambiguous labels
   orderId: string | null;
   orderNo: string;
@@ -120,7 +125,7 @@ export interface PlanStop {
   waitSec: number;      // service_start - arrival
   travelToSec: number;  // travel from previous stop/depot
   lateBySec: number;    // max(0, arrival - tw_late)
-  requiresTailLift: boolean;
+  requiresTailLift: boolean | null;
   maxTonnage: number | null; // max vehicle GVW (t) that can access
 }
 
@@ -144,6 +149,7 @@ export interface GeoJSONLineString {
 }
 
 export interface PlanVehicle {
+  unknownFacts?:string[];
   id: number;
   ref: string;
   vehicleClass: string | null;
@@ -180,6 +186,7 @@ export interface PlanUnassigned {
 }
 
 export interface PlanProvenance {
+  planningEvidence?:import('./planning-evidence-contract.js').PlanningEvidence;
   profileChange?:import('./profile-change-contract.js').ProfileChangeLineage;
   fleet?:import('./fleet-contract.js').FleetSnapshot;
   costing?:import('./cost-review-contract.js').CostingSnapshot;

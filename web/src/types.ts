@@ -7,6 +7,7 @@
 export type PlanSource = 'saved' | 'live' | 'sample';
 
 export interface PlanProvenance {
+  planningEvidence?:import('../../server/src/planning-evidence-contract').PlanningEvidence;
   profileChange?:import('../../server/src/profile-change-contract').ProfileChangeLineage;
 
   fleet?:import('../../server/src/fleet-contract').FleetSnapshot;
@@ -50,6 +51,8 @@ export interface Depot { name: string; lon: number; lat: number }
 export type StopType = 'delivery' | 'pickup' | 'service' | 'depot';
 
 export interface Stop {
+  timeWindows?:import('../../server/src/time-windows').ServiceWindow[];
+  unknownFacts?:string[];
   requestId?: number;
   orderId: string | null;
   orderNo: string;
@@ -70,7 +73,7 @@ export interface Stop {
   waitSec: number;
   travelToSec: number;
   lateBySec: number;
-  requiresTailLift: boolean;
+  requiresTailLift: boolean|null;
   maxTonnage: number | null;
 }
 

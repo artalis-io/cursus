@@ -1,3 +1,4 @@
+import {windowContains} from '../../../server/src/time-windows';
 import type { Plan, Scenario } from '../types';
 import { comparisonEvidence } from '../../../server/src/plan/identity';
 
@@ -13,7 +14,7 @@ export function reviewReadiness(plan: Plan, scenario: Scenario, pending = false)
   const fresh = !pending && plan.scenarioId === scenario.id && plan.scenarioRevision === scenario.revision;
   const checks: ReadinessCheck[] = [];
   for (const [key, type] of [['gvw', 'VEHICLE_SIZE'], ['tailLift', 'TAIL_LIFT'], ['capacity', 'CAPACITY'], ['timeWindows', 'HARD_TW']] as const) {
-    let failures = 0, checked = 0, unknown = !validation || !Array.isArray(validation.violations);
+    let failures = 0, checked = 0, unknown = !!plan.provenance.planningEvidence || !validation || !Array.isArray(validation.violations);
     for (const vehicle of plan.vehicles) for (const trip of vehicle.trips) {
       if (key === 'capacity') {
         checked++;
@@ -41,7 +42,7 @@ export function reviewReadiness(plan: Plan, scenario: Scenario, pending = false)
           checked++;
           if (![stop.arrivalSec, stop.serviceStartSec, stop.twStartSec, stop.twEndSec].every(finite)) unknown = true;
           // Arrival before opening is allowed: service waits until opening.
-          else if (stop.serviceStartSec < stop.twStartSec - 1 || (stop.twEndSec > 0 && Math.max(stop.arrivalSec, stop.serviceStartSec) > stop.twEndSec + 1)) failures++;
+          else if (stop.timeWindows&&!windowContains(stop.serviceStartSec,stop.timeWindows)||stop.serviceStartSec < stop.twStartSec - 1 || (stop.twEndSec > 0 && Math.max(stop.arrivalSec, stop.serviceStartSec) > stop.twEndSec + 1)) failures++;
         }
       }
     }
@@ -67,7 +68,7 @@ export function reviewReadiness(plan: Plan, scenario: Scenario, pending = false)
   const hard = validation?.violations?.filter(v => !v.soft || ['VEHICLE_SIZE', 'TAIL_LIFT', 'HARD_TW', 'CAPACITY'].includes(v.type)) ?? [];
   const exceptions = plan.provenance?.planningPolicy?.exceptions ?? [];
   const blocked = !fresh || !coverageConsistent || plan.unassigned.length > 0 || hard.length > 0 || checks.some(c => c.state === 'failed');
-  const uncertain = s.totalOrders === 0 || validation?.valid !== true || checks.some(c => c.state === 'unknown') || (validation?.violations?.length ?? 0) > 0;
+  const uncertain = !!plan.provenance.planningEvidence || s.totalOrders === 0 || validation?.valid !== true || checks.some(c => c.state === 'unknown') || (validation?.violations?.length ?? 0) > 0;
   return { fresh, coverageConsistent, checks, exceptions, hardViolations: hard.length,
     status: blocked ? 'blocked' as const : uncertain || exceptions.length ? 'review' as const : 'passed' as const };
 }

@@ -1,3 +1,4 @@
+import {withPlanningEvidence} from '../planning-evidence.js';
 import {captureFleet} from './fleet-snapshot.js';
 import {captureCosting} from '../cost-review.js';
 import {config} from '../config.js';
@@ -105,7 +106,7 @@ export function prepareManualInput(parent: Plan, scenario: Scenario, context: Ma
     departures.set(manualTripKey(vehicle.id, trip.manualTripId ?? `trip-${trip.index}`), trip.startSec);
   // Explicit new-trip IDs are scheduled no earlier than shift start and all
   // preceding trips, using server-owned reload data; clients cannot submit times.
-  return { ...(day.physicalLoading&&(config.hardLoadingEnabled||scenario.hardLoadingRequired||parent.physicalLoading?.mode==='hard')?{hardLoadingRequired:true}:{}),layout, datasetSha256: sha!, request: full, requirements, fleet, departures, tariff,
+  return { ...(day.planningEvidence?{planningEvidence:day.planningEvidence}:{}),...(day.physicalLoading&&(config.hardLoadingEnabled||scenario.hardLoadingRequired||parent.physicalLoading?.mode==='hard')?{hardLoadingRequired:true}:{}),layout, datasetSha256: sha!, request: full, requirements, fleet, departures, tariff,
     tariffSha256: tariffIdentity(tariff) };
 }
 
@@ -162,7 +163,7 @@ export function materializeManualPlan(parent: Plan, scenario: Scenario, input: M
         const previous = i ? taskFor(trip.stops[i-1]!.requestId).location_id : 0;
         return { requestId: stop.requestId, orderId: row.id, orderNo: task.ref, customer: row.customer, city: row.city,
           lon: loc.x, lat: loc.y, seq: i+1, type: task.type, arrivalSec: stop.arrivalSec, serviceStartSec: stop.serviceStartSec,
-          departureSec: stop.departureSec, twStartSec: task.tw_early, twEndSec: task.tw_late, pallets: task.demand[1]!,
+          departureSec: stop.departureSec, ...(task.time_windows?{timeWindows:structuredClone(task.time_windows)}:{}), twStartSec: task.tw_early, twEndSec: task.tw_late, pallets: task.demand[1]!,
           weightKg: task.demand[0]!, serviceMin: Math.round(task.service_seconds/60), waitSec: stop.waitSec,
           travelToSec: input.request.travel.durations[previous*input.request.travel.location_count+task.location_id]!,
           lateBySec: stop.lateSec, requiresTailLift: access.requiresTailLift, maxTonnage: access.maxTonnage };
@@ -207,5 +208,5 @@ export function materializeManualPlan(parent: Plan, scenario: Scenario, input: M
   if(plan.physicalLoading?.mode==='hard'){
     plan.provenance.validation={valid:false,violations:[...plan.provenance.validation.violations,{type:'PHYSICAL_LOADING',message:'Manual edits invalidate physical loading evidence; Replan before approval.'}]};
   }
-  return plan;
+  return withPlanningEvidence(plan,context.day);
 }

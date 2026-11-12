@@ -53,15 +53,16 @@ function StopDetail({ stop, vehicle }: { stop: Stop; vehicle: Vehicle }) {
           {sizeMiss && <div>{t('constraint.sizeMiss', { t: vehicle.tonnage ?? 0, max: stop.maxTonnage ?? 0 })}</div>}
         </div>
       )}
+      {stop.unknownFacts?.length ? <div role="note" className="rounded border border-warning/40 px-2 py-1 text-xs text-warning">{t('preliminary.unknownFacts')}: {stop.unknownFacts.map(code=>t(`preliminary.fact.${code}`)).join(', ')}</div> : null}
       <Separator />
       <Field label={t('inspector.arrival')} value={hhmm(stop.arrivalSec)} warn={late} />
       <Field label={t('inspector.service')} value={`${hhmm(stop.serviceStartSec)}–${hhmm(stop.departureSec)}`} />
-      <Field label={t('inspector.timeWindow')} value={`${hhmm(stop.twStartSec)}–${hhmm(stop.twEndSec)}`} />
+      <Field label={t('inspector.timeWindow')} value={stop.timeWindows?stop.timeWindows.map(w=>`${hhmm(w.early)}–${hhmm(w.late)}`).join(' / '):`${hhmm(stop.twStartSec)}–${hhmm(stop.twEndSec)}`} />
       {stop.waitSec > 0 && <Field label={t('inspector.wait')} value={t('inspector.minN', { n: Math.round(stop.waitSec / 60) })} />}
       {late && <Field label={t('inspector.lateBy')} value={t('inspector.minN', { n: Math.round(stop.lateBySec / 60) })} warn />}
       <Separator />
       <Field label={t('inspector.weight')} value={kg(stop.weightKg)} />
-      <Field label={t('inspector.pallets')} value={plt(stop.pallets)} />
+      <Field label={t('inspector.pallets')} value={stop.unknownFacts?.includes('pallet_quantity')?t('preliminary.unknown'):plt(stop.pallets)} />
       <Field label={t('inspector.serviceTime')} value={t('inspector.minN', { n: stop.serviceMin })} />
       <Field label={t('inspector.travelTo')} value={t('inspector.minN', { n: Math.round(stop.travelToSec / 60) })} />
     </div>

@@ -1,3 +1,4 @@
+import {windowContains} from '../time-windows.js';
 import {parseProfile,profileDigest} from '../planning-profiles.js';
 import {manualSettings,operatingPolicyChanged} from './manual-settings.js';
 import {loadingBlockers,loadingSource,loadingRequired} from '../hard-loading.js';
@@ -42,6 +43,7 @@ export function approvalIssues(plan: Plan, revision: number, scenario?: Scenario
     || plan.stats.totalOrders <= 0 || plan.stats.servedOrders !== plan.stats.totalOrders)
     add('coverage_incomplete','Approval requires complete, consistent order coverage.',{kind:'section',section:'issues'});
   if (!/^[a-f0-9]{64}$/.test(plan.provenance?.inputSha256 ?? '')) add('dataset_identity_missing','Dataset identity is missing.');
+  if(plan.provenance?.planningEvidence)add('constraint_evidence_missing','Preliminary dataset contains unresolved facts; approval requires a reviewed dataset revision.');
   const finite = (n: unknown): n is number => typeof n === 'number' && Number.isFinite(n);
   try {
     const stops = plan.vehicles.flatMap(v => v.trips.flatMap(t => t.stops));
@@ -62,7 +64,7 @@ export function approvalIssues(plan: Plan, revision: number, scenario?: Scenario
           add('gvw','GVW evidence is missing or violated.',{kind:'stop',vehicleId:vehicle.id,tripIndex:trip.index,seq:stop.seq,orderNo:stop.orderNo,...(stop.requestId!==undefined?{requestId:stop.requestId}:{})});
         if (typeof stop.requiresTailLift !== 'boolean' || stop.requiresTailLift && vehicle.hasTailLift !== true)
           add('tail_lift','Tail-lift evidence is missing or violated.',{kind:'stop',vehicleId:vehicle.id,tripIndex:trip.index,seq:stop.seq,orderNo:stop.orderNo,...(stop.requestId!==undefined?{requestId:stop.requestId}:{})});
-        if (![stop.arrivalSec, stop.serviceStartSec, stop.twStartSec, stop.twEndSec].every(finite)
+        if (stop.timeWindows&&!windowContains(stop.serviceStartSec,stop.timeWindows)||![stop.arrivalSec, stop.serviceStartSec, stop.twStartSec, stop.twEndSec].every(finite)
           || stop.serviceStartSec < stop.twStartSec - 1 || stop.twEndSec > 0 && Math.max(stop.arrivalSec, stop.serviceStartSec) > stop.twEndSec + 1)
           add('time_window','Time-window evidence is missing or violated.',{kind:'stop',vehicleId:vehicle.id,tripIndex:trip.index,seq:stop.seq,orderNo:stop.orderNo,...(stop.requestId!==undefined?{requestId:stop.requestId}:{})});
       }
@@ -89,7 +91,7 @@ export class PlanWorkflow {
   constructor(private store: StatefulStore, private tenantId: string,private policyBlockers?:(plan:Plan)=>string[]) {}
 
   private async snapshot(client: PoolClient, id: string, lock: boolean, allowMissingScenario = false,
-    prepared?:{plan:Plan;scenario:Scenario;revision:number;event:ReviewEvent|undefined;loading:()=>Promise<{source:string|undefined;required:boolean}>}) {
+    prepared?:{plan:Plan;scenario:Scenario;revision:number;event:ReviewEvent|undefined;preliminary?:()=>Promise<boolean>;loading:()=>Promise<{source:string|undefined;required:boolean}>}) {
     const found = prepared?null:await client.query<{ body: Plan }>('SELECT body FROM plans WHERE tenant_id=$1 AND id=$2', [this.tenantId, id]);
     const plan = prepared?.plan??found?.rows[0]?.body;
     if (!plan) throw new WorkflowError(404, 'plan not found');
@@ -112,6 +114,9 @@ export class PlanWorkflow {
       const limits=manualSettings(row.body.settings).operatingLimits;
       if(limits&&operatingPolicyChanged(plan,limits))policyIssues.push('Fleet operating evidence is missing or exceeds its approved limits; Replan before approval.');
     }
+    // Recheck authoritative dataset evidence inside the approval/export
+    // transaction: stripping a plan's warning must never permit approval.
+    if(prepared?.preliminary?await prepared.preliminary():await this.preliminarySource(client,plan,scenario))policyIssues.push('Admitted dataset contains unresolved preliminary facts; approval requires a reviewed dataset revision.');
     const extra:ApprovalBlocker[]=policyIssues.map(message=>({code:'settings_changed',message,target:{kind:'section',section:'constraints'}}));
     const physical=(messages:string[])=>{policyIssues.push(...messages);extra.push(...messages.map(message=>({code:'physical_loading' as const,message,target:{kind:'section' as const,section:'loading' as const}})));};
     if(scenario){
@@ -130,6 +135,15 @@ export class PlanWorkflow {
       currentRevision: revision, planSha256: hash, actor: event?.user_id ?? null, at: event?.created_at.toISOString() ?? null,
       blockers: [...new Set(core.map(issue=>issue.message)),...policyIssues],
       blockerDetails:{version:1,planId:plan.id,scenarioId:plan.scenarioId,planRevision:plan.scenarioRevision,currentRevision:revision,planSha256:hash,items:[...core,...extra]} } satisfies Workflow };
+  }
+
+  private async preliminarySource(client:PoolClient,plan:Plan,scenario:Scenario|null){
+    const binding=scenario?.datasetBinding;
+    const found=await client.query<{present:boolean}>(`SELECT EXISTS(SELECT 1 FROM datasets WHERE tenant_id=$1 AND status='admitted'
+      AND ($2::text IS NULL OR id=$2) AND manifest->'artifacts'->'request'->>'sha256'=$3
+      AND EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(manifest->'days','[]'::jsonb)) d WHERE d->>'dayId'=$4)
+      AND manifest ? 'planningEvidence') AS present`,[this.tenantId,binding?.datasetId??null,binding?.requestSha256??plan.provenance?.datasetSha256??'',binding?.dayId??scenario?.day??'']);
+    return found.rows[0]?.present===true;
   }
 
   private async loadingContext(client:PoolClient,scenario:Scenario){
@@ -155,11 +169,15 @@ export class PlanWorkflow {
         ORDER BY e.detail->>'planId',e.id DESC`,[this.tenantId,ids]);
       const byScenario=new Map(scenarios.map(s=>[s.id,s])),byEvent=new Map(events.rows.map(e=>[e.plan_id,e]));
       const loading=new Map<string,ReturnType<PlanWorkflow['loadingContext']>>();
+      const evidence=new Map<string,Promise<boolean>>();
       const identities=new Map<string,PlanIdentity>(),latest=new Map<string,Plan>();
       for(const p of plans){const old=latest.get(p.scenarioId);if(!old||p.createdAt>old.createdAt||p.createdAt===old.createdAt&&p.id>old.id)latest.set(p.scenarioId,p);}
       for(const plan of plans){
         const scenario=byScenario.get(plan.scenarioId);if(!scenario)continue;
-        const current=await this.snapshot(client,plan.id,false,false,{plan,scenario,revision:scenario.revision,event:byEvent.get(plan.id),loading:()=>{
+        const current=await this.snapshot(client,plan.id,false,false,{plan,scenario,revision:scenario.revision,event:byEvent.get(plan.id),preliminary:()=>{
+          const key=JSON.stringify([scenario.datasetBinding??null,scenario.day,plan.provenance?.datasetSha256]);
+          let value=evidence.get(key);if(!value){value=this.preliminarySource(client,plan,scenario);evidence.set(key,value);}return value;
+        },loading:()=>{
           let value=loading.get(scenario.id);if(!value){value=this.loadingContext(client,scenario);loading.set(scenario.id,value);}return value;
         }});
         const state=current.workflow.state;

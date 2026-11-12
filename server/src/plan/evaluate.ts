@@ -1,8 +1,9 @@
+import {planningWindows,serviceWindowStart,windowLateSeconds} from '../time-windows.js';
 import type { PlanStop, PlanTrip, SurgeRequest } from '../types.js';
 import type { LoadedDay, VehicleInfo } from '../data/dataset.js';
 import { vehicleInfoFor } from '../data/dataset.js';
 import { metersToKm } from '../units.js';
-import { makeLeg, waitSec, lateSec } from './schedule.js';
+import { makeLeg, waitSec } from './schedule.js';
 import { loadTariff, tripCost, type Tariff } from '../cost.js';
 
 /* Re-evaluate one vehicle trip for a proposed stop order WITHOUT re-solving.
@@ -61,7 +62,8 @@ export function evaluateTrip(inp: EvaluateTripInput): PlanTrip {
     const arrival = t + travelToSec;
     const twEarly = task?.tw_early ?? 0;
     const twLate = task?.tw_late ?? 0;
-    const serviceStart = Math.max(arrival, twEarly);
+    const windows=task?planningWindows(task):[{early:twEarly,late:twLate}];
+    const serviceStart = serviceWindowStart(arrival, windows);
     const serviceSec = task?.service_seconds ?? 0;
     const departure = serviceStart + serviceSec;
     if (task) { prevLoc = task.location_id; t = departure; }
@@ -76,14 +78,16 @@ export function evaluateTrip(inp: EvaluateTripInput): PlanTrip {
       arrivalSec: arrival,
       serviceStartSec: serviceStart,
       departureSec: departure,
+      ...(day.planningEvidence?{unknownFacts:day.planningEvidence.issues.filter(i=>i.requestId===requestId&&i.requestId!==undefined).map(i=>i.code)}:{}),
+      ...(task?.time_windows?{timeWindows:windows}:{}),
       twStartSec: twEarly,
       twEndSec: twLate,
       pallets, weightKg,
       serviceMin: Math.round(serviceSec / 60),
       waitSec: waitSec(arrival, serviceStart),
       travelToSec,
-      lateBySec: lateSec(arrival, twLate),
-      requiresTailLift: Boolean(info?.requiresTailLift),
+      lateBySec: windowLateSeconds(serviceStart,windows),
+      requiresTailLift: info?info.requiresTailLift:false,
       maxTonnage: info?.maxTonnage ?? null,
     };
   });

@@ -48,6 +48,33 @@ def database_schema(node: dict[str, Any]) -> list[int]:
         raise DeploymentError(f"{node['name']}: malformed or unsupported database schema history") from exc
 
 
+def database_required_capabilities(node: dict[str, Any]) -> list[str]:
+    query = """SELECT coalesce(json_agg(DISTINCT capability),'[]'::json)::text
+      FROM datasets CROSS JOIN LATERAL jsonb_array_elements_text(COALESCE(manifest->'requiredCapabilities',
+        CASE WHEN manifest ? 'planningEvidence' THEN '["prepared-planning-v2"]'::jsonb ELSE '[]'::jsonb END)) capability
+      WHERE status='admitted'"""
+    result = ssh(node, ['docker', 'exec', f"{node['project']}-{node['postgres_service']}-1",
+                        'psql', '-U', 'cursus', '-d', 'cursus', '-Atc', query])
+    try:
+        values = json.loads(result.stdout)
+        if not isinstance(values, list) or any(not isinstance(v, str) or not v or len(v) > 100 for v in values):
+            raise ValueError('invalid capability inventory')
+        return sorted(set(values))
+    except (ValueError, TypeError) as exc:
+        raise DeploymentError(f"{node['name']}: dataset runtime requirements cannot be verified") from exc
+
+
+def assert_image_capabilities(node: dict[str, Any], image: str) -> None:
+    required = database_required_capabilities(node)
+    if not required:
+        return
+    result = ssh(node, ['docker', 'image', 'inspect', image, '--format',
+                        '{{index .Config.Labels "io.artalis.cursus.capabilities"}}'])
+    supported = {v.strip() for v in result.stdout.strip().split(',')}
+    if not set(required).issubset(supported):
+        raise DeploymentError(f"{node['name']}: image lacks capabilities required by admitted datasets: " + ', '.join(required))
+
+
 def run(argv: list[str], timeout: int = 30, check: bool = True) -> subprocess.CompletedProcess[str]:
     result = subprocess.run(argv, text=True, capture_output=True, timeout=timeout, check=False)
     if check and result.returncode:
@@ -187,6 +214,7 @@ def update_application(cfg: dict[str, Any], image: str, approved: bool, action: 
         tested_schema = schema_history(report['runtime']['migrations'])[-1]
         if not lower <= tested_schema <= upper:
             raise DeploymentError(f"{node['name']}: acceptance schema is outside the image compatibility range")
+        assert_image_capabilities(node,fields[2])
         checked.append((node, fields[2], lower, upper, tested_schema))
     # Never infer compatibility from MAX(version): gaps and an out-of-date
     # standby also block both writes. Rolling app updates do not migrate a
@@ -204,6 +232,7 @@ def update_application(cfg: dict[str, Any], image: str, approved: bool, action: 
         raise DeploymentError("database schema differs between replicas")
     # Check the image and its acceptance evidence on BOTH nodes before any write.
     for (node, image_id, lower, upper, _), history in zip(checked, histories):
+        assert_image_capabilities(node,image_id)
         if database_schema(node) != history:
             raise DeploymentError(f"{node['name']}: database schema changed after preflight")
         remote = (

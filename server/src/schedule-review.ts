@@ -1,9 +1,10 @@
+import {windowContains,windowLateSeconds,type ServiceWindow} from './time-windows.js';
 import {fleetUtilization,type FleetPlan} from './fleet-utilization.js';
 import {stopTiming,tripDeparture} from './plan/timing.js';
 type BaseVehicle=FleetPlan['vehicles'][number];
 type BaseTrip=BaseVehicle['trips'][number];
 type BaseStop=BaseTrip['stops'][number];
-export interface ScheduleStop extends BaseStop {seq:number;requestId?:number;orderNo:string;customer?:string|null;twStartSec:number;twEndSec:number}
+export interface ScheduleStop extends BaseStop {timeWindows?:ServiceWindow[];unknownFacts?:string[];seq:number;requestId?:number;orderNo:string;customer?:string|null;twStartSec:number;twEndSec:number}
 interface ScheduleTrip extends BaseTrip {stops:ScheduleStop[]}
 interface ScheduleVehicle extends BaseVehicle {trips:ScheduleTrip[]}
 export interface SchedulePlan extends FleetPlan {vehicles:ScheduleVehicle[]}
@@ -14,19 +15,22 @@ const nonnegative=(n:unknown):n is number=>finite(n)&&n>=0;
 const near=(a:number,b:number)=>Math.abs(a-b)<=1;
 /** Positive recorded closing bound only. Historical zero may mean an omitted
  * bound or a midnight point window; it is NOT inferred to mean unlimited. */
-export function deadlineSlack(s:Pick<ScheduleStop,'type'|'arrivalSec'|'serviceStartSec'|'departureSec'|'twStartSec'|'twEndSec'>):Slack {
+export function deadlineSlack(s:Pick<ScheduleStop,'type'|'arrivalSec'|'serviceStartSec'|'departureSec'|'twStartSec'|'twEndSec'|'timeWindows'|'unknownFacts'>):Slack {
   const waitingSec=nonnegative(s.arrivalSec)&&nonnegative(s.serviceStartSec)&&s.serviceStartSec>=s.arrivalSec?s.serviceStartSec-s.arrivalSec:null;
+  if(s.unknownFacts?.some(f=>f==='receiving_window'||f==='appointment'))return {state:'unknown',seconds:null,waitingSec};
   if(s.type!=='delivery'||![s.arrivalSec,s.serviceStartSec,s.departureSec,s.twStartSec,s.twEndSec].every(nonnegative)||
     s.twEndSec<=0||s.twEndSec<s.twStartSec||s.serviceStartSec<s.arrivalSec||s.serviceStartSec<s.twStartSec||s.departureSec<s.serviceStartSec)
     return {state:'unknown',seconds:null,waitingSec};
-  const seconds=s.twEndSec-s.serviceStartSec;
+  const containing=s.timeWindows?.find(w=>windowContains(s.serviceStartSec,[w]));
+  if(s.timeWindows&&!containing)return {state:'late',seconds:-Math.max(1,windowLateSeconds(s.serviceStartSec,s.timeWindows)),waitingSec};
+  const seconds=(containing?.late??s.twEndSec)-s.serviceStartSec;
   return {state:seconds<0?'late':seconds<=1800?'within30':'over30',seconds,waitingSec};
 }
 export interface ScheduleTarget {vehicleId:number;tripIndex:number;seq:number;requestId?:number;orderNo:string}
 export interface ScheduleRow extends ScheduleTarget,Slack {vehicleRef:string;customer:string|null;arrivalSec:number;serviceStartSec:number;deadlineSec:number}
 export function scheduleReview(plan:SchedulePlan){
   const rows:ScheduleRow[]=plan.vehicles.flatMap(v=>v.trips.flatMap(t=>t.stops.map(s=>({vehicleId:v.id,vehicleRef:v.ref,tripIndex:t.index,seq:s.seq,
-    ...(s.requestId===undefined?{}:{requestId:s.requestId}),orderNo:s.orderNo,customer:s.customer??null,arrivalSec:s.arrivalSec,serviceStartSec:s.serviceStartSec,deadlineSec:s.twEndSec,...deadlineSlack(s)}))));
+    ...(s.requestId===undefined?{}:{requestId:s.requestId}),orderNo:s.orderNo,customer:s.customer??null,arrivalSec:s.arrivalSec,serviceStartSec:s.serviceStartSec,deadlineSec:s.timeWindows?.find(w=>windowContains(s.serviceStartSec,[w]))?.late??s.twEndSec,...deadlineSlack(s)}))));
   rows.sort((a,b)=>(a.seconds??Infinity)-(b.seconds??Infinity)||a.vehicleId-b.vehicleId||a.tripIndex-b.tripIndex||a.seq-b.seq);
   return {rows,late:rows.filter(r=>r.state==='late').length,within30:rows.filter(r=>r.state==='within30').length,unknown:rows.filter(r=>r.state==='unknown').length,
     waiting:rows.filter(r=>r.waitingSec!==null&&r.waitingSec>0).length};
@@ -59,10 +63,12 @@ export function departureDelay(plan:SchedulePlan,seconds:900|1800):DelayReview {
         const start=i?tripDeparture(t.startSec,previous,limits!.reloadSec!):tripDeparture(t.startSec+delay,limits?.shiftStartSec??t.startSec,0);if(!i)first=start;
         let cursor=start;
         for(const s of t.stops){
-          const arrival=cursor+s.travelToSec,clock=stopTiming(arrival,s.twStartSec,s.departureSec-s.serviceStartSec);
+          const arrival=cursor+s.travelToSec,clock=stopTiming(arrival,s.twStartSec,s.departureSec-s.serviceStartSec,s.timeWindows);
           if(delay===0&&(!near(arrival,s.arrivalSec)||!near(clock.serviceStartSec,s.serviceStartSec)||!near(clock.departureSec,s.departureSec)))return null;
           if(![arrival,clock.serviceStartSec,clock.departureSec].every(nonnegative))return null;
-          const baselineSlackSec=s.twEndSec-s.serviceStartSec,slackSec=s.twEndSec-clock.serviceStartSec;
+          const baselineSlackSec=deadlineSlack(s).seconds!;
+          const delayed={...s,arrivalSec:arrival,serviceStartSec:clock.serviceStartSec,departureSec:clock.departureSec};
+          const slackSec=deadlineSlack(delayed).seconds!;
           stops.push({vehicleId:v.id,tripIndex:t.index,seq:s.seq,...(s.requestId===undefined?{}:{requestId:s.requestId}),orderNo:s.orderNo,
             serviceStartSec:clock.serviceStartSec,baselineServiceStartSec:s.serviceStartSec,slackSec,baselineSlackSec,newlyLate:slackSec<0&&baselineSlackSec>=0});
           cursor=clock.departureSec;

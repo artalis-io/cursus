@@ -18,7 +18,7 @@ function facts(day:LoadedDay,id:number){
  const i=day.deliveryEnrichment?.get(id)??day.enrichment.get(t.ref)!;
  const d=day.shipmentDocument?.deliveries.find(d=>d.requestId===id),shipment=day.shipmentDocument?.shipments.find(s=>s.id===d?.shipmentId);
  return {reference:t.ref,location:{coordinates:day.request.locations[t.location_id],customer:i.customer,city:i.city,street:i.street,zip:i.zip},
-  weight:t.demand[0],pallets:t.demand[1],window:[t.tw_early,t.tw_late],service:t.service_seconds,
+  weight:t.demand[0],pallets:t.demand[1],window:[t.tw_early,t.tw_late,t.time_windows],service:t.service_seconds,
   access:[i.maxTonnage,i.requiresTailLift],restrictions:[r.allowed_vehicles??[],r.forbidden_vehicles??[]],
   commercial:d?{detail:d.detail,weightBasis:d.weightBasis,allocations:d.allocations,loadUnits:d.loadUnits,shipment:shipment?{reference:shipment.reference,splitPolicy:shipment.splitPolicy,lines:shipment.lines}:null}:null};
 }
