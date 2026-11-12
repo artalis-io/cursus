@@ -50,6 +50,7 @@ export function applyProfileSnapshots(original: LoadedDay, profiles: ApprovedPro
           throw new Error('Location profile requires unambiguous delivery/source evidence.');
         const effective={...info,maxTonnage:rule.maxGrossWeightKg===null?null:rule.maxGrossWeightKg/1000,requiresTailLift:rule.requiresTailLift};
         day.deliveryEnrichment!.set(order.id,effective);
+        if(task.time_windows)throw new Error('A single-window profile cannot replace disjoint source windows; admit revised window facts first.');
         task.service_seconds=rule.serviceSeconds;task.tw_early=rule.windowStartSeconds;task.tw_late=rule.windowEndSeconds;
       }
     }

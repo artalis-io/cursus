@@ -44,6 +44,14 @@ async function applyManualDialog(page:Page):Promise<Plan>{
   const result=await response;expect(result.status()).toBe(201);
   const plan=await result.json() as Plan;
   await expect(dialog).toHaveCount(0);
+  // A freshness poll may hide the old dialog while the saved scenario is
+  // still loading. Wait for the actual rendered result and persisted bookmark
+  // before testing reload; the HTTP response alone is not UI completion.
+  await expectPlanTotals(page,plan);
+  const key=await savedWorkspaceKey(page);
+  await expect.poll(()=>page.evaluate(k=>{
+    try{return JSON.parse(localStorage.getItem(k)??'null')?.planId;}catch{return null;}
+  },key)).toBe(plan.id);
   return plan;
 }
 function independentManualKpis(plan:Plan){
@@ -214,7 +222,7 @@ for(const role of ['admin','planner'] as const)test(`placements ${role}: unassig
   const assigned=await applyManualDialog(page);independentManualKpis(assigned);
   expect(assigned.stats.servedOrders).toBe(6);expect(assigned.provenance.validation.valid).toBe(true);
   expect(assigned.stats.totalDistanceKm-partial.stats.totalDistanceKm).toBeCloseTo(best.delta.distanceKm,6);
-  expect(assigned.cost!.total-partial.cost!.total).toBeCloseTo(best.delta.cost,6);
+  expect(assigned.cost!.total-partial.cost!.total).toBeCloseTo(best.delta.cost!,6);
   expect(assigned.manual?.layout.history.at(-1)?.action).toBe('assign');
   expect((await get<Plan>(page.request,`${peer}/api/plans/${assigned.id}?geometry=stored`)).stats).toEqual(assigned.stats);
 });

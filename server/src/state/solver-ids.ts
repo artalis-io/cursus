@@ -16,7 +16,12 @@ export function nativeSolveRequest(request: SurgeRequest, sequences: Scenario['s
       void approved_operating;void operating_limits;void approved_capacity;
       return {...nativeVehicle,id};
     }),
-    tasks: request.tasks.map((t, id) => ({ ...t, id })),
+    tasks: request.tasks.map((t, id) => {
+      // Native add_time_window promotes an existing scalar window. Sending
+      // both creates an overlapping envelope; send the intervals alone.
+      if(t.time_windows){const {tw_early,tw_late,...rest}=t;void tw_early;void tw_late;return {...rest,id} as typeof t;}
+      return {...t,id};
+    }),
     requests: request.requests.map((r, id) => ({ ...r, id, delivery_task_id: tasks.get(r.delivery_task_id)!,
       ...(r.allowed_vehicles ? { allowed_vehicles: r.allowed_vehicles.filter(v => vehicles.has(v)).map(v => vehicles.get(v)!) } : {}),
       ...(r.forbidden_vehicles ? { forbidden_vehicles: r.forbidden_vehicles.filter(v => vehicles.has(v)).map(v => vehicles.get(v)!) } : {}),

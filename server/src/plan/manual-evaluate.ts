@@ -1,3 +1,4 @@
+import {planningWindows,windowLateSeconds,windowContains} from '../time-windows.js';
 import {tripDeparture,stopTiming} from './timing.js';
 import { vehicleCostFor, tripCost, reconcileTripCosts, type Tariff } from '../cost.js';
 import type { SurgeRequest, SurgeTask } from '../types.js';
@@ -7,11 +8,12 @@ import { metersToKm } from '../units.js';
 /** Internal, server-owned inputs only. Policy exceptions must already have been
  * applied/verified by the dataset adapter. No client-supplied feasibility facts. */
 export interface ManualEvaluationInput {
+  planningEvidence?:import('../planning-evidence-contract.js').PlanningEvidence;
   hardLoadingRequired?:boolean;
   layout: ManualLayout;
   datasetSha256: string;
   request: SurgeRequest;
-  requirements: Map<number, { maxTonnage: number | null; requiresTailLift: boolean }>;
+  requirements: Map<number, { maxTonnage: number | null; requiresTailLift: boolean|null }>;
   fleet: Map<number, { grossTonnage: number | null; hasTailLift: boolean;
     vehicleClass: string | null; isSubcontractor: boolean; reloadSec: number }>;
   /** Departure anchors keyed by vehicle/trip; new trips require explicit anchors. */
@@ -75,7 +77,7 @@ export function evaluateManualLayout(input: ManualEvaluationInput): ManualEvalua
     need(task && task.type === 'delivery', 'unsupported or missing delivery task');
     need(Number.isSafeInteger(task.location_id) && task.location_id >= 0 && task.location_id < N, 'invalid task location');
     need(task.demand.length === 2 && task.demand.every(nonnegative), 'invalid demand');
-    need([task.tw_early, task.tw_late, task.service_seconds].every(nonnegative), 'invalid task timing');
+    need([task.tw_early,task.tw_late,task.service_seconds].every(nonnegative),'invalid task timing');planningWindows(task);
     return task;
   };
   layout.requestIds.forEach(taskFor);
@@ -123,16 +125,18 @@ export function evaluateManualLayout(input: ManualEvaluationInput): ManualEvalua
       for (const requestId of route.requestIds) {
         const task = taskFor(requestId), order = requests.get(requestId)!;
         const requirements = input.requirements.get(requestId);
-        need(requirements && typeof requirements.requiresTailLift === 'boolean' &&
+        need(requirements && (typeof requirements.requiresTailLift === 'boolean'||requirements.requiresTailLift===null&&!!input.planningEvidence) &&
           (requirements.maxTonnage === null || nonnegative(requirements.maxTonnage) && requirements.maxTonnage > 0), 'missing access evidence');
+        const required=BigInt(order.required_qualifications??0),available=BigInt(vehicle.qualifications??0);
+        if((available&required)!==required)issue('ASSIGNMENT',requestId);
         const edge = leg(position, task.location_id);
         distance += edge.distance;
         const arrivalSec = time + edge.duration;
-        const {serviceStartSec,departureSec,waitSec}=stopTiming(arrivalSec,task.tw_early,task.service_seconds);
+        const {serviceStartSec,departureSec,waitSec}=stopTiming(arrivalSec,task.tw_early,task.service_seconds,planningWindows(task));
         stops.push({ requestId, taskId: task.id, arrivalSec, serviceStartSec, departureSec,
-          waitSec, lateSec: task.tw_late > 0 ? Math.max(0, serviceStartSec-task.tw_late) : 0 });
+          waitSec, lateSec: windowLateSeconds(serviceStartSec,planningWindows(task)) });
         loadKg += task.demand[0]!; loadPallets += task.demand[1]!;
-        if (task.tw_late > 0 && serviceStartSec > task.tw_late) issue('HARD_TW', requestId, { actual: serviceStartSec, limit: task.tw_late });
+        if ((task.time_windows||task.tw_late>0)&&!windowContains(serviceStartSec,planningWindows(task))) issue('HARD_TW', requestId, { actual: serviceStartSec, limit: task.tw_late });
         if (requirements.maxTonnage !== null && (info.grossTonnage === null || info.grossTonnage > requirements.maxTonnage)) issue('VEHICLE_SIZE', requestId, { ...(info.grossTonnage === null ? {} : { actual: info.grossTonnage }), limit: requirements.maxTonnage });
         if (requirements.requiresTailLift && !info.hasTailLift) issue('TAIL_LIFT', requestId);
         const retained = layout.decisions[String(requestId)];

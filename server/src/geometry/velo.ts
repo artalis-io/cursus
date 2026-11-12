@@ -70,6 +70,15 @@ function decodePolyline(str: string, precision = config.polylinePrecision): LonL
   return coords;
 }
 
+/** Velo omits encoded geometry when two distinct geocodes snap to the same
+ * graph node. Its successful zero-distance, zero-duration response is a no-op
+ * leg, not a missing road route. Never synthesize a line between endpoints. */
+export function veloRouteCoordinates(response:{status?:string;route?:{geometry?:string;distance?:number;duration?:number}},from:LonLat):LonLat[]|null {
+  if(response.status!=='ok'||!response.route)return null;
+  if(response.route.geometry)return decodePolyline(response.route.geometry);
+  return response.route.distance===0&&response.route.duration===0?[from]:null;
+}
+
 /** One raw Velo route request, no caching/surrogates. Returns decoded [lon,lat]. */
 async function rawRouteDirect(from: LonLat, to: LonLat): Promise<LonLat[] | null> {
   const url = `${config.veloOrigin}/api/v1/route?from=${from[1]},${from[0]}&to=${to[1]},${to[0]}`
@@ -77,9 +86,8 @@ async function rawRouteDirect(from: LonLat, to: LonLat): Promise<LonLat[] | null
   try {
     const res = await fetch(url, { signal: AbortSignal.timeout(8000) });
     if (!res.ok) return null;
-    const j = (await res.json()) as { status?: string; route?: { geometry?: string } };
-    if (j.status !== 'ok' || !j.route?.geometry) return null;
-    return decodePolyline(j.route.geometry);
+    const j = (await res.json()) as { status?: string; route?: { geometry?: string; distance?:number; duration?:number } };
+    return veloRouteCoordinates(j,from);
   } catch {
     return null;
   }

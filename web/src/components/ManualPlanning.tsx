@@ -104,7 +104,7 @@ export function ManualPlanningDialog({plan,scenario,fleet,request,onClose,onAppl
       <Button size="sm" variant="outline" disabled={busy||attempted||!canEvaluate||!canEdit} onClick={()=>void findPlacements()}>{t(finding?'placement.checking':'placement.find')}</Button>
       {guidance&&<>
         <p role="status">{t('placement.count',{checked:guidance.checked,feasible:guidance.feasiblePositions})}</p>
-        <p className="text-muted-foreground">{t('placement.reference',{distance:km(guidance.baseline.distanceKm,1),cost:money(guidance.baseline.cost,guidance.currency)})}</p>
+        <p className="text-muted-foreground">{t('placement.reference',{distance:km(guidance.baseline.distanceKm,1),cost:guidance.baseline.cost===null?'—':money(guidance.baseline.cost,guidance.currency)})}</p>
         {!guidance.complete&&<p className="text-warning">{t('placement.partial')}</p>}
         {!guidance.suggestions.length?<p>{t('placement.none')}</p>:<ol aria-label={t('placement.options')} className="space-y-2">
           {guidance.physicalLoadingPending&&<li className="text-warning">{t('manual.loadingPending')}</li>}
@@ -112,7 +112,7 @@ export function ManualPlanningDialog({plan,scenario,fleet,request,onClose,onAppl
             const position=s.newTrip?t('manual.newTrip'):`${t('fleet.tripLabel',{n:(tr?.index??0)+1})} · ${tr?.stops[s.position]?t('manual.before',{order:tr.stops[s.position].orderNo}):t('manual.append')}`;
             return <li key={s.vehicleId} className="rounded border bg-card p-2" data-vehicle-id={s.vehicleId}>
               <div className="font-medium">{v?.ref??`#${s.vehicleId}`} · {position}</div>
-              <p>{t('placement.delta')}: {s.delta.distanceKm>=0?'+':''}{km(s.delta.distanceKm,1)} · {s.delta.cost>=0?'+':''}{money(s.delta.cost,guidance.currency)}</p>
+              <p>{t('placement.delta')}: {s.delta.distanceKm>=0?'+':''}{km(s.delta.distanceKm,1)} · {s.delta.cost===null?'—':`${s.delta.cost>=0?'+':''}${money(s.delta.cost,guidance.currency)}`}</p>
               <p>{t('placement.timing',{arrival:hhmm(s.serviceStartSec),finish:hhmm(s.tripEndSec)})} · {s.delta.finishSec===null?t('placement.newVehicle'):t('placement.delay',{delay:Math.ceil(s.delta.finishSec/60)})}</p>
               <p>{t('placement.resources',{vehicles:s.delta.vehicles,trips:s.delta.trips})}</p>
               <Button size="sm" variant="outline" disabled={busy||attempted||!canEdit} onClick={()=>choosePlacement(s)}>{t('placement.use',{ref:v?.ref??`#${s.vehicleId}`})}</Button>

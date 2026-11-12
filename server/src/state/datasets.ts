@@ -43,6 +43,8 @@ export class DatasetRepository {
     if(current.status!=='validated')throw new Error('Dataset must be validated before admission.');
     const manifest = current.manifest as { source?: ImmutableObject;validation?:{prepared?:boolean} };
     let loadingRequirement:LoadingRequirement|undefined;
+    let requiredCapabilities:string[]|undefined;
+    let planningEvidence:ReturnType<typeof preparedBundle>['planningEvidence'],planningSettings:unknown;
     let artifacts:Record<string,ImmutableObject>|undefined,days:ReturnType<typeof preparedBundle>['days']|undefined;
     if(manifest.validation?.prepared){
       if(!manifest.source)throw new Error('Dataset source is missing.');
@@ -52,11 +54,12 @@ export class DatasetRepository {
         shipments:await this.objects.putImmutable(this.tenantId,Buffer.from(JSON.stringify(bundle.shipments)),'application/json')};
       if(bundle.physicalLoading)artifacts.physicalLoading=await this.objects.putImmutable(this.tenantId,Buffer.from(JSON.stringify(bundle.physicalLoading)),'application/json');
       if(bundle.physicalLoading&&artifacts.physicalLoading)loadingRequirement=factRequirement(bundle.physicalLoading,artifacts.physicalLoading.sha256);
-      days=bundle.days;
+      requiredCapabilities=bundle.planningEvidence||bundle.planningSettings||bundle.request.tasks.some(t=>t.time_windows)?['prepared-planning-v2']:undefined;
+      days=bundle.days;planningEvidence=bundle.planningEvidence;planningSettings=bundle.planningSettings;
     }
     const objects = [...new Map([manifest.source,...derived,...Object.values(artifacts??{})].filter((x):x is ImmutableObject=>!!x).map(o=>[o.key,o])).values()];
     for (const object of objects) await this.db.stageObject(this.tenantId, object);
-    await this.db.publishDataset(this.tenantId, datasetId, { ...manifest, objects,...(loadingRequirement?{loadingRequirement}:{}),...(artifacts?{artifacts,days}: {}) }, objects.map((x) => x.key));
+    await this.db.publishDataset(this.tenantId, datasetId, { ...manifest, objects,...(loadingRequirement?{loadingRequirement}:{}),...(artifacts?{artifacts,days,...(requiredCapabilities?{requiredCapabilities}:{}),...(planningEvidence?{planningEvidence}:{}),...(planningSettings?{planningSettings}:{})}: {}) }, objects.map((x) => x.key));
     return (await this.db.getDataset(this.tenantId, datasetId))!;
   }
 

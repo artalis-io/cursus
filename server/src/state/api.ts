@@ -363,14 +363,16 @@ export async function createStatefulApi(options: StatefulApiOptions): Promise<Fa
         day = await loadConvertedDay(options.objects, options.tenantId, row.manifest as ConvertedManifest, scenario,profiles);
       } else { day = loadDay(scenario.day); }
       const fleetProfile=profiles.find(p=>p.kind==='fleet');
-      const settings=fleetProfile?manualSettings(fleetProfile.content.settings):options.fleetSettings;
+      const settings=fleetProfile?manualSettings(fleetProfile.content.settings):day.planningSettings?manualSettings({...day.planningSettings as object,datasetSha256:day.datasetRequestSha256}):options.fleetSettings;
       if(settings&&!applyFleetSettings(day.request,day.datasetRequestSha256,settings))
         return reply.code(409).send({error:'Fleet settings do not match the pinned dataset.'});
-      return { trip: evaluateTrip({ day, request: day.request, vehicleId: b.vehicleId, tripIndex: srcTrip.index,
+      const trip=evaluateTrip({ day, request: day.request, vehicleId: b.vehicleId, tripIndex: srcTrip.index,
         startSec: typeof b.startSec === 'number' ? b.startSec : srcTrip.startSec, tripCountOnVehicle: vehicle.trips.length,
         reloadSecAfter: typeof b.reloadSecAfter === 'number' ? b.reloadSecAfter : srcTrip.reloadSecAfter,
         orderNos: want,...(Array.isArray(b.requestIds)?{requestIds:b.requestIds as number[]}:{}),
-        vehicleInfo: settings?.vehicleInfo??loadVehicleInfo(),tariff:settings?.tariff }) };
+        vehicleInfo: settings?.vehicleInfo??loadVehicleInfo(),tariff:settings?.tariff });
+      if(day.planningEvidence)trip.costFt=null;
+      return {trip};
     },
   );
   app.get<{ Querystring: { day?: string } }>('/api/plans', async (req,reply) => {

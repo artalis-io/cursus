@@ -17,6 +17,7 @@ export interface HandoffMetadata {
   approval: { workflowVersion: number; approvedAt: string; approver: HandoffActor; exceptionsAcknowledged: boolean } | null;
   blockers: string[];
   constraints: {
+    planningEvidence?:Plan['provenance']['planningEvidence'];
     physicalLoading?:Plan['physicalLoading'];
     evidence: 'stored-solver-and-mapped-plan';
     validation: Plan['provenance']['validation'] | null;
@@ -25,13 +26,14 @@ export interface HandoffMetadata {
     vehicles: { id: number; ref: string; grossWeightTonnes: number | null; tailLift: boolean;
       capacityKg: number; capacityPallets: number;
       trips: { index: number; loadKg: number; loadPallets: number;
-        stops: { orderNo: string; maxGrossWeightTonnes: number | null; requiresTailLift: boolean; windowStartSec: number; windowEndSec: number }[] }[] }[];
+        stops: { orderNo: string; maxGrossWeightTonnes: number | null; requiresTailLift: boolean|null; timeWindows?:import('./time-windows.js').ServiceWindow[]; unknownFacts?:string[]; windowStartSec: number; windowEndSec: number }[] }[] }[];
   };
   policy: PlanningPolicy | null;
 }
 
 export function constraintSnapshot(plan: Plan, scenario: Scenario | null, evidence: HandoffMetadata['constraints']['scenarioEvidence']): HandoffMetadata['constraints'] {
   return {
+    ...(plan.provenance?.planningEvidence?{planningEvidence:structuredClone(plan.provenance?.planningEvidence)}:{}),
     ...(plan.physicalLoading?{physicalLoading:structuredClone(plan.physicalLoading)}:{}),
     evidence: 'stored-solver-and-mapped-plan', validation: plan.provenance?.validation ?? null,
     scenario: scenario ? structuredClone({ removedVehicleIds: scenario.removedVehicleIds, pins: scenario.pins,
@@ -41,7 +43,7 @@ export function constraintSnapshot(plan: Plan, scenario: Scenario | null, eviden
       capacityKg: v.capacityKg, capacityPallets: v.capacityPallets,
       trips: v.trips.map(trip => ({ index: trip.index, loadKg: trip.loadKg, loadPallets: trip.loadPallets,
         stops: trip.stops.map(s => ({ orderNo: s.orderNo, maxGrossWeightTonnes: s.maxTonnage, requiresTailLift: s.requiresTailLift,
-          windowStartSec: s.twStartSec, windowEndSec: s.twEndSec })) })) })),
+          ...(s.timeWindows?{timeWindows:structuredClone(s.timeWindows)}:{}),...(s.unknownFacts?{unknownFacts:[...s.unknownFacts]}:{}),windowStartSec: s.twStartSec, windowEndSec: s.twEndSec })) })) })),
   };
 }
 

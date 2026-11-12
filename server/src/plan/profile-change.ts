@@ -42,7 +42,7 @@ export function reviewProfileChange(source:Plan,original:Scenario,old:ManualData
  for(const v of a)compare('fleet',v.id,v.ref,v,b.find(w=>w.id===v.id)!);
  const locations=(ctx:ManualDatasetContext)=>new Map(ctx.day.request.tasks.filter(t=>ctx.day.scopeTaskIds.has(t.id)).map(t=>{
   const order=ctx.day.request.requests.find(r=>r.delivery_task_id===t.id),info=order&&(ctx.day.deliveryEnrichment?.get(order.id)??ctx.day.enrichment.get(t.ref));
-  return [t.id,{locationId:t.location_id,reference:t.ref,openingSeconds:t.tw_early,deadlineSeconds:t.tw_late,serviceSeconds:t.service_seconds,maxGrossWeightTonnes:info?.maxTonnage,tailLiftRequired:info?.requiresTailLift}] as const;
+  return [t.id,{locationId:t.location_id,reference:t.ref,timeWindows:t.time_windows,openingSeconds:t.tw_early,deadlineSeconds:t.tw_late,serviceSeconds:t.service_seconds,maxGrossWeightTonnes:info?.maxTonnage,tailLiftRequired:info?.requiresTailLift}] as const;
  }));
  const left=locations(old),right=locations(target);
  if(left.size!==right.size||[...left.keys()].some(id=>!right.has(id)))throw new Error('Delivery inventory changed');

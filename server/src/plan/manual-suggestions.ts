@@ -6,14 +6,14 @@ import type { Scenario } from '../store.js';
 
 export interface PlacementSuggestion {
   vehicleId:number; tripId:string; position:number; newTrip:boolean;
-  delta:{distanceKm:number;cost:number;vehicles:number;trips:number;finishSec:number|null};
+  delta:{distanceKm:number;cost:number|null;vehicles:number;trips:number;finishSec:number|null};
   serviceStartSec:number; tripEndSec:number;
 }
 export interface PlacementSuggestions {
  physicalLoadingPending?:boolean;
   parentPlanId:string; revision:number; datasetSha256:string; requestId:number;
   currency:string; checked:number; complete:boolean; feasiblePositions:number;
-  baseline:{distanceKm:number;cost:number;served:number;vehicles:number;trips:number};
+  baseline:{distanceKm:number;cost:number|null;served:number;vehicles:number;trips:number};
   suggestions:PlacementSuggestion[];
   vehicles:{vehicleId:number;checked:number;feasible:number;skipped?:'excluded'|'locked';blockers:ManualViolation[]}[];
 }
@@ -30,7 +30,7 @@ export async function suggestPlacements(input:ManualEvaluationInput,scenario:Sce
     baseline:{distanceKm:baseline.stats.totalDistanceKm,cost:baseline.cost.total,served:baseline.stats.servedOrders,vehicles:baseline.stats.vehiclesUsed,trips:baseline.stats.trips},suggestions:[],vehicles:[]};
   const started=performance.now(),at=new Date().toISOString();
   const best=new Map<number,PlacementSuggestion>();
-  const compare=(a:PlacementSuggestion,b:PlacementSuggestion)=>a.delta.cost-b.delta.cost||a.delta.distanceKm-b.delta.distanceKm||
+  const compare=(a:PlacementSuggestion,b:PlacementSuggestion)=>(a.delta.cost??0)-(b.delta.cost??0)||a.delta.distanceKm-b.delta.distanceKm||
     (a.delta.finishSec??Infinity)-(b.delta.finishSec??Infinity)||a.vehicleId-b.vehicleId||a.tripId.localeCompare(b.tripId)||a.position-b.position;
   for(const vehicleId of input.layout.vehicleIds){
     const row:PlacementSuggestions['vehicles'][number]={vehicleId,checked:0,feasible:0,blockers:[]};result.vehicles.push(row);
@@ -65,5 +65,5 @@ export async function suggestPlacements(input:ManualEvaluationInput,scenario:Sce
     }
   }
   return finish();
-  function finish(){result.suggestions=[...best.values()].sort(compare).slice(0,5);return result;}
+  function finish(){result.suggestions=[...best.values()].sort(compare).slice(0,5);if(input.planningEvidence){result.baseline.cost=null;for(const s of result.suggestions)s.delta.cost=null;}return result;}
 }

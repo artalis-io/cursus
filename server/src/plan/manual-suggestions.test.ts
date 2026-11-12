@@ -21,7 +21,7 @@ test('placements independently reproduce preview metrics, rank per vehicle and n
   assert.deepEqual(f.input,before);assert.deepEqual(result.suggestions.map(s=>s.vehicleId),[7,42]);
   assert.equal(result.suggestions[1]!.delta.finishSec,null,'an idle vehicle has no previous finish time');
   assert.equal(typeof result.suggestions[0]!.delta.finishSec,'number');
-  assert.ok(result.suggestions[1]!.delta.cost>result.suggestions[0]!.delta.cost,'unused vehicle standing cost counted');
+  assert.ok(result.suggestions[1]!.delta.cost!>result.suggestions[0]!.delta.cost!,'unused vehicle standing cost counted');
   for(const s of result.suggestions){
     const layout=applyManualBatch(f.input.layout,{operationId:'independent',datasetSha256:f.input.datasetSha256,
       commands:[{op:'assign',requestId:91,vehicleId:s.vehicleId,tripId:s.tripId,position:s.position}]},{actorId:'test',at:new Date(0).toISOString()});

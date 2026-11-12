@@ -40,7 +40,7 @@ export interface OrderInfo {
   twStart: string | null;    // HH:MM
   twEnd: string | null;
   serviceMin: number | null;
-  requiresTailLift: boolean;
+  requiresTailLift: boolean | null;
   maxTonnage: number | null; // max vehicle GVW (t) that can access the address
 }
 
@@ -129,8 +129,8 @@ export function enrichmentFromRecords(recs: Record<string, unknown>[]): Map<stri
       twStart: asStr(r.tw_start),
       twEnd: asStr(r.tw_end),
       serviceMin: typeof r.service_min === 'number' ? r.service_min : null,
-      requiresTailLift: Boolean(r.requires_tail_lift) || hasTailLiftReq(asStr(r.special_req)),
-      maxTonnage: r.max_gross_weight_kg===null?null:typeof r.max_gross_weight_kg==='number'&&Number.isFinite(r.max_gross_weight_kg)&&r.max_gross_weight_kg>0?r.max_gross_weight_kg/1000:parseTonnage(asStr(r.special_req)),
+      requiresTailLift: r.requires_tail_lift===null?null:Boolean(r.requires_tail_lift) || hasTailLiftReq(asStr(r.special_req)),
+      maxTonnage: typeof r.modelled_max_gross_weight_kg==='number'&&r.modelled_max_gross_weight_kg>0?Math.min(typeof r.max_gross_weight_kg==='number'?r.max_gross_weight_kg:Infinity,r.modelled_max_gross_weight_kg)/1000:r.max_gross_weight_kg===null?null:typeof r.max_gross_weight_kg==='number'&&Number.isFinite(r.max_gross_weight_kg)&&r.max_gross_weight_kg>0?r.max_gross_weight_kg/1000:parseTonnage(asStr(r.special_req)),
     });
   }
   return m;
@@ -168,6 +168,8 @@ export function vehicleInfoFor(ref: string, table: Map<string, VehicleInfo>): Ve
 }
 
 export interface LoadedDay {
+  planningSettings?:unknown;
+  planningEvidence?:import('../planning-evidence-contract.js').PlanningEvidence;
   physicalLoading?: import('../loading-contract.js').LoadingDocument;
   physicalLoadingSha256?: string;
   shipmentDocument?: import('../shipment-contract.js').ShipmentDocument;

@@ -29,6 +29,7 @@ class StatefulDeploymentTests(unittest.TestCase):
             if command[:3] == ['docker', 'image', 'inspect']:
                 return SimpleNamespace(stdout=f'{minimum}|{maximum}|sha256:candidate\n')
             if command[:2] == ['docker', 'exec']:
+                if 'requiredCapabilities' in command[-1]:return SimpleNamespace(stdout='[]')
                 history = histories.get(node['name'], list(deploy.SUPPORTED_SCHEMAS))
                 return SimpleNamespace(stdout=json.dumps(history))
             if command[0] == 'curl':
@@ -164,8 +165,7 @@ class StatefulDeploymentTests(unittest.TestCase):
 
     @patch.object(deploy, 'ssh')
     def test_old_image_rollback_is_blocked_after_reviewer_migration(self, ssh):
-        ssh.side_effect = [type('R', (), {'stdout': '1|1|sha256:candidate'})() for _ in range(2)] + [
-            type('R', (), {'stdout': '[1,2]'})()]
+        self.responder(ssh, maximum=1, histories={n['name']: [1,2] for n in self.config()['nodes']})
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / 'report.json'; path.write_text(json.dumps(self.acceptance()))
             with self.assertRaisesRegex(deploy.DeploymentError, 'incompatible'):
@@ -174,8 +174,7 @@ class StatefulDeploymentTests(unittest.TestCase):
 
     @patch.object(deploy, 'ssh')
     def test_reviewer_image_rollback_is_blocked_after_planner_migration(self, ssh):
-        ssh.side_effect = [type('R', (), {'stdout': '1|2|sha256:candidate'})() for _ in range(2)] + [
-            type('R', (), {'stdout': '[1,2,3]'})()]
+        self.responder(ssh, maximum=2, histories={n['name']: [1,2,3] for n in self.config()['nodes']})
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / 'report.json'; path.write_text(json.dumps(self.acceptance()))
             with self.assertRaisesRegex(deploy.DeploymentError, 'incompatible'):
@@ -238,7 +237,7 @@ class StatefulDeploymentTests(unittest.TestCase):
         reads = 0
         def change_schema(node, command, **kwargs):
             nonlocal reads
-            if command[:2] == ['docker', 'exec']:
+            if command[:2] == ['docker', 'exec'] and 'schema_migrations' in command[-1]:
                 reads += 1
                 if reads == 3:return SimpleNamespace(stdout='[1,2,3,4]')
             return respond(node, command, **kwargs)
@@ -264,7 +263,7 @@ class StatefulDeploymentTests(unittest.TestCase):
         self.responder(ssh); respond = ssh.side_effect; reads = 0
         def change_schema(node, command, **kwargs):
             nonlocal reads
-            if command[:2] == ['docker', 'exec']:
+            if command[:2] == ['docker', 'exec'] and 'schema_migrations' in command[-1]:
                 reads += 1
                 if reads == 4:return SimpleNamespace(stdout='[1,2,3,4]')
             return respond(node, command, **kwargs)
@@ -279,7 +278,7 @@ class StatefulDeploymentTests(unittest.TestCase):
     def test_invalid_json_database_response_is_reported_without_writing(self, ssh):
         self.responder(ssh); respond = ssh.side_effect
         def invalid_json(node, command, **kwargs):
-            return SimpleNamespace(stdout='[1,2,') if command[:2] == ['docker', 'exec'] else respond(node, command, **kwargs)
+            return SimpleNamespace(stdout='[1,2,') if command[:2] == ['docker', 'exec'] and 'schema_migrations' in command[-1] else respond(node, command, **kwargs)
         ssh.side_effect = invalid_json
         with self.assertRaisesRegex(deploy.DeploymentError, 'database schema history'):
             self.run_update()
@@ -294,14 +293,18 @@ class StatefulDeploymentTests(unittest.TestCase):
 
     @patch.object(deploy, 'ssh')
     def test_peer_image_mismatch_prevents_all_deployment_mutations(self, ssh):
-        ssh.side_effect = [type('R', (), {'stdout': '1|1|sha256:candidate'})(),
-                           type('R', (), {'stdout': '1|1|sha256:wrong-peer'})()]
+        self.responder(ssh)
+        respond = ssh.side_effect
+        def wrong_peer(node, command, **kwargs):
+            if command[:3] == ['docker', 'image', 'inspect'] and node['role'] == 'primary':
+                return SimpleNamespace(stdout='1|5|sha256:wrong-peer')
+            return respond(node, command, **kwargs)
+        ssh.side_effect = wrong_peer
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / 'report.json'; path.write_text(json.dumps(self.acceptance()))
             with self.assertRaises(deploy.DeploymentError):
                 deploy.update_application(self.config(), 'cursus-app:test', True, 'rollout', path)
-        self.assertEqual(ssh.call_count, 2)
-        self.assertTrue(all(call.args[1][:3] == ['docker', 'image', 'inspect'] for call in ssh.call_args_list))
+        self.assert_no_mutation(ssh)
 
     @patch.object(deploy, "run")
     def test_fence_requires_matching_nonce_authority_and_evidence(self, run):
@@ -327,3 +330,24 @@ class StatefulDeploymentTests(unittest.TestCase):
 
 
 if __name__ == "__main__": unittest.main()
+
+class DatasetCapabilityTests(unittest.TestCase):
+    @patch.object(deploy, 'database_required_capabilities', return_value=['prepared-planning-v2'])
+    @patch.object(deploy, 'ssh')
+    def test_old_image_cannot_be_used_after_new_dataset_admission(self, ssh, required):
+        ssh.return_value=SimpleNamespace(stdout='<no value>')
+        with self.assertRaisesRegex(deploy.DeploymentError,'lacks capabilities'):
+            deploy.assert_image_capabilities({'name':'public-node'},'old-image')
+        self.assertFalse(any('compose' in ' '.join(c.args[1]) for c in ssh.call_args_list))
+
+    @patch.object(deploy, 'database_required_capabilities', return_value=['prepared-planning-v2'])
+    @patch.object(deploy, 'ssh')
+    def test_compatible_image_retains_dataset_capability(self, ssh, required):
+        ssh.return_value=SimpleNamespace(stdout='prepared-planning-v2')
+        deploy.assert_image_capabilities({'name':'public-node'},'compatible-image')
+
+    @patch.object(deploy,'ssh')
+    def test_malformed_requirement_inventory_fails_closed(self,ssh):
+        ssh.return_value=SimpleNamespace(stdout='[1]')
+        with self.assertRaises(deploy.DeploymentError):
+            deploy.database_required_capabilities({'name':'public-node','project':'test','postgres_service':'postgres'})

@@ -1,3 +1,4 @@
+import {PlanningEvidence} from './components/PlanningEvidence';
 import {FleetUtilizationDialog} from '@/components/FleetUtilizationDialog';
 import {CostDialog} from '@/components/CostDialog';
 import type {Instruction} from '../../server/src/change-review-contract';
@@ -865,6 +866,7 @@ export default function App() {
         </div>}
 
         {candidate&&<CandidatePanel key={candidate.plan.id} {...candidate} busy={candidateBusy} canAdopt={canEdit} onAdopt={ack=>void chooseCandidate(true,ack)} onKeep={()=>void chooseCandidate(false)} onCompare={()=>setCompareOpen(true)}/>}
+        <PlanningEvidence plan={plan}/>
         <div id="cursus-kpi-pane" className="shrink-0">
           <KpiStrip plan={plan} baseline={baseline} compare={isReplan} job={job}
             previewDistanceKm={previewTotals?.distanceKm} previewCostTotal={previewTotals?.costTotal}

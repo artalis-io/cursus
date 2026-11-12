@@ -1,3 +1,6 @@
+import {serviceWindows} from '../time-windows.js';
+import {parsePlanningEvidence,hasPlanningIssue} from '../planning-evidence.js';
+import {manualSettings,applyFleetSettings} from './manual-settings.js';
 import {validateLoading} from '../loading.js';
 import {createHash} from 'node:crypto';
 import type {SurgeRequest} from '../types.js';
@@ -12,7 +15,7 @@ function need(v:unknown,message:string):asserts v{if(!v)throw new Error(`Prepare
  * validates supplied solver-ready bytes, rather than constructing a matrix. */
 export function preparedBundle(value:unknown){
  need(record(value)&&value.schemaVersion===1&&record(value.surgeRequest)&&Array.isArray(value.days)&&value.days.length>0&&Array.isArray(value.geocoded),'days, request and identity-bearing geocoded rows are required');
- const r=value.surgeRequest;
+ const r=structuredClone(value.surgeRequest);
  need(r.loading===undefined,'native hard loading is not enabled; supply physicalLoading metadata separately');
  need(record(r.config)&&r.dimension_count===2&&r.demand_sign_convention===1&&Array.isArray(r.locations)&&r.locations.length>0&&
   Array.isArray(r.depots)&&r.depots.length===1&&record(r.depots[0])&&r.depots[0].location_id===0&&
@@ -20,9 +23,9 @@ export function preparedBundle(value:unknown){
   'only two-dimensional, single-depot delivery requests are currently supported');
  for(const loc of r.locations)need(record(loc)&&typeof loc.x==='number'&&Number.isFinite(loc.x)&&Math.abs(loc.x)<=180&&typeof loc.y==='number'&&Number.isFinite(loc.y)&&Math.abs(loc.y)<=90,'invalid coordinates');
  const vehicles=new Set<number>(),tasks=new Map<number,Record<string,unknown>>(),orders=new Set<number>();
- for(const v of r.vehicles){need(record(v)&&integer(v.id)&&!vehicles.has(Number(v.id))&&typeof v.ref==='string'&&v.ref.length>0&&Array.isArray(v.capacity)&&v.capacity.length===2&&v.capacity.every(finite)&&v.start_depot_id===0&&v.end_depot_id===0,'invalid fleet identity or capacity');vehicles.add(Number(v.id));}
- for(const t of r.tasks){need(record(t)&&integer(t.id)&&!tasks.has(Number(t.id))&&t.type==='delivery'&&integer(t.location_id)&&Number(t.location_id)<r.locations.length&&typeof t.ref==='string'&&t.ref.length>0&&Array.isArray(t.demand)&&t.demand.length===2&&t.demand.every(finite)&&finite(t.tw_early)&&finite(t.tw_late)&&finite(t.service_seconds),'invalid delivery task');tasks.set(Number(t.id),t);}
- for(const order of r.requests){need(record(order)&&integer(order.id)&&!orders.has(Number(order.id))&&integer(order.delivery_task_id)&&tasks.has(Number(order.delivery_task_id)),'invalid request identity');orders.add(Number(order.id));
+ for(const v of r.vehicles){need(record(v)&&integer(v.id)&&!vehicles.has(Number(v.id))&&typeof v.ref==='string'&&v.ref.length>0&&Array.isArray(v.capacity)&&v.capacity.length===2&&v.capacity.every(finite)&&v.start_depot_id===0&&v.end_depot_id===0,'invalid fleet identity or capacity');need(v.qualifications===undefined||integer(v.qualifications),'invalid qualifications');vehicles.add(Number(v.id));}
+ for(const t of r.tasks){need(record(t)&&integer(t.id)&&!tasks.has(Number(t.id))&&t.type==='delivery'&&integer(t.location_id)&&Number(t.location_id)<r.locations.length&&typeof t.ref==='string'&&t.ref.length>0&&Array.isArray(t.demand)&&t.demand.length===2&&t.demand.every(finite)&&finite(t.service_seconds),'invalid delivery task');const windows=serviceWindows(t as unknown as import('../time-windows.js').WindowFields);t.tw_early=windows[0]!.early;t.tw_late=windows.at(-1)!.late;tasks.set(Number(t.id),t);}
+ for(const order of r.requests){need(record(order)&&integer(order.id)&&!orders.has(Number(order.id))&&integer(order.delivery_task_id)&&tasks.has(Number(order.delivery_task_id)),'invalid request identity');need(order.required_qualifications===undefined||integer(order.required_qualifications),'invalid required qualifications');orders.add(Number(order.id));
   for(const field of ['allowed_vehicles','forbidden_vehicles'])if(order[field]!==undefined)need(Array.isArray(order[field])&&(order[field] as unknown[]).every(id=>integer(id)&&vehicles.has(Number(id))),'unknown assignment vehicle');
  }
  need(r.travel.location_count===r.locations.length,'matrix dimension mismatch');
@@ -32,20 +35,29 @@ export function preparedBundle(value:unknown){
   return {dayId:raw.dayId,isoDate:raw.isoDate,date:typeof raw.date==='string'?raw.date:raw.isoDate,label:typeof raw.label==='string'?raw.label:raw.isoDate};
  });
  need(new Set(days.map(d=>d.dayId)).size===days.length&&new Set(days.map(d=>d.isoDate)).size===days.length,'duplicate planning days');
- const request=r as unknown as SurgeRequest,byId=new Map(request.requests.map(order=>[order.id,order])),seen=new Set<number>();
+ const request=r as unknown as SurgeRequest;
+ const planningEvidence=value.planningEvidence===undefined?undefined:parsePlanningEvidence(value.planningEvidence,request);
+ const planningSettings=value.planningSettings;
+ if(planningEvidence)need(planningSettings!==undefined,'preliminary planning requires dataset-specific fleet settings');
+ if(planningSettings!==undefined){const settings=manualSettings(planningSettings);need(settings.reloadSeconds.size===request.vehicles.length&&request.vehicles.every(v=>settings.reloadSeconds.has(v.id)),'fleet settings inventory mismatch');}
+ const byId=new Map(request.requests.map(order=>[order.id,order])),seen=new Set<number>();
  const geocoded=value.geocoded.map(raw=>{
   need(record(raw)&&integer(raw.request_id)&&!seen.has(Number(raw.request_id)),'source rows need unique request IDs');
   const order=byId.get(Number(raw.request_id)),task=order&&tasks.get(order.delivery_task_id);
-  need(task&&task.ref===raw.order_no&&days.some(day=>day.date===String(raw.delivery_date))&&typeof raw.requires_tail_lift==='boolean'&&
+  need(task&&task.ref===raw.order_no&&days.some(day=>day.date===String(raw.delivery_date))&&(typeof raw.requires_tail_lift==='boolean'||raw.requires_tail_lift===null&&hasPlanningIssue(planningEvidence,'tail_lift',Number(raw.request_id)))&&
    (raw.max_gross_weight_kg===null||typeof raw.max_gross_weight_kg==='number'&&Number.isFinite(raw.max_gross_weight_kg)&&raw.max_gross_weight_kg>0),'source date, identity and explicit access facts are required');
+  if(raw.modelled_max_gross_weight_kg!==undefined&&raw.modelled_max_gross_weight_kg!==null)need(typeof raw.modelled_max_gross_weight_kg==='number'&&raw.modelled_max_gross_weight_kg>0&&Number.isFinite(raw.modelled_max_gross_weight_kg)&&hasPlanningIssue(planningEvidence,'gvw',Number(raw.request_id)),'modelled access limit needs explicit uncertainty evidence');
+  if(raw.pallets===null)need(hasPlanningIssue(planningEvidence,'pallet_quantity',Number(raw.request_id))&&task.demand instanceof Array&&task.demand[1]===0,'unknown pallet quantity needs a declared lower-bound proxy');
   seen.add(Number(raw.request_id));return raw;
  });
  need(seen.size===orders.size,'source delivery inventory mismatch');
  const requestBytes=Buffer.from(JSON.stringify(request)),datasetSha256=createHash('sha256').update(requestBytes).digest('hex');
+ if(planningEvidence?.datasetSha256!==undefined)need(planningEvidence.datasetSha256===datasetSha256,'planning evidence source mismatch');
+ if(planningSettings!==undefined)need(applyFleetSettings(structuredClone(request),datasetSha256,manualSettings(planningSettings)),'fleet settings source mismatch');
  const shipments=value.shipments===undefined?summarizeShipments(request,geocoded,datasetSha256,days):validateShipments(value.shipments,request,datasetSha256);
  for(const delivery of shipments.deliveries){const raw=geocoded.find(row=>row.request_id===delivery.requestId)!;
   need(days.find(day=>day.date===String(raw.delivery_date))?.isoDate===delivery.date,'commercial and source delivery dates disagree');
  }
  const physicalLoading=value.physicalLoading===undefined?undefined:validateLoading(value.physicalLoading,request,datasetSha256);
- return {requestBytes,request,days,geocoded,shipments,physicalLoading};
+ return {requestBytes,request,days,geocoded,shipments,physicalLoading,planningEvidence,planningSettings};
 }

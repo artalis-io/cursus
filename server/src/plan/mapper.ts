@@ -1,3 +1,5 @@
+import {withPlanningEvidence} from '../planning-evidence.js';
+import {planningWindows,windowLateSeconds,windowContains} from '../time-windows.js';
 import {captureFleet,type FleetSource} from './fleet-snapshot.js';
 import {captureCosting} from '../cost-review.js';
 import {loadingSnapshot} from '../loading.js';
@@ -10,7 +12,7 @@ import type { LoadedDay, OrderInfo, VehicleInfo } from '../data/dataset.js';
 import { vehicleInfoFor } from '../data/dataset.js';
 import { colorForIndex } from '../colors.js';
 import { metersToKm } from '../units.js';
-import { makeLeg, waitSec, lateSec } from './schedule.js';
+import { makeLeg, waitSec } from './schedule.js';
 import { loadTariff, vehicleCostFor, tripCost,reconcileTripCosts, type Tariff } from '../cost.js';
 import { grossTonnage, hasTailLift } from './access.js';
 
@@ -24,7 +26,7 @@ export interface FleetLimits { maxKg: number; maxPallets: number; anyTailLift: b
 export function classifyUnassigned(
   reqDef: Pick<SurgeRequestDef, 'allowed_vehicles'> | undefined,
   task: Pick<SurgeTask, 'demand'> | undefined,
-  info: { requiresTailLift?: boolean; maxTonnage?: number | null } | null,
+  info: { requiresTailLift?: boolean|null; maxTonnage?: number | null } | null,
   fleet: FleetLimits,
 ): UnassignedReason {
   if (reqDef?.allowed_vehicles && reqDef.allowed_vehicles.length > 0) return 'PINNED_INFEASIBLE';
@@ -101,8 +103,9 @@ export function mapSolutionToPlan(inp: MapInputs): Plan {
         tripMeters += task ? leg.distM(prevLoc, task.location_id) : 0;
         if (task) prevLoc = task.location_id;
         const twLate = task?.tw_late ?? 0;
-        const lateBySec = lateSec(s.arrival, twLate);
-        if (lateBySec > 1) violations.push({ type: 'HARD_TW', vehicle_id: route.vehicle_id, request_id: s.request_id, actual: s.arrival, limit: twLate });
+        const windows=task?planningWindows(task):[{early:0,late:0}];
+        const lateBySec = windowLateSeconds(s.service_start,windows);
+        if (task?.time_windows?!windowContains(s.service_start,windows):lateBySec>1) violations.push({ type: 'HARD_TW', vehicle_id: route.vehicle_id, request_id: s.request_id, actual: s.arrival, limit: twLate });
         if (info?.requiresTailLift && (!rv || !hasTailLift(rv, inp.vehicleInfo))) violations.push({ type: 'TAIL_LIFT', vehicle_id: route.vehicle_id, request_id: s.request_id, orderNo });
         if (info?.maxTonnage != null && (tonnage == null || tonnage > info.maxTonnage))
           violations.push({ type: 'VEHICLE_SIZE', vehicle_id: route.vehicle_id, request_id: s.request_id, orderNo, actual: tonnage, limit: info.maxTonnage });
@@ -117,6 +120,7 @@ export function mapSolutionToPlan(inp: MapInputs): Plan {
           arrivalSec: s.arrival,
           serviceStartSec: s.service_start,
           departureSec: s.departure,
+          ...(task?.time_windows?{timeWindows:windows}:{}),
           twStartSec: task?.tw_early ?? 0,
           twEndSec: twLate,
           pallets, weightKg,
@@ -124,7 +128,7 @@ export function mapSolutionToPlan(inp: MapInputs): Plan {
           waitSec: waitSec(s.arrival, s.service_start),
           travelToSec,
           lateBySec,
-          requiresTailLift: Boolean(info?.requiresTailLift),
+          requiresTailLift: info?info.requiresTailLift:false,
           maxTonnage: info?.maxTonnage ?? null,
         };
       });
@@ -273,5 +277,5 @@ export function mapSolutionToPlan(inp: MapInputs): Plan {
   };
   plan.provenance.costing=captureCosting(plan,tariff);
   plan.provenance.fleet=captureFleet(plan,inp.fleet??{vehicles:request.vehicles,complete:false});
-  return plan;
+  return withPlanningEvidence(plan,inp.day);
 }

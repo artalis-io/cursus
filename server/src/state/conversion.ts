@@ -1,3 +1,4 @@
+import {parsePlanningEvidence} from '../planning-evidence.js';
 import {operatingViolations} from '../operating-limits.js';
 import {probeLoadingCapabilities} from '../native-loading.js';
 import {factRequirement,validateRequirement,sameRequirement} from '../axle-loading.js';
@@ -127,7 +128,7 @@ export async function workOneDatasetAdmission(store: StatefulStore, objects: Obj
 
 /** Solve directly from admitted immutable artifacts; no node-local registry is
  * authoritative. This is the stateful counterpart of loadDay/buildRequest. */
-export interface ConvertedManifest { loadingRequirement?:LoadingRequirement; artifacts?: { request?: ImmutableObject; geocoded?: ImmutableObject;shipments?:ImmutableObject;physicalLoading?:ImmutableObject };
+export interface ConvertedManifest { planningEvidence?:import('../planning-evidence-contract.js').PlanningEvidence;planningSettings?:unknown; loadingRequirement?:LoadingRequirement; artifacts?: { request?: ImmutableObject; geocoded?: ImmutableObject;shipments?:ImmutableObject;physicalLoading?:ImmutableObject };
   days?: { dayId: string; date?: string; isoDate: string; label: string }[] }
 export async function loadConvertedDay(objects: ObjectStore, tenantId: string, manifest: ConvertedManifest,
   scenario: Scenario, profiles: ApprovedProfile[] = []): Promise<LoadedDay> {
@@ -157,6 +158,7 @@ export async function loadConvertedDay(objects: ObjectStore, tenantId: string, m
     validateRequirement(manifest.loadingRequirement);
     if(!sameRequirement(manifest.loadingRequirement,factRequirement(physicalLoading,loadingObject.sha256)))throw new Error('Physical loading: manifest capability/source mismatch');
   }
+  const planningEvidence=manifest.planningEvidence?parsePlanningEvidence(manifest.planningEvidence,request):undefined;
   const dayMeta = manifest.days?.find((d) => d.dayId === (scenario.datasetBinding?.dayId??scenario.day));
   if (!dayMeta) throw new Error('dataset day is missing');
   const refs = new Set(rows.filter((r) => String(r.delivery_date ?? '') === String(dayMeta.date ?? dayMeta.isoDate))
@@ -179,7 +181,7 @@ export async function loadConvertedDay(objects: ObjectStore, tenantId: string, m
   const scopedReqIds = request.requests.map((r) => r.id);
   const solution: SurgeSolution = { status: 'OK', routes: [], unassigned: scopedReqIds,
     stats: { vehicles_used: 0, trips: 0, total_distance: 0, unassigned: scopedReqIds.length } };
-  const day=withPlanningPolicy({ datasetRequestSha256: requestObject.sha256,deliveryEnrichment,
+  const day=withPlanningPolicy({ ...(manifest.planningSettings?{planningSettings:manifest.planningSettings}:{}),...(planningEvidence?{planningEvidence}:{}),datasetRequestSha256: requestObject.sha256,deliveryEnrichment,
     ...(physicalLoading?{physicalLoading,physicalLoadingSha256:loadingObject!.sha256}:{}),
     ...(shipmentDocument?{shipmentDocument,shipmentSha256:shipmentObject!.sha256}:{}),
     def: { id: scenario.day, date: dayMeta.date ?? dayMeta.isoDate, isoDate: dayMeta.isoDate, label: dayMeta.label,
@@ -198,6 +200,7 @@ export async function solveConvertedDataset(objects: ObjectStore, tenantId: stri
   const enforceLoading=!!day.physicalLoading&&(loadingOptions.enabled||scenario.hardLoadingRequired===true);
   const fleetProfile=profiles.find(p=>p.kind==='fleet');
   if(fleetProfile)configuredSettings=manualSettings(fleetProfile.content.settings);
+  else if(manifest.planningSettings)configuredSettings=manualSettings({...manifest.planningSettings as object,datasetSha256:day.datasetRequestSha256});
   const {travel,...mutable}=day.request;
   const request={...structuredClone(mutable),travel};
   const baseline = datasetAllowances(request), datasetVehicles = request.vehicles.map(vehicle => vehicle.id);

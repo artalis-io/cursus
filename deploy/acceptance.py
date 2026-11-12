@@ -27,7 +27,7 @@ def run(argv, *, env=None, capture=False, timeout=900):
 def harness_digest():
     paths = [ROOT / 'compose.integration.yaml', ROOT / 'compose.acceptance.yaml', Path(__file__),
              ROOT / 'web/playwright.acceptance.config.ts', ROOT / 'web/tsconfig.acceptance.json',
-             ROOT / 'web/tests/workspace-navigation.ts', ROOT / 'web/tests/compact-header.ts', ROOT / 'web/tests/solve-progress-cases.ts', ROOT / 'web/tests/public-workspace.ts', ROOT / 'web/tests/public-plan.ts', ROOT / 'web/tests/planning-recovery-cases.ts']
+             ROOT / 'web/tests/workspace-navigation.ts', ROOT / 'web/tests/compact-header.ts', ROOT / 'web/tests/solve-progress-cases.ts', ROOT / 'web/tests/public-workspace.ts', ROOT / 'web/tests/public-plan.ts', ROOT / 'web/tests/planning-recovery-cases.ts', ROOT / 'web/tests/preliminary-datasets.spec.ts']
     paths += sorted((ROOT / 'tests/acceptance').glob('*.mjs'))
     paths += sorted((ROOT / 'tests/acceptance').glob('*.py'))
     paths += [ROOT / 'vendor/otto/surge/tests/test_loading_cli.py',
@@ -185,7 +185,7 @@ def main():
                                CURSUS_ACCEPTANCE_OUTPUT_DIR=str(report_path.with_suffix('.artifacts')))
             # Aggregate budget grows with coverage; individual tests remain bounded
             # by Playwright's unchanged 120-second timeout, without retries.
-            run(['npm', '--prefix', 'web', 'run', 'test:acceptance'], env=environment, timeout=1800)
+            run(['npm', '--prefix', 'web', 'run', 'test:acceptance'], env=environment, timeout=2400)
             stats = json.loads(browser_report.read_text())['stats']
             if stats['unexpected'] or stats['flaky'] or stats['skipped'] or stats['expected'] < 8:
                 raise ValueError('release acceptance requires all eight or more tests passing without skips or retries')

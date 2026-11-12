@@ -2,9 +2,9 @@ import {parseOperatingLimits} from './operating-limits.js';
 // Browser-safe pure projection of an immutable saved plan. No current settings,
 // matrix loading, native calls, mutations, or guesses about consolidation.
 import type {FleetFact,FleetSnapshot} from './fleet-contract.js';
-interface Stop {type:string;weightKg:number;pallets:number;arrivalSec:number;serviceStartSec:number;departureSec:number;waitSec:number;travelToSec:number}
+interface Stop {unknownFacts?:string[];type:string;weightKg:number;pallets:number;arrivalSec:number;serviceStartSec:number;departureSec:number;waitSec:number;travelToSec:number}
 interface Trip {index:number;startSec:number;endSec:number;loadKg:number;loadPallets:number;stops:Stop[]}
-interface Vehicle {id:number;ref:string;capacityKg:number;capacityPallets:number;peakKg:number;peakPallets:number;distanceKm:number;trips:Trip[]}
+interface Vehicle {unknownFacts?:string[];id:number;ref:string;capacityKg:number;capacityPallets:number;peakKg:number;peakPallets:number;distanceKm:number;trips:Trip[]}
 export interface FleetPlan {
   id:string;scenarioId:string;scenarioRevision:number;
   provenance:{inputSha256:string;fleet?:FleetSnapshot;validation:{violations:unknown[]}};
@@ -86,7 +86,7 @@ export function fleetUtilization(p:FleetPlan):FleetUse {
   const facts=new Map(snapshot?.vehicles.map(v=>[v.id,v])??[]),used=new Set(p.vehicles.map(v=>v.id));
   const vehicles:FleetVehicleUse[]=p.vehicles.map(v=>{
     const f=facts.get(v.id)??null,kg=f?f.capacityKg:positive(v.capacityKg)?v.capacityKg:null,pallets=f?f.capacityPallets:positive(v.capacityPallets)?v.capacityPallets:null;
-    const trips=v.trips.map(t=>({index:t.index,kg:load(t,'kg',kg),pallets:load(t,'pallets',pallets),time:timing(t)}));
+    const trips=v.trips.map(t=>({index:t.index,kg:v.unknownFacts?.includes('capacity_conflict')?null:load(t,'kg',kg),pallets:v.unknownFacts?.includes('pallet_capacity')||t.stops.some(s=>s.unknownFacts?.includes('pallet_quantity'))?null:load(t,'pallets',pallets),time:timing(t)}));
     const chronological=v.trips.length>0&&v.trips.every((t,i)=>i===0||t.startSec>=v.trips[i-1]!.endSec);
     const totals=trips.every(t=>t.time)&&chronological?{
       elapsed:v.trips.at(-1)!.endSec-v.trips[0]!.startSec,

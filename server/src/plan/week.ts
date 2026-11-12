@@ -47,7 +47,7 @@ export function weekSummary(days: WeekDayInput[]): WeekSummary {
     dayId: d.dayId, isoDate: d.isoDate, label: d.label,
     servedOrders: d.plan.stats.servedOrders, totalOrders: d.plan.stats.totalOrders,
     vehiclesUsed: d.plan.stats.vehiclesUsed, trips: d.plan.stats.trips,
-    totalDistanceKm: d.plan.stats.totalDistanceKm, costTotal: d.plan.cost?.total ?? null,
+    totalDistanceKm: d.plan.stats.totalDistanceKm, costTotal: d.plan.cost?.currency===currency ? d.plan.cost.total : null,
   }));
 
   // Per-vehicle rows keyed by ref (stable across days).
@@ -62,7 +62,7 @@ export function weekSummary(days: WeekDayInput[]): WeekSummary {
         for (const dd of days) row.perDay[dd.dayId] = null;
         rows.set(v.ref, row);
       }
-      const cost = d.plan.cost?.perVehicle.find((c) => c.vehicleId === v.id)?.totalCost ?? null;
+      const cost = d.plan.cost?.currency===currency ? d.plan.cost.perVehicle.find((c) => c.vehicleId === v.id)?.totalCost ?? null : null;
       row.perDay[d.dayId] = { trips: v.tripCount, km: v.distanceKm, cost, finishSec: v.finishTimeSec };
       row.totalTrips += v.tripCount;
       row.totalKm += v.distanceKm;
@@ -71,9 +71,11 @@ export function weekSummary(days: WeekDayInput[]): WeekSummary {
     }
   }
 
+  // A partial priced subset is not the cost of the complete displayed work.
+  for(const row of rows.values())if(Object.values(row.perDay).some(day=>day&&day.cost===null))row.totalCost=null;
   const vehicles = [...rows.values()].sort((a, b) => b.totalKm - a.totalKm);
   const sum = (f: (s: WeekDayStat) => number) => dayStats.reduce((n, s) => n + f(s), 0);
-  const anyCost = dayStats.some((s) => s.costTotal != null);
+  const allCost = dayStats.length>0&&dayStats.every((s) => s.costTotal != null&&Number.isFinite(s.costTotal));
 
   return {
     currency,
@@ -84,7 +86,7 @@ export function weekSummary(days: WeekDayInput[]): WeekSummary {
       vehiclesUsed: distinctRefs.size,
       trips: sum((s) => s.trips),
       totalDistanceKm: Math.round(sum((s) => s.totalDistanceKm) * 10) / 10,
-      costTotal: anyCost ? sum((s) => s.costTotal ?? 0) : null,
+      costTotal: allCost ? sum((s) => s.costTotal ?? 0) : null,
     },
     vehicles,
   };
