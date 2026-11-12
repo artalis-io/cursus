@@ -1,5 +1,9 @@
 # Cursus: workflow roadmap (the "decision cockpit" framing)
 
+Historical direction and implementation notes. For current next steps, see the
+[product roadmap](product-roadmap.md), starting with another week of real
+Gyermelyi data before further feature development.
+
 Status: direction + priorities. Drag-to-reassign is the first build off this doc.
 
 ## Positioning: a decision cockpit, not a system of record

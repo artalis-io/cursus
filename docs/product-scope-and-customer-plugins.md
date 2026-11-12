@@ -13,6 +13,7 @@ This is a preliminary assessment of the application workflow and data contracts.
 
 Related documents:
 
+- [Current product roadmap](product-roadmap.md), including the next real-data validation milestone.
 - [Workflow and usability review](usability-review.md)
 - [Manual planning](manual-planning.md)
 - [Plan review and freshness](plan-review-and-freshness.md)

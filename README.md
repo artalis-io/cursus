@@ -1,5 +1,7 @@
 # Cursus
 
+Next priorities and real-data validation: [product roadmap](docs/product-roadmap.md).
+
 Product planning foundations: [safe replanning](docs/safe-replan-and-delivery-identity.md),
 [profiles and shipments](docs/profiles-and-shipments.md),
 [fleet operating limits](docs/fleet-operating-profiles.md),
