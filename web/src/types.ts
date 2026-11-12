@@ -178,12 +178,12 @@ export interface ManualContext {enabled:boolean;reason?:'fresh_plan_required';re
 export interface ManualPreview {physicalLoadingPending?:boolean;stats:PlanStats;cost:PlanCost|null;validation:PlanProvenance['validation']}
 export interface PlacementSuggestion {
   vehicleId:number;tripId:string;position:number;newTrip:boolean;serviceStartSec:number;tripEndSec:number;
-  delta:{distanceKm:number;cost:number;vehicles:number;trips:number;finishSec:number|null};
+  delta:{distanceKm:number;cost:number|null;vehicles:number;trips:number;finishSec:number|null};
 }
 export interface PlacementSuggestions {
  physicalLoadingPending?:boolean;
   parentPlanId:string;revision:number;datasetSha256:string;requestId:number;currency:string;checked:number;complete:boolean;feasiblePositions:number;
-  baseline:{distanceKm:number;cost:number;served:number;vehicles:number;trips:number};
+  baseline:{distanceKm:number;cost:number|null;served:number;vehicles:number;trips:number};
   suggestions:PlacementSuggestion[];
   vehicles:{vehicleId:number;checked:number;feasible:number;skipped?:'excluded'|'locked';blockers:(ValidationViolation&{vehicleId:number;requestId?:number})[]}[];
 }

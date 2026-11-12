@@ -1,3 +1,4 @@
+import {suggestPlacements} from './plan/manual-suggestions.js';
 import {veloRouteCoordinates} from './geometry/velo.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -68,4 +69,11 @@ test('legacy scalar zero deadline retains its no-deadline semantics during manua
  const f=manualFixture();f.context.day.request.tasks[0]!.tw_early=0;f.context.day.request.tasks[0]!.tw_late=0;
  const result=evaluateManualLayout(prepareManualInput(f.parent,f.scenario,f.context));
  assert.equal(result.validation.valid,true);assert.equal(result.vehicles[0]!.trips[0]!.stops[0]!.lateSec,0);
+});
+
+test('preliminary insertion suggestions preserve feasibility without reporting invented monetary deltas',async()=>{
+ const f=manualFixture();f.context.day.planningEvidence=evidence();const input=prepareManualInput(f.parent,f.scenario,f.context);
+ const route=input.layout.routes.find(r=>r.requestIds.includes(92))!;route.requestIds=route.requestIds.filter(id=>id!==92);input.layout.unassigned.push(92);
+ const result=await suggestPlacements(input,f.scenario,92,{parentPlanId:f.parent.id,newTripId:'public-preview'});
+ assert.ok(result.suggestions.length>0);assert.equal(result.baseline.cost,null);assert.ok(result.suggestions.every(s=>s.delta.cost===null));
 });

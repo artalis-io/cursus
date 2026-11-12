@@ -214,7 +214,7 @@ for(const role of ['admin','planner'] as const)test(`placements ${role}: unassig
   const assigned=await applyManualDialog(page);independentManualKpis(assigned);
   expect(assigned.stats.servedOrders).toBe(6);expect(assigned.provenance.validation.valid).toBe(true);
   expect(assigned.stats.totalDistanceKm-partial.stats.totalDistanceKm).toBeCloseTo(best.delta.distanceKm,6);
-  expect(assigned.cost!.total-partial.cost!.total).toBeCloseTo(best.delta.cost,6);
+  expect(assigned.cost!.total-partial.cost!.total).toBeCloseTo(best.delta.cost!,6);
   expect(assigned.manual?.layout.history.at(-1)?.action).toBe('assign');
   expect((await get<Plan>(page.request,`${peer}/api/plans/${assigned.id}?geometry=stored`)).stats).toEqual(assigned.stats);
 });
