@@ -20,3 +20,19 @@ test('inspector shows separated intervals and unknown pallets without widening o
  await expect(page.locator('#cursus-inspector-pane')).toContainText('00:00–00:05 / 00:10–00:20');
  await expect(page.locator('#cursus-inspector-pane')).toContainText('Unknown');await expect(page.locator('#cursus-inspector-pane')).toContainText('Tail-lift requirement');
 });
+
+test('preliminary placement guidance displays unavailable prices rather than zero monetary costs',async({page})=>{
+ const f=await publicWorkspace(page),vehicle=f.plan.vehicles[0]!;
+ f.plan.cost=null;f.plan.stats.totalOrders=3;
+ f.plan.unassigned.push({requestId:99,orderNo:'PUBLIC-MISSING',orderId:null,customer:'Public missing delivery',city:null,lon:19,lat:47,reason:null,reasonCode:null});
+ f.plan.provenance.planningEvidence={version:1,sourceSha256:'b'.repeat(64),pricing:'unverified',issues:[{code:'tariff',message:'Not verified.'}]};
+ await page.route('**/api/plans/*/manual-context',route=>route.fulfill({json:{enabled:true,requiresRevalidation:false,datasetSha256:f.plan.provenance.datasetSha256,fleet:f.plan.vehicles}}));
+ await page.route('**/api/scenarios/*/placements',route=>route.fulfill({json:{parentPlanId:f.plan.id,revision:1,datasetSha256:f.plan.provenance.datasetSha256,requestId:99,currency:'HUF',checked:1,complete:true,feasiblePositions:1,baseline:{distanceKm:10,cost:null,served:2,vehicles:1,trips:1},suggestions:[{vehicleId:vehicle.id,tripId:'trip-0',position:0,newTrip:false,serviceStartSec:300,tripEndSec:600,delta:{distanceKm:1,cost:null,vehicles:0,trips:0,finishSec:60}}],vehicles:[]}}));
+ await page.reload();await page.getByRole('button',{name:'Manual planning',exact:true}).click();
+ const toggle=page.locator('[data-unassigned-toggle]');if(await toggle.getAttribute('aria-expanded')!=='true')await toggle.click();
+ await page.locator('[data-unassigned-list]').getByRole('button').filter({hasText:'#PUBLIC-MISSING'}).click();
+ await page.getByRole('button',{name:'Assign to vehicle…',exact:true}).click();
+ const dialog=page.getByRole('dialog',{name:'Manual planning',exact:true});await dialog.getByRole('button',{name:'Find feasible placements',exact:true}).click();
+ const options=dialog.getByRole('list',{name:'Feasible placements',exact:true});await expect(options).toBeVisible();await expect(options).toContainText('—');await expect(options).not.toContainText(/Ft|HUF/);
+ await expect(dialog.getByText(/Compared with the current layout/)).toContainText('—');
+});

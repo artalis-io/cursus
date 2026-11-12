@@ -27,7 +27,7 @@ def run(argv, *, env=None, capture=False, timeout=900):
 def harness_digest():
     paths = [ROOT / 'compose.integration.yaml', ROOT / 'compose.acceptance.yaml', Path(__file__),
              ROOT / 'web/playwright.acceptance.config.ts', ROOT / 'web/tsconfig.acceptance.json',
-             ROOT / 'web/tests/workspace-navigation.ts', ROOT / 'web/tests/compact-header.ts', ROOT / 'web/tests/solve-progress-cases.ts', ROOT / 'web/tests/public-workspace.ts', ROOT / 'web/tests/public-plan.ts', ROOT / 'web/tests/planning-recovery-cases.ts']
+             ROOT / 'web/tests/workspace-navigation.ts', ROOT / 'web/tests/compact-header.ts', ROOT / 'web/tests/solve-progress-cases.ts', ROOT / 'web/tests/public-workspace.ts', ROOT / 'web/tests/public-plan.ts', ROOT / 'web/tests/planning-recovery-cases.ts', ROOT / 'web/tests/preliminary-datasets.spec.ts']
     paths += sorted((ROOT / 'tests/acceptance').glob('*.mjs'))
     paths += sorted((ROOT / 'tests/acceptance').glob('*.py'))
     paths += [ROOT / 'vendor/otto/surge/tests/test_loading_cli.py',
