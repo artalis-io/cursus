@@ -26,5 +26,5 @@ export function windowLateSeconds(start:number,windows:ServiceWindow[]){
 /** Existing evaluators report contradictory legacy scalar bounds as invalid
  * Draft evidence. Admission still uses the strict serviceWindows validator. */
 export function planningWindows(task:WindowFields):ServiceWindow[]{
- return task.time_windows?serviceWindows(task):[{early:task.tw_early,late:task.tw_late}];
+ return task.time_windows?serviceWindows(task):[{early:task.tw_early,late:task.tw_late===0?Number.MAX_SAFE_INTEGER:task.tw_late}];
 }

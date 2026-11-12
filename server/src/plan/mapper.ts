@@ -105,7 +105,7 @@ export function mapSolutionToPlan(inp: MapInputs): Plan {
         const twLate = task?.tw_late ?? 0;
         const windows=task?planningWindows(task):[{early:0,late:0}];
         const lateBySec = windowLateSeconds(s.service_start,windows);
-        if (!windowContains(s.service_start,windows)) violations.push({ type: 'HARD_TW', vehicle_id: route.vehicle_id, request_id: s.request_id, actual: s.arrival, limit: twLate });
+        if (task?.time_windows?!windowContains(s.service_start,windows):lateBySec>1) violations.push({ type: 'HARD_TW', vehicle_id: route.vehicle_id, request_id: s.request_id, actual: s.arrival, limit: twLate });
         if (info?.requiresTailLift && (!rv || !hasTailLift(rv, inp.vehicleInfo))) violations.push({ type: 'TAIL_LIFT', vehicle_id: route.vehicle_id, request_id: s.request_id, orderNo });
         if (info?.maxTonnage != null && (tonnage == null || tonnage > info.maxTonnage))
           violations.push({ type: 'VEHICLE_SIZE', vehicle_id: route.vehicle_id, request_id: s.request_id, orderNo, actual: tonnage, limit: info.maxTonnage });

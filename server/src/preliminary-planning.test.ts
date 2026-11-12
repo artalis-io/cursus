@@ -63,3 +63,9 @@ test('successful zero-length Velo routes need no encoded line; missing or failed
  assert.deepEqual(veloRouteCoordinates({status:'ok',route:{distance:0,duration:0}},[19,47]),[[19,47]]);
  for(const response of [{status:'error',route:{distance:0,duration:0}},{status:'ok',route:{distance:10,duration:0}},{status:'ok',route:{distance:0,duration:10}},{status:'ok',route:{}}])assert.equal(veloRouteCoordinates(response,[19,47]),null);
 });
+
+test('legacy scalar zero deadline retains its no-deadline semantics during manual evaluation',()=>{
+ const f=manualFixture();f.context.day.request.tasks[0]!.tw_early=0;f.context.day.request.tasks[0]!.tw_late=0;
+ const result=evaluateManualLayout(prepareManualInput(f.parent,f.scenario,f.context));
+ assert.equal(result.validation.valid,true);assert.equal(result.vehicles[0]!.trips[0]!.stops[0]!.lateSec,0);
+});
