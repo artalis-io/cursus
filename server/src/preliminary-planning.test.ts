@@ -1,3 +1,4 @@
+import {veloRouteCoordinates} from './geometry/velo.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {preparedBundle} from './state/prepared-bundle.js';
@@ -56,4 +57,9 @@ test('manual planning cannot discard native qualification restrictions',()=>{
 });
 test('legacy plans without preliminary evidence preserve their cost and approval behavior',()=>{
  const f=manualFixture(),before=JSON.stringify(f.parent);assert.equal(withPlanningEvidence(f.parent,f.context.day),f.parent);assert.equal(JSON.stringify(f.parent),before);assert.ok(f.parent.cost);
+});
+
+test('successful zero-length Velo routes need no encoded line; missing or failed routes stay missing',()=>{
+ assert.deepEqual(veloRouteCoordinates({status:'ok',route:{distance:0,duration:0}},[19,47]),[[19,47]]);
+ for(const response of [{status:'error',route:{distance:0,duration:0}},{status:'ok',route:{distance:10,duration:0}},{status:'ok',route:{distance:0,duration:10}},{status:'ok',route:{}}])assert.equal(veloRouteCoordinates(response,[19,47]),null);
 });
